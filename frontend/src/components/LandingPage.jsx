@@ -606,7 +606,7 @@ function PageFooter() {
         <Link
           href="/transparency"
           className="hover:text-slate-600 transition-colors"
-        >
+          >
           Ledger
         </Link>
         <Link href="/security" className="hover:text-slate-600 transition-colors">
