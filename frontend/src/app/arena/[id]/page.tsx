@@ -645,8 +645,8 @@ export default function ArenaRoomPage() {
 
       {/* MODAL 1: ROOM ACTIVITY LEDGER MODAL */}
       {showLedgerModal && (
-        <div className="absolute inset-0 bg-slate-900/25 z-50 flex flex-col justify-end backdrop-blur-sm">
-          <div className="bg-white border-t border-slate-200 rounded-t-[28px] max-h-[88%] flex flex-col shadow-2xl">
+        <div className="fixed inset-0 bg-slate-900/25 z-50 flex flex-col justify-end backdrop-blur-sm">
+          <div className="bg-white border-t border-slate-200 rounded-t-[28px] max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
             <div className="flex justify-between items-center p-4 border-b border-slate-200 shrink-0 bg-white rounded-t-[28px]">
               <div>
                 <h3 className="text-sm font-extrabold text-slate-950 tracking-wide">
@@ -753,15 +753,15 @@ export default function ArenaRoomPage() {
                             hasUserSubmittedInActiveWindow()
                               ? "You have submitted your proof for this window."
                               : getProofPlaceholder()
-                          }
-                          className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:opacity-40"
-                          value={
-                            proofUrl.startsWith("data:image/") ? "" : proofUrl
-                          }
-                          onChange={(e) => setProofUrl(e.target.value)}
-                        />
-                      </div>
-                    )}
+                        }
+                        className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:opacity-40"
+                        value={
+                          proofUrl.startsWith("data:image/") ? "" : proofUrl
+                        }
+                        onChange={(e) => setProofUrl(e.target.value)}
+                      />
+                    </div>
+                  )}
                   </div>
 
                   <div className="flex items-center justify-between gap-3">
@@ -914,8 +914,8 @@ export default function ArenaRoomPage() {
       {/* MODAL 2: CHAMBER INFO / PARTICIPANTS MODAL */}
       {showMembersModal && (
         <div className="fixed inset-0 bg-slate-900/25 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white border border-slate-200 w-full max-w-md rounded-3xl overflow-hidden shadow-xl">
-            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white">
+          <div className="bg-white border border-slate-200 w-full max-w-md rounded-3xl overflow-hidden shadow-xl flex flex-col max-h-[85vh]">
+            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white shrink-0">
               <h3 className="text-sm font-bold text-slate-900">
                 Chamber Inhabitants ({arenaMembers.length})
               </h3>
@@ -926,7 +926,7 @@ export default function ArenaRoomPage() {
                 ✕
               </button>
             </div>
-            <div className="p-4 max-h-64 overflow-y-auto space-y-2">
+            <div className="p-4 overflow-y-auto space-y-2 flex-1">
               {arenaMembers.map((member) => (
                 <div
                   key={member.user_id}
@@ -956,8 +956,8 @@ export default function ArenaRoomPage() {
       {/* MODAL 3: ADMIN CONSOLE PARAMETERS */}
       {showAdminModal && isAdmin && (
         <div className="fixed inset-0 bg-slate-900/25 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white border border-slate-200 w-full max-w-md rounded-3xl overflow-hidden shadow-xl">
-            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white">
+          <div className="bg-white border border-slate-200 w-full max-w-md rounded-3xl overflow-hidden shadow-xl flex flex-col max-h-[85vh]">
+            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white shrink-0">
               <h3 className="text-sm font-bold text-slate-900">
                 Admin Hub Console
               </h3>
@@ -968,7 +968,7 @@ export default function ArenaRoomPage() {
                 ✕
               </button>
             </div>
-            <div className="p-4 space-y-4 max-h-100 overflow-y-auto">
+            <div className="p-4 space-y-4 overflow-y-auto flex-1">
               {inviteAssets && (
                 <div className="p-3 bg-[#F8FAFC] border border-slate-200 rounded-2xl space-y-1">
                   <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">

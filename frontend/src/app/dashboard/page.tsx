@@ -233,14 +233,15 @@ function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-[#F3F4F6] text-slate-900 flex flex-col">
-      <header className="border-b border-slate-200 bg-white/95 backdrop-blur px-6 py-4 flex justify-between items-center shadow-sm">
-        <h1 className="text-xl font-bold bg-linear-to-r from-[#5B4DFF] to-[#2F80ED] bg-clip-text text-transparent">
-          TRIBELY WORKSPACE
+      <header className="border-b border-slate-200 bg-white/95 backdrop-blur px-4 md:px-6 py-4 flex justify-between items-center shadow-sm">
+        <h1 className="text-lg md:text-xl font-bold bg-linear-to-r from-[#5B4DFF] to-[#2F80ED] bg-clip-text text-transparent">
+          TRIBELY<span className="hidden sm:inline"> WORKSPACE</span>
         </h1>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 md:gap-4">
+          {/* Profile Link - Full on desktop, icon-only on mobile */}
           <Link
             href="/profile"
-            className="flex items-center gap-3 rounded-full border border-slate-200 bg-white px-3 py-2 transition hover:border-indigo-300 hover:bg-slate-50"
+            className="hidden md:flex items-center gap-3 rounded-full border border-slate-200 bg-white px-3 py-2 transition hover:border-indigo-300 hover:bg-slate-50"
           >
             <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-bold text-slate-700">
               {profileImageUrl ? (
@@ -262,14 +263,45 @@ function DashboardContent() {
               </span>
             </div>
           </Link>
+
+          {/* Mobile Profile Icon Only */}
+          <Link
+            href="/profile"
+            className="md:hidden flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white transition hover:border-indigo-300 hover:bg-slate-50"
+          >
+            <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-xs font-bold text-slate-700">
+              {profileImageUrl ? (
+                <img
+                  src={profileImageUrl}
+                  alt="Profile"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span>{(userName || "T").slice(0, 1).toUpperCase()}</span>
+              )}
+            </div>
+          </Link>
+
+          {/* Logout - Text on desktop, Icon on mobile */}
           <button
             onClick={() => {
               localStorage.clear();
               router.push("/login");
             }}
-            className="text-xs font-semibold px-3 py-1.5 bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-600 rounded-full transition"
+            title="Log Out"
+            className="hidden md:block text-xs font-semibold px-3 py-1.5 bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-600 rounded-full transition active:scale-95"
           >
             Log Out
+          </button>
+          <button
+            onClick={() => {
+              localStorage.clear();
+              router.push("/login");
+            }}
+            title="Log Out"
+            className="md:hidden flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white hover:border-rose-200 hover:bg-rose-50 text-slate-500 hover:text-rose-600 transition active:scale-95 text-lg"
+          >
+            ↪️
           </button>
         </div>
       </header>
@@ -581,13 +613,13 @@ function DashboardContent() {
                 <button
                   type="button"
                   onClick={() => setShowJoinModal(false)}
-                  className="flex-1 py-2 text-sm font-semibold bg-gray-800 hover:bg-gray-700 rounded-xl transition"
+                  className="flex-1 py-2.5 text-sm font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition active:scale-95"
                 >
                   Dismiss
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2 text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 rounded-xl transition"
+                  className="flex-1 py-2.5 text-sm font-semibold bg-[#5B4DFF] hover:bg-[#4B3EEB] text-white rounded-xl transition shadow-lg shadow-indigo-600/20 active:scale-95"
                 >
                   Verify & Enter
                 </button>
