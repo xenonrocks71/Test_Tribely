@@ -237,16 +237,16 @@ export default function UserProfileClient() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50 dark:from-[#090D16] dark:via-[#0F172A] dark:to-[#090D16]">
       {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur px-4 md:px-6 py-3 flex justify-between items-center shadow-sm">
+      <header className="sticky top-0 z-40 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur px-4 md:px-6 py-3 flex justify-between items-center shadow-sm">
         <Link
           href="/dashboard"
-          className="flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-slate-900 transition"
+          className="flex items-center gap-2 text-sm font-semibold text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition"
         >
           ← Back
         </Link>
-        <h1 className="text-sm font-bold tracking-widest text-slate-400 uppercase">
+        <h1 className="text-sm font-bold tracking-widest text-slate-400 dark:text-slate-500 uppercase">
           Tribely Profile
         </h1>
         <div className="w-6" />
@@ -255,11 +255,11 @@ export default function UserProfileClient() {
       <main className="max-w-5xl mx-auto px-4 md:px-6 py-6 md:py-10 space-y-6">
         {/* Status Messages */}
         {error && (
-          <div className="animate-in fade-in slide-in-from-top-2 rounded-2xl border border-red-200 bg-red-50 p-4 flex gap-3 items-start">
+          <div className="animate-in fade-in slide-in-from-top-2 rounded-2xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/40 p-4 flex gap-3 items-start">
             <span className="text-xl leading-none mt-0.5">⚠️</span>
             <div className="flex-1">
-              <p className="text-sm font-semibold text-red-900">Error</p>
-              <p className="text-sm text-red-700 mt-0.5">{error}</p>
+              <p className="text-sm font-semibold text-red-900 dark:text-red-300">Error</p>
+              <p className="text-sm text-red-700 dark:text-red-400 mt-0.5">{error}</p>
             </div>
             <button
               onClick={() => setError("")}
@@ -271,11 +271,11 @@ export default function UserProfileClient() {
         )}
 
         {successMsg && (
-          <div className="animate-in fade-in slide-in-from-top-2 rounded-2xl border border-green-200 bg-green-50 p-4 flex gap-3 items-start">
+          <div className="animate-in fade-in slide-in-from-top-2 rounded-2xl border border-green-200 dark:border-green-900/50 bg-green-50 dark:bg-green-950/40 p-4 flex gap-3 items-start">
             <span className="text-xl leading-none mt-0.5">✓</span>
             <div className="flex-1">
-              <p className="text-sm font-semibold text-green-900">Success</p>
-              <p className="text-sm text-green-700 mt-0.5">{successMsg}</p>
+              <p className="text-sm font-semibold text-green-900 dark:text-green-300">Success</p>
+              <p className="text-sm text-green-700 dark:text-green-400 mt-0.5">{successMsg}</p>
             </div>
             <button
               onClick={() => setSuccessMsg("")}
@@ -288,11 +288,11 @@ export default function UserProfileClient() {
 
         {/* Profile Header Card */}
         {profileData && (
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 md:p-8 shadow-sm overflow-hidden">
+          <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 md:p-8 shadow-sm overflow-hidden">
             <div className="flex flex-col sm:flex-row gap-6 items-start sm:items-center">
               {/* Avatar */}
               <div className="relative flex-shrink-0">
-                <div className="h-24 w-24 rounded-2xl bg-gradient-to-br from-[#5B4DFF] to-[#2F80ED] flex items-center justify-center text-3xl font-bold text-white overflow-hidden border-2 border-slate-200 shadow-md">
+                <div className="h-24 w-24 rounded-2xl bg-gradient-to-br from-[#5B4DFF] to-[#2F80ED] flex items-center justify-center text-3xl font-bold text-white overflow-hidden border-2 border-slate-200 dark:border-slate-700 shadow-md">
                   {profileImagePreview ? (
                     <img
                       src={profileImagePreview}
@@ -308,7 +308,7 @@ export default function UserProfileClient() {
               {/* Profile Info */}
               <div className="flex-1">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-3">
-                  <h2 className="text-2xl md:text-3xl font-black text-slate-950">
+                  <h2 className="text-2xl md:text-3xl font-black text-slate-950 dark:text-white">
                     {profileData.full_name}
                   </h2>
                   <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#5B4DFF]/10 border border-[#5B4DFF]/20 text-xs font-bold text-[#5B4DFF] uppercase tracking-wide w-fit">
@@ -316,10 +316,10 @@ export default function UserProfileClient() {
                     {profileData.contextual_role || "Member"}
                   </span>
                 </div>
-                <p className="text-sm text-slate-600 font-medium">
+                <p className="text-sm text-slate-600 dark:text-slate-300 font-medium">
                   {profileData.email}
                 </p>
-                <p className="text-xs text-slate-400 mt-2">
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
                   Account verified and active
                 </p>
               </div>
@@ -328,7 +328,7 @@ export default function UserProfileClient() {
         )}
 
         {/* Tabs */}
-        <div className="flex gap-2 border-b border-slate-200">
+        <div className="flex gap-2 border-b border-slate-200 dark:border-slate-800">
           {[
             { id: "profile", label: "Profile & Photo", icon: "👤" },
             { id: "settings", label: "Security & Settings", icon: "🔒" },
@@ -341,7 +341,7 @@ export default function UserProfileClient() {
               className={`flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all ${
                 activePanel === tab.id
                   ? "border-[#5B4DFF] text-[#5B4DFF]"
-                  : "border-transparent text-slate-500 hover:text-slate-700"
+                  : "border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
               }`}
             >
               <span>{tab.icon}</span>
@@ -356,18 +356,18 @@ export default function UserProfileClient() {
             {activePanel === "profile" ? (
               <>
                 {/* Profile Photo Section */}
-                <div className="rounded-3xl border border-slate-200 bg-white p-6 md:p-8 shadow-sm">
+                <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 md:p-8 shadow-sm">
                   <div className="mb-6">
-                    <h3 className="text-lg font-bold text-slate-950 flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-slate-950 dark:text-white flex items-center gap-2">
                       <span>🖼️</span> Profile Photo
                     </h3>
-                    <p className="text-sm text-slate-500 mt-1">
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
                       Your profile image appears across Tribely and in all arenas.
                     </p>
                   </div>
 
                   {/* Photo Preview */}
-                  <div className="mb-6 p-4 rounded-2xl bg-slate-50 border-2 border-dashed border-slate-200 flex items-center justify-center min-h-48">
+                  <div className="mb-6 p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border-2 border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center min-h-48">
                     {profileImagePreview ? (
                       <img
                         src={profileImagePreview}
@@ -377,7 +377,7 @@ export default function UserProfileClient() {
                     ) : (
                       <div className="text-center">
                         <span className="text-4xl block mb-2">📸</span>
-                        <p className="text-sm text-slate-500">
+                        <p className="text-sm text-slate-500 dark:text-slate-400">
                           Upload or paste an image to see preview
                         </p>
                       </div>
@@ -399,14 +399,14 @@ export default function UserProfileClient() {
                           onChange={handleProfileFileChange}
                         />
                       </label>
-                      <span className="ml-3 text-xs text-slate-500 font-medium">
+                      <span className="ml-3 text-xs text-slate-500 dark:text-slate-400 font-medium">
                         PNG, JPG, WEBP (Max 5MB)
                       </span>
                     </div>
 
                     {/* URL Input */}
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 mb-2">
                         Image URL or Data URL
                       </label>
                       <input
@@ -414,13 +414,13 @@ export default function UserProfileClient() {
                         value={profileImageDraft}
                         onChange={(e) => setProfileImageDraft(e.target.value)}
                         placeholder="Paste a direct image link or select a file above"
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#5B4DFF] focus:ring-4 focus:ring-[#5B4DFF]/10"
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-4 py-3 text-sm text-slate-900 dark:text-white outline-none transition placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-[#5B4DFF] focus:ring-4 focus:ring-[#5B4DFF]/10"
                       />
                     </div>
 
                     {/* Submit Button */}
                     <div className="flex items-center justify-between gap-4 pt-2">
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
                         💡 Preview updates instantly. Save when ready.
                       </p>
                       <button
@@ -443,24 +443,24 @@ export default function UserProfileClient() {
                 </div>
 
                 {/* Profile Details */}
-                <div className="rounded-3xl border border-slate-200 bg-white p-6 md:p-8 shadow-sm">
-                  <h3 className="text-lg font-bold text-slate-950 mb-5">
+                <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 md:p-8 shadow-sm">
+                  <h3 className="text-lg font-bold text-slate-950 dark:text-white mb-5">
                     Profile Details
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
-                      <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                    <div className="rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 p-5">
+                      <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
                         Display Name
                       </p>
-                      <p className="text-base font-semibold text-slate-950">
+                      <p className="text-base font-semibold text-slate-950 dark:text-white">
                         {profileData?.full_name || "—"}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
-                      <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                    <div className="rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 p-5">
+                      <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
                         Email Address
                       </p>
-                      <p className="text-base font-semibold text-slate-950 break-all">
+                      <p className="text-base font-semibold text-slate-950 dark:text-white break-all">
                         {profileData?.email || "—"}
                       </p>
                     </div>
@@ -470,7 +470,7 @@ export default function UserProfileClient() {
             ) : (
               <>
                 {/* Appearance & Theme Section */}
-                <div className="rounded-3xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-800 p-6 md:p-8 shadow-sm">
+                <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 md:p-8 shadow-sm">
                   <div className="mb-6">
                     <h3 className="text-lg font-bold text-slate-950 dark:text-white flex items-center gap-2">
                       <span>🎨</span> Appearance & Theme
@@ -487,7 +487,7 @@ export default function UserProfileClient() {
                       className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all ${
                         theme === "dark"
                           ? "border-[#5B4DFF] bg-[#5B4DFF]/10 text-[#5B4DFF]"
-                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 hover:border-slate-300"
+                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700"
                       }`}
                     >
                       <span className="text-2xl mb-2">🌙</span>
@@ -501,7 +501,7 @@ export default function UserProfileClient() {
                       className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all ${
                         theme === "light"
                           ? "border-[#5B4DFF] bg-[#5B4DFF]/10 text-[#5B4DFF]"
-                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 hover:border-slate-300"
+                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700"
                       }`}
                     >
                       <span className="text-2xl mb-2">☀️</span>
@@ -512,12 +512,12 @@ export default function UserProfileClient() {
                 </div>
 
                 {/* Change Password Section */}
-                <div className="rounded-3xl border border-slate-200 bg-white p-6 md:p-8 shadow-sm">
+                <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 md:p-8 shadow-sm">
                   <div className="mb-6">
-                    <h3 className="text-lg font-bold text-slate-950 flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-slate-950 dark:text-white flex items-center gap-2">
                       <span>🔐</span> Change Password
                     </h3>
-                    <p className="text-sm text-slate-500 mt-1">
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
                       Update your password to keep your account secure.
                     </p>
                   </div>
@@ -527,7 +527,7 @@ export default function UserProfileClient() {
                     className="space-y-4"
                   >
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 mb-2">
                         Current Password
                       </label>
                       <input
@@ -535,12 +535,12 @@ export default function UserProfileClient() {
                         required
                         value={currentPassword}
                         onChange={(e) => setCurrentPassword(e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#5B4DFF] focus:ring-4 focus:ring-[#5B4DFF]/10"
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-4 py-3 text-sm text-slate-900 dark:text-white outline-none transition placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-[#5B4DFF] focus:ring-4 focus:ring-[#5B4DFF]/10"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 mb-2">
                         New Password
                       </label>
                       <input
@@ -548,12 +548,12 @@ export default function UserProfileClient() {
                         required
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#5B4DFF] focus:ring-4 focus:ring-[#5B4DFF]/10"
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-4 py-3 text-sm text-slate-900 dark:text-white outline-none transition placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-[#5B4DFF] focus:ring-4 focus:ring-[#5B4DFF]/10"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 mb-2">
                         Confirm New Password
                       </label>
                       <input
@@ -561,12 +561,12 @@ export default function UserProfileClient() {
                         required
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#5B4DFF] focus:ring-4 focus:ring-[#5B4DFF]/10"
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-4 py-3 text-sm text-slate-900 dark:text-white outline-none transition placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-[#5B4DFF] focus:ring-4 focus:ring-[#5B4DFF]/10"
                       />
                     </div>
 
                     <div className="flex items-center justify-between gap-4 pt-3">
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
                         🔒 Use a strong, unique password.
                       </p>
                       <button
@@ -580,17 +580,17 @@ export default function UserProfileClient() {
                 </div>
 
                 {/* Delete Account - Danger Zone */}
-                <div className="rounded-3xl border border-red-200 bg-red-50/50 p-6 md:p-8 shadow-sm">
+                <div className="rounded-3xl border border-red-200 dark:border-red-900/50 bg-red-50/50 dark:bg-red-950/20 p-6 md:p-8 shadow-sm">
                   <div className="mb-4">
-                    <h3 className="text-lg font-bold text-red-900 flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-red-900 dark:text-red-400 flex items-center gap-2">
                       <span>⚠️</span> Danger Zone
                     </h3>
-                    <p className="text-sm text-red-700 mt-1">
+                    <p className="text-sm text-red-700 dark:text-red-300 mt-1">
                       This action is permanent and cannot be undone.
                     </p>
                   </div>
 
-                  <p className="text-sm text-red-700 mb-5 leading-relaxed">
+                  <p className="text-sm text-red-700 dark:text-red-300 mb-5 leading-relaxed">
                     Deleting your account will permanently remove your profile,
                     all arena memberships, and activity history. You will not
                     be able to recover this data.
@@ -619,31 +619,31 @@ export default function UserProfileClient() {
 
           {/* Sidebar - Quick Info */}
           <div className="lg:col-span-1 space-y-4">
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sticky top-24">
-              <h3 className="text-sm font-bold text-slate-950 mb-4">
+            <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-sm sticky top-24">
+              <h3 className="text-sm font-bold text-slate-950 dark:text-white mb-4">
                 💡 Quick Tips
               </h3>
               <div className="space-y-3">
-                <div className="rounded-xl bg-blue-50 border border-blue-100 p-3">
-                  <p className="text-xs text-blue-900 leading-relaxed">
+                <div className="rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900/50 p-3">
+                  <p className="text-xs text-blue-900 dark:text-blue-200 leading-relaxed">
                     <span className="font-bold">Profile Photo:</span> Used across
                     all arenas and your profile.
                   </p>
                 </div>
-                <div className="rounded-xl bg-purple-50 border border-purple-100 p-3">
-                  <p className="text-xs text-purple-900 leading-relaxed">
+                <div className="rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-100 dark:border-purple-900/50 p-3">
+                  <p className="text-xs text-purple-900 dark:text-purple-200 leading-relaxed">
                     <span className="font-bold">Strong Password:</span> Use
                     uppercase, numbers & symbols.
                   </p>
                 </div>
-                <div className="rounded-xl bg-green-50 border border-green-100 p-3">
-                  <p className="text-xs text-green-900 leading-relaxed">
+                <div className="rounded-xl bg-green-50 dark:bg-green-950/40 border border-green-100 dark:border-green-900/50 p-3">
+                  <p className="text-xs text-green-900 dark:text-green-200 leading-relaxed">
                     <span className="font-bold">Stay Secure:</span> Never share
                     your password.
                   </p>
                 </div>
-                <div className="rounded-xl bg-amber-50 border border-amber-100 p-3">
-                  <p className="text-xs text-amber-900 leading-relaxed">
+                <div className="rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-100 dark:border-amber-900/50 p-3">
+                  <p className="text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
                     <span className="font-bold">Account Deletion:</span> This is
                     permanent.
                   </p>

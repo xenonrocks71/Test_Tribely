@@ -184,10 +184,23 @@ def join_arena_by_invite(payload: MembershipCreate, db: Session = Depends(get_db
 @router.get("/", response_model=ApiSuccessResponse)
 def list_my_arenas(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
-    Retrieves all accountability arenas the authenticated user has joined or created.
+    Retrieves all accountability arenas the authenticated user has joined or created,
+    including their membership status and role.
     """
-    arenas = crud_arena.get_user_arenas(db, user_id=current_user.id)
-    arena_payload = [ArenaResponse.model_validate(arena, from_attributes=True).model_dump() for arena in arenas]
+    memberships = db.query(ArenaMembership).filter(ArenaMembership.user_id == current_user.id).all()
+    membership_map = {m.arena_id: m for m in memberships}
+    
+    arena_ids = list(membership_map.keys())
+    arenas = db.query(Arena).filter(Arena.id.in_(arena_ids)).all() if arena_ids else []
+    
+    arena_payload = []
+    for arena in arenas:
+        item = ArenaResponse.model_validate(arena, from_attributes=True).model_dump()
+        mem = membership_map.get(arena.id)
+        item["membership_status"] = mem.status if mem else "approved"
+        item["user_role"] = mem.role if mem else ("admin" if arena.creator_id == current_user.id else "member")
+        arena_payload.append(item)
+
     return success_response(arena_payload)
 
 @router.post("/join-by-code", response_model=ApiSuccessResponse)
@@ -224,18 +237,21 @@ def join_arena_by_code(payload: dict, db: Session = Depends(get_db), current_use
     
     if existing_membership:
         if existing_membership.status == "approved":
-            return success_response({"detail": "You are already an approved member of this arena.", "arena_id": arena.id})
-        return success_response({"detail": "Your join request is still pending admin approval.", "arena_id": arena.id})
+            return success_response({"detail": "You are already an approved member of this arena.", "arena_id": arena.id, "membership_status": "approved"})
+        return success_response({"detail": "Your join request is still pending admin approval.", "arena_id": arena.id, "membership_status": "pending"})
         
+    initial_status = "pending" if arena.is_private else "approved"
     new_membership = ArenaMembership(
         arena_id=arena.id,
         user_id=current_user.id,
-        status="pending"
+        status=initial_status,
+        role="member"
     )
     db.add(new_membership)
     db.commit()
     
-    return success_response({"detail": "Join request submitted successfully. Awaiting admin approval.", "arena_id": arena.id})
+    msg = "Join request submitted successfully. Awaiting admin approval." if initial_status == "pending" else "Joined arena successfully."
+    return success_response({"detail": msg, "arena_id": arena.id, "membership_status": initial_status})
 
 @router.get("/{arena_id}/members", response_model=ApiSuccessResponse)
 def get_arena_members_list(arena_id: int, db: Session = Depends(get_db)):

@@ -14,19 +14,17 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("dark");
+  const [theme, setThemeState] = useState<Theme>("light");
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
     const savedTheme = localStorage.getItem("tribely_theme") as Theme | null;
-    if (savedTheme === "light" || savedTheme === "dark") {
-      setThemeState(savedTheme);
-      applyTheme(savedTheme);
-    } else {
-      // Default theme is dark
-      applyTheme("dark");
-    }
+    const initialTheme: Theme =
+      savedTheme === "light" || savedTheme === "dark" ? savedTheme : "light";
+    
+    setThemeState(initialTheme);
+    applyTheme(initialTheme);
   }, []);
 
   const applyTheme = (newTheme: Theme) => {

@@ -19,7 +19,7 @@ class MembershipAction(BaseModel):
     user_id: int
     arena_id: int
 
-@router.get("/arenas/{arena_id}/requests")
+@router.get("/{arena_id}/requests")
 def get_pending_arena_requests(arena_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
     Fetches pending membership requests and eagerly loads user full names.

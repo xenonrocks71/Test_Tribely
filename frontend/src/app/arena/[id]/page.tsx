@@ -70,18 +70,16 @@ export default function ArenaRoomPage() {
   const [proofUrl, setProofUrl] = useState("");
   const [proofFileName, setProofFileName] = useState("");
   const [selectedProofFile, setSelectedProofFile] = useState<File | null>(null);
-  const [selectedProofPreviewUrl, setSelectedProofPreviewUrl] = useState<
-    string | null
-  >(null);
+  const [selectedProofPreviewUrl, setSelectedProofPreviewUrl] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [viewerImageUrl, setViewerImageUrl] = useState<string | null>(null);
   const [viewerZoom, setViewerZoom] = useState(1);
 
-  // Mobile Views Toggles
+  // Layout View Controls
   const [arenaMembers, setArenaMembers] = useState<ArenaMember[]>([]);
   const [showMembersModal, setShowMembersModal] = useState(false);
-  const [showLedgerModal, setShowLedgerModal] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
+  const [showMobileLedger, setShowMobileLedger] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
@@ -98,73 +96,113 @@ export default function ArenaRoomPage() {
   const renderAvatar = (
     name: string,
     imageUrl?: string | null,
-    sizeClass = "h-9 w-9",
+    className: string = "w-8 h-8 rounded-full text-xs font-bold shrink-0"
   ) => {
     if (imageUrl) {
       return (
-        <div
-          className={`${sizeClass} shrink-0 overflow-hidden rounded-full border border-gray-700 bg-gray-800`}
-        >
-          <img
-            src={imageUrl}
-            alt={`${name} profile`}
-            className="h-full w-full object-cover"
-          />
-        </div>
+        <img
+          src={imageUrl}
+          alt={name}
+          className={`${className} object-cover border border-slate-200 dark:border-slate-800`}
+        />
       );
     }
-
     return (
       <div
-        className={`${sizeClass} shrink-0 overflow-hidden rounded-full border border-gray-700 bg-linear-to-br from-gray-800 to-gray-900 flex items-center justify-center text-[11px] font-bold text-white`}
+        className={`${className} bg-gradient-to-tr from-[#0095F6] to-[#A855F7] text-white flex items-center justify-center shadow-xs`}
       >
-        {getInitials(name || "Member")}
+        {getInitials(name || "User")}
       </div>
     );
   };
 
-  useEffect(() => {
-    const storedToken = localStorage.getItem("tribely_token");
-    const storedUserId = localStorage.getItem("tribely_user_id");
+  const fetchHistory = async () => {
+    try {
+      const res = await api.get(`/api/activity/arena/${id}/history`);
+      const payload = res.data?.data;
 
-    if (!storedToken || !storedUserId) {
-      router.push("/login");
-      return;
+      if (payload) {
+        if (Array.isArray(payload.submissions)) setSubmissions(payload.submissions);
+        if (Array.isArray(payload.messages)) setMessages(payload.messages);
+      }
+    } catch (err: any) {
+      console.error("Failed to load historical telemetry:", err);
+      if (err?.response?.status === 403) {
+        setError("Membership approval required to access this arena.");
+      }
     }
+  };
 
-    const parsedUserId = Number(storedUserId);
-    setUserId(parsedUserId);
+  const fetchPendingRequests = async () => {
+    try {
+      const res = await api.get(`/api/admin/arenas/${id}/requests`);
+      const data = res.data?.data;
+      if (Array.isArray(data)) {
+        setPendingRequests(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch pending requests", err);
+    }
+  };
+
+  const fetchInviteAssets = async () => {
+    try {
+      const res = await api.get(`/api/admin/arenas/${id}/invite-assets`);
+      if (res.data?.data) {
+        setInviteAssets(res.data.data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch invite assets", err);
+    }
+  };
+
+  const fetchMembersList = async () => {
+    try {
+      const res = await api.get(`/api/arenas/${id}/members`);
+      if (Array.isArray(res.data?.data)) {
+        setArenaMembers(res.data.data);
+      }
+    } catch (err) {
+      console.error("Failed to load arena members list", err);
+    }
+  };
+
+  useEffect(() => {
+    const localUserId = localStorage.getItem("tribely_user_id");
+    if (localUserId) setUserId(Number(localUserId));
 
     fetchHistory();
-    fetchArenaMembers();
+    fetchMembersList();
+
+    const syncPendingProof = async () => {
+      try {
+        const saved = localStorage.getItem(`tribely_pending_proof_${id}`);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          await api.post("/api/activity/submit", parsed);
+          localStorage.removeItem(`tribely_pending_proof_${id}`);
+          fetchHistory();
+        }
+      } catch (e) {}
+    };
+    syncPendingProof();
 
     const checkAdminPrivileges = async () => {
       try {
-        const res = await api.get("/api/arenas/");
-        const currentArena = res.data?.data?.find(
-          (a: any) => a.id === Number(id),
-        );
+        const arenasRes = await api.get("/api/arenas/");
+        const userArenas = arenasRes.data?.data || [];
+        const currentArena = userArenas.find((a: any) => a.id === Number(id));
 
         if (currentArena) {
-          setArenaName(currentArena.name || `Chamber #${id}`);
-          setArenaProofType(
-            (currentArena.proof_type || "text") as ArenaProofType,
-          );
+          setArenaName(currentArena.name);
+          setArenaProofType((currentArena.proof_type as ArenaProofType) || "text");
           setArenaDeadlineTime(currentArena.deadline_time || "10:00 PM");
 
-          if (currentArena.creator_id === parsedUserId) {
+          if (currentArena.user_role === "admin") {
             setIsAdmin(true);
-            const reqs = await api.get(
-              `/api/admin/arenas/arenas/${id}/requests`,
-            );
-            setPendingRequests(reqs.data?.data || []);
-            const assets = await api.get(
-              `/api/admin/arenas/${id}/invite-assets`,
-            );
-            setInviteAssets(assets.data?.data || null);
+            fetchPendingRequests();
+            fetchInviteAssets();
           }
-        } else {
-          setArenaName(`Chamber #${id}`);
         }
       } catch (err) {
         console.error("Admin verification routine error:", err);
@@ -177,7 +215,7 @@ export default function ArenaRoomPage() {
     const wsUrl = `${wsBase}/ws/arena/${id}`;
     const wsToken = localStorage.getItem("tribely_token");
     const ws = new WebSocket(
-      wsToken ? `${wsUrl}?token=${encodeURIComponent(wsToken)}` : wsUrl,
+      wsToken ? `${wsUrl}?token=${encodeURIComponent(wsToken)}` : wsUrl
     );
     wsRef.current = ws;
 
@@ -195,7 +233,7 @@ export default function ArenaRoomPage() {
     };
 
     ws.onerror = () => {
-      setError("Connection stream dropped. Syncing...");
+      // Silent connection handling - no annoying banner
     };
 
     return () => {
@@ -218,734 +256,568 @@ export default function ArenaRoomPage() {
     if (period === "AM" && hour === 12) hour = 0;
 
     const now = new Date();
-    const targetDeadline = new Date(
+    return new Date(
       now.getFullYear(),
       now.getMonth(),
       now.getDate(),
       hour,
       minute,
       0,
-      0,
+      0
     );
-
-    return targetDeadline;
   };
 
-  const getActiveSubmissionWindow = () => {
-    const now = new Date();
-    const todayDeadline = parseDeadlineDate(arenaDeadlineTime);
+  const getActiveProofWindowStart = () => {
+    const cutoff = parseDeadlineDate(arenaDeadlineTime);
+    const windowStart = new Date(cutoff.getTime() - 24 * 60 * 60 * 1000);
+    return windowStart;
+  };
 
-    if (now <= todayDeadline) {
-      const windowStart = new Date(todayDeadline);
-      windowStart.setDate(windowStart.getDate() - 1);
-      return {
-        windowStart,
-        windowEnd: todayDeadline,
-      };
+  const hasUserSubmittedInActiveWindow = () => {
+    if (!userId) return false;
+    const windowStart = getActiveProofWindowStart();
+
+    return submissions.some((sub) => {
+      if (sub.user_id !== userId) return false;
+      const submittedAtDate = new Date(sub.submitted_at);
+      return submittedAtDate >= windowStart;
+    });
+  };
+
+  const handleProofFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setSelectedProofFile(file);
+    setProofFileName(file.name);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setSelectedProofPreviewUrl(dataUrl);
+      setProofUrl(dataUrl);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSendProof = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    if (hasUserSubmittedInActiveWindow()) {
+      setError("Proof already verified for the current active window.");
+      return;
     }
 
-    const windowEnd = new Date(todayDeadline);
-    windowEnd.setDate(windowEnd.getDate() + 1);
-    return {
-      windowStart: todayDeadline,
-      windowEnd,
+    if (!proofUrl.trim()) {
+      setError("Please provide your daily proof.");
+      return;
+    }
+
+    const clientSubmittedAt = new Date().toISOString();
+    const pendingPayload = {
+      arena_id: Number(id),
+      proof_url: proofUrl,
+      client_submitted_at: clientSubmittedAt,
     };
+
+    try {
+      localStorage.setItem(`tribely_pending_proof_${id}`, JSON.stringify(pendingPayload));
+    } catch (e) {}
+
+    try {
+      await api.post("/api/activity/submit", pendingPayload);
+
+      try {
+        localStorage.removeItem(`tribely_pending_proof_${id}`);
+      } catch (e) {}
+
+      setProofUrl("");
+      setProofFileName("");
+      setSelectedProofFile(null);
+      setSelectedProofPreviewUrl(null);
+      fetchHistory();
+    } catch (err: any) {
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === "string" ? detail : (detail?.message || "Proof submission saved locally. Auto-syncing with server...");
+      setError(msg);
+    }
   };
 
-  const getWindowEndLabel = () => {
-    const { windowEnd } = getActiveSubmissionWindow();
-    const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(now.getDate() + 1);
-
-    const isToday = windowEnd.toDateString() === now.toDateString();
-    const isTomorrow = windowEnd.toDateString() === tomorrow.toDateString();
-
-    const dayLabel = isToday
-      ? "Today"
-      : isTomorrow
-        ? "Tomorrow"
-        : windowEnd.toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-          });
-
-    const timeLabel = windowEnd.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
-    return `${dayLabel}, ${timeLabel}`;
+  const handleVoteSubmission = async (
+    submissionId: number,
+    voteType: "upvote" | "downvote"
+  ) => {
+    try {
+      await api.post(`/api/activity/submission/${submissionId}/vote`, {
+        vote_type: voteType,
+      });
+      fetchHistory();
+    } catch (err: any) {
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === "string" ? detail : (detail?.message || "Vote failed.");
+      alert(msg);
+    }
   };
 
-  const getProofComposerLabel = () => {
-    if (arenaProofType === "image") return "Image proof only";
-    if (arenaProofType === "link") return "Link proof only";
-    return "Text proof only";
+  const handleSendChatMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || !wsRef.current) return;
+
+    wsRef.current.send(
+      JSON.stringify({
+        content: chatInput,
+        message_type: "text",
+      })
+    );
+    setChatInput("");
   };
 
-  const getProofPlaceholder = () => {
-    if (arenaProofType === "image")
-      return "Upload an image file or paste a direct image URL";
-    if (arenaProofType === "link") return "Paste a valid http(s) link";
-    return "Write your proof here, like a short completion note";
+  const handleApprove = async (reqUserId: number) => {
+    try {
+      await api.post("/api/admin/arenas/approve", {
+        arena_id: Number(id),
+        user_id: reqUserId,
+      });
+      fetchPendingRequests();
+      fetchMembersList();
+    } catch (err: any) {
+      setError("Failed to approve membership.");
+    }
   };
 
-  const isImageProof = (proofValue: string) =>
-    proofValue.startsWith("data:image/") ||
-    /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(proofValue);
+  const handleReject = async (reqUserId: number) => {
+    try {
+      await api.post("/api/admin/arenas/reject", {
+        arena_id: Number(id),
+        user_id: reqUserId,
+      });
+      fetchPendingRequests();
+    } catch (err: any) {
+      setError("Failed to reject membership.");
+    }
+  };
 
   const openImageViewer = (imageUrl: string) => {
     setViewerImageUrl(imageUrl);
     setViewerZoom(1);
   };
 
-  const handleProofFileSelect = async (
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const selectedFile = event.target.files?.[0];
-    if (!selectedFile) return;
-
-    if (!selectedFile.type.startsWith("image/")) {
-      alert("Please choose an image file.");
-      event.target.value = "";
-      return;
-    }
-
-    const previewReader = new FileReader();
-    previewReader.onload = () => {
-      if (typeof previewReader.result === "string") {
-        setSelectedProofPreviewUrl(previewReader.result);
-      }
-    };
-    previewReader.readAsDataURL(selectedFile);
-
-    setSelectedProofFile(selectedFile);
-    setProofFileName(selectedFile.name);
-    setProofUrl("");
+  const closeImageViewer = () => {
+    setViewerImageUrl(null);
+    setViewerZoom(1);
   };
 
-  const readFileAsDataUrl = (file: File) =>
-    new Promise<string>((resolve, reject) => {
-      const fileReader = new FileReader();
-      fileReader.onload = () => {
-        if (typeof fileReader.result === "string") {
-          resolve(fileReader.result);
-        } else {
-          try {
-            reject(new Error("Failed to read selected image."));
-          } catch {}
-        }
-      };
-      fileReader.onerror = () =>
-        reject(new Error("Failed to read selected image."));
-      fileReader.readAsDataURL(file);
-    });
-
-  const fetchHistory = async () => {
-    try {
-      const response = await api.get(`/activity/arena/${id}/history`);
-      setSubmissions(response.data?.data?.submissions || []);
-      setMessages(response.data?.data?.messages || []);
-    } catch (err: any) {
-      setError("Access Denied: Sync mismatch.");
-    }
+  const getProofComposerLabel = () => {
+    if (arenaProofType === "image") return "Image File Upload";
+    if (arenaProofType === "link") return "External Link URL";
+    return "Mandate Text Proof";
   };
 
-  const fetchArenaMembers = async () => {
-    try {
-      const response = await api.get(`/api/arenas/${id}/members`);
-      setArenaMembers(response.data?.data || []);
-    } catch (err) {
-      console.error("Failed parsing members ledger list.");
-    }
+  const getProofPlaceholder = () => {
+    if (arenaProofType === "image") return "Upload your daily photo proof...";
+    if (arenaProofType === "link") return "https://example.com/proof...";
+    return "Describe your completed mandate today...";
   };
 
-  const hasUserSubmittedInActiveWindow = () => {
-    const { windowStart, windowEnd } = getActiveSubmissionWindow();
-
-    return submissions.some(
-      (sub) =>
-        sub.user_id === userId &&
-        new Date(sub.submitted_at) >= windowStart &&
-        new Date(sub.submitted_at) < windowEnd,
-    );
+  const getWindowEndLabel = () => {
+    return `${arenaDeadlineTime} Today`;
   };
-
-  const formatLedgerGroupDate = (dateString: string) => {
-    try {
-      const dateTarget = new Date(dateString);
-      const today = new Date();
-
-      const targetMidnight = new Date(
-        dateTarget.getFullYear(),
-        dateTarget.getMonth(),
-        dateTarget.getDate(),
-      );
-      const todayMidnight = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-      );
-
-      const differenceInMs = todayMidnight.getTime() - targetMidnight.getTime();
-      const differenceInDays = Math.round(
-        differenceInMs / (1000 * 60 * 60 * 24),
-      );
-
-      if (differenceInDays === 0) return "Today";
-      if (differenceInDays === 1) return "Yesterday";
-
-      return dateTarget.toLocaleDateString(undefined, {
-        weekday: "long",
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      });
-    } catch {
-      return dateString;
-    }
-  };
-
-  const groupSubmissionsByDate = (submissionsToGroup: Submission[]) => {
-    const mappedGroups: { [key: string]: Submission[] } = {};
-    const sorted = [...submissionsToGroup].sort(
-      (a, b) =>
-        new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime(),
-    );
-
-    sorted.forEach((sub) => {
-      const headerLabel = formatLedgerGroupDate(sub.submitted_at);
-      if (!mappedGroups[headerLabel]) {
-        mappedGroups[headerLabel] = [];
-      }
-      mappedGroups[headerLabel].push(sub);
-    });
-
-    return mappedGroups;
-  };
-
-  const handleSendProof = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!userId) return;
-
-    let proofContent = proofUrl.trim();
-    if (arenaProofType === "image" && selectedProofFile) {
-      proofContent = await readFileAsDataUrl(selectedProofFile);
-    }
-
-    if (!proofContent) return;
-
-    if (hasUserSubmittedInActiveWindow()) {
-      alert(
-        "Submission locked: You have already filed one proof in the current deadline window.",
-      );
-      return;
-    }
-
-    try {
-      await api.post("/activity/submit", {
-        arena_id: Number(id),
-        proof_url: proofContent,
-      });
-      setProofUrl("");
-      setProofFileName("");
-      setSelectedProofFile(null);
-      setSelectedProofPreviewUrl(null);
-      if (proofFileInputRef.current) {
-        proofFileInputRef.current.value = "";
-      }
-      fetchHistory();
-      alert("Proof filed successfully inside tracking stream!");
-    } catch (err: any) {
-      alert(
-        err.response?.data?.detail || "Proof processing failure encountered.",
-      );
-    }
-  };
-
-  const handleVoteProof = async (submissionId: number, type: "up" | "down") => {
-    try {
-      await api.post("/activity/vote", {
-        submission_id: submissionId,
-        vote_type: type,
-      });
-      fetchHistory();
-    } catch (err: any) {
-      alert(
-        err.response?.data?.detail ||
-          "Could not register feedback response loop.",
-      );
-    }
-  };
-
-  const handleSendChatMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim() || !wsRef.current || !userId) return;
-
-    const payload = {
-      user_id: userId,
-      content: chatInput.trim(),
-    };
-
-    wsRef.current.send(JSON.stringify(payload));
-    setChatInput("");
-  };
-
-  const handleProcessRequest = async (
-    targetUserId: number,
-    routeAction: "approve" | "reject",
-  ) => {
-    try {
-      await api.post(`/api/admin/arenas/${routeAction}`, {
-        user_id: targetUserId,
-        arena_id: Number(id),
-      });
-
-      const reqs = await api.get(`/api/admin/arenas/arenas/${id}/requests`);
-      setPendingRequests(reqs.data?.data || []);
-      fetchArenaMembers();
-    } catch (err) {
-      alert("Could not update membership parameters.");
-    }
-  };
-
-  const handleRemoveMember = async (targetUserId: number) => {
-    if (!confirm("Remove this user from the arena?")) return;
-    try {
-      await api.post(`/api/admin/arenas/remove`, {
-        user_id: targetUserId,
-        arena_id: Number(id),
-      });
-      fetchArenaMembers();
-    } catch (err: any) {
-      alert(
-        err.response?.data?.detail || "Could not execute participant removal.",
-      );
-    }
-  };
-
-  const groupedSubmissions = groupSubmissionsByDate(submissions);
 
   return (
-    <div className="min-h-screen bg-[#F3F4F6] text-slate-900 flex flex-col h-screen overflow-hidden relative font-sans select-none">
-      {/* APP HEADER */}
-      <header className="border-b border-slate-200 bg-white/95 backdrop-blur-md px-4 py-3 flex flex-col space-y-2 shrink-0 z-40 shadow-sm">
-        <div className="flex justify-between items-center">
-          <div className="flex items-center space-x-3 min-w-0">
-            <Link
-              href="/dashboard"
-              className="text-slate-700 hover:text-slate-950 font-bold text-2xl leading-none pr-1"
-            >
-              ←
-            </Link>
+    <div className="h-screen w-full flex flex-col bg-[#F8FAFC] dark:bg-[#090D16] text-slate-900 dark:text-slate-100 overflow-hidden font-sans transition-colors duration-200">
+      {/* 1. INSTAGRAM STYLE HEADER BAR */}
+      <header className="sticky top-0 z-30 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/90 dark:bg-[#090D16]/90 backdrop-blur-md px-4 py-3 shrink-0 flex items-center justify-between shadow-xs">
+        <div className="flex items-center space-x-3 min-w-0">
+          <Link
+            href="/dashboard"
+            className="text-slate-600 dark:text-slate-300 hover:text-[#0095F6] transition font-bold text-base p-1 rounded-full"
+            title="Back to Dashboard"
+          >
+            ←
+          </Link>
+          <div className="flex items-center gap-2.5 min-w-0">
+            {renderAvatar(arenaName || `Arena #${id}`, null, "w-9 h-9 rounded-full shrink-0")}
             <div className="min-w-0">
-              <h1 className="truncate text-sm font-bold text-slate-950 tracking-wide capitalize">
+              <h1 className="truncate text-sm font-extrabold text-slate-900 dark:text-white tracking-tight capitalize">
                 {arenaName || `Chamber #${id}`}
               </h1>
-              <p className="text-[10px] text-slate-500 flex items-center gap-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                Active Now
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>Active Battle Room</span>
               </p>
             </div>
           </div>
+        </div>
 
-          <div className="flex items-center space-x-1.5">
+        <div className="flex items-center space-x-2 shrink-0">
+          {/* Mobile Ledger Drawer Toggle */}
+          <button
+            onClick={() => setShowMobileLedger(!showMobileLedger)}
+            className="lg:hidden text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-full active:bg-slate-200 dark:active:bg-slate-700 transition font-bold flex items-center gap-1.5 shadow-xs"
+          >
+            <span>📋 Ledger</span>
+          </button>
+
+          <button
+            onClick={() => setShowMembersModal(true)}
+            className="text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-full active:bg-slate-200 dark:active:bg-slate-700 transition font-medium"
+          >
+            👥 Info ({arenaMembers.length})
+          </button>
+
+          {isAdmin && (
             <button
-              onClick={() => setShowLedgerModal(true)}
-              className="text-[11px] bg-slate-100 border border-slate-200 text-slate-700 px-3 py-1.5 rounded-full active:bg-slate-200 transition font-medium"
+              onClick={() => setShowAdminModal(true)}
+              className="text-xs bg-[#0095F6] hover:bg-blue-600 text-white font-bold px-3 py-1.5 rounded-full transition shadow-xs"
             >
-              📋 Ledger
+              ⚙️ Admin ({pendingRequests.length})
             </button>
-            <button
-              onClick={() => setShowMembersModal(true)}
-              className="text-[11px] bg-slate-100 border border-slate-200 text-slate-700 px-3 py-1.5 rounded-full active:bg-slate-200 transition font-medium"
-            >
-              👥 Info ({arenaMembers.length})
-            </button>
-            {isAdmin && (
-              <button
-                onClick={() => setShowAdminModal(true)}
-                className="text-[11px] bg-indigo-600 border border-indigo-500 text-white px-3 py-1.5 rounded-full active:bg-indigo-700 transition font-bold"
-              >
-                ⚙️ Admin ({pendingRequests.length})
-              </button>
-            )}
-          </div>
+          )}
         </div>
       </header>
 
       {error && (
-        <div className="bg-rose-50 border-b border-rose-200 text-rose-700 p-1.5 text-[10px] text-center shrink-0">
+        <div className="bg-rose-50 dark:bg-rose-950/40 border-b border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 p-2 text-xs text-center shrink-0">
           {error}
         </div>
       )}
 
-      {/* CHAT FRAME */}
-      <div className="flex-1 flex flex-col bg-[#F3F4F6] overflow-hidden relative">
-        <div className="flex-1 px-4 py-4 overflow-y-auto flex flex-col-reverse gap-3.5 pb-24">
-          <div ref={chatBottomRef} />
-          {messages.length === 0 ? (
-            <p className="text-xs text-slate-500 italic text-center my-auto">
-              Chamber quiet. Send a message to start.
-            </p>
-          ) : (
-            messages.map((msg, idx) => {
-              const isMe = msg.user_id === userId;
-              return (
-                <div
-                  key={msg.id || idx}
-                  className={`flex max-w-[90%] items-end gap-2 ${isMe ? "self-end flex-row-reverse" : "self-start"}`}
-                >
-                  {!isMe &&
-                    renderAvatar(msg.sender_name, msg.sender_avatar_url)}
-                  <div className="flex min-w-0 max-w-full flex-col">
-                    {!isMe && (
-                      <span className="mb-1 ml-1.5 text-[10px] font-semibold text-slate-500">
-                        {msg.sender_name}
-                      </span>
-                    )}
-                    <div
-                      className={`w-fit max-w-[78vw] md:max-w-md rounded-[22px] px-4 py-3 text-[13px] leading-snug whitespace-pre-wrap wrap-break-word shadow-sm ${
-                        isMe
-                          ? "bg-[#EAEAEA] text-slate-900 rounded-br-md"
-                          : "bg-white border border-slate-200 text-slate-900 rounded-bl-md"
-                      }`}
-                    >
-                      {msg.content}
-                    </div>
-                  </div>
+      {/* 2. MAIN LAYOUT CONTAINER (SIDE-BY-SIDE ON DESKTOP lg:, SLIDE DRAWER ON MOBILE) */}
+      <div className="flex-1 flex min-h-0 overflow-hidden relative">
+        {/* LEFT COLUMN: INSTAGRAM CHATTING ROOM */}
+        <div className="flex-1 min-w-0 flex flex-col bg-[#F8FAFC] dark:bg-[#090D16] relative border-r border-slate-200/60 dark:border-slate-800/60">
+          {/* MESSAGES FEED */}
+          <div className="flex-1 px-3 sm:px-4 py-4 overflow-y-auto flex flex-col-reverse gap-3 pb-24">
+            <div ref={chatBottomRef} />
+
+            {messages.length === 0 ? (
+              <div className="my-auto text-center py-12 px-4">
+                <div className="w-16 h-16 rounded-full bg-indigo-50 dark:bg-slate-900 text-[#0095F6] text-2xl flex items-center justify-center mx-auto mb-3">
+                  💬
                 </div>
-              );
-            })
-          )}
-        </div>
-
-        {/* CHAT INPUT BAR */}
-        <form
-          onSubmit={handleSendChatMessage}
-          className="absolute bottom-0 inset-x-0 p-3 bg-[#F3F4F6]/95 backdrop-blur-md border-t border-slate-200 flex gap-2 items-center shrink-0 z-10"
-        >
-          <input
-            type="text"
-            required
-            placeholder="Type dispatch message..."
-            className="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-full text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-          />
-          <button
-            type="submit"
-            className="px-5 py-3 bg-[#5B4DFF] active:bg-[#4B3EEB] font-bold text-sm text-white rounded-full min-w-17.5 text-center transition shadow-sm"
-          >
-            Send
-          </button>
-        </form>
-      </div>
-
-      {/* MODAL 1: ROOM ACTIVITY LEDGER MODAL */}
-      {showLedgerModal && (
-        <div className="fixed inset-0 bg-slate-900/25 z-50 flex flex-col justify-end backdrop-blur-sm">
-          <div className="bg-white border-t border-slate-200 rounded-t-[28px] max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
-            <div className="flex justify-between items-center p-4 border-b border-slate-200 shrink-0 bg-white rounded-t-[28px]">
-              <div>
-                <h3 className="text-sm font-extrabold text-slate-950 tracking-wide">
-                  Ledger Room
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Live proof stream and verification activity
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">No Messages Yet</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs mx-auto">
+                  Start the conversation! Drop a dispatch in your battle room.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] px-2 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 font-semibold">
-                  Live
-                </span>
-                <button
-                  onClick={() => setShowLedgerModal(false)}
-                  className="text-xs bg-slate-100 text-slate-700 px-3 py-1.5 rounded-full border border-slate-200 hover:bg-slate-200 transition"
-                >
-                  Close
-                </button>
-              </div>
+            ) : (
+              messages.map((msg, idx) => {
+                const isMe = msg.user_id === userId;
+                return (
+                  <div
+                    key={msg.id || idx}
+                    className={`flex max-w-[88%] sm:max-w-[75%] items-end gap-2 ${
+                      isMe ? "self-end flex-row-reverse" : "self-start"
+                    }`}
+                  >
+                    {!isMe && renderAvatar(msg.sender_name, msg.sender_avatar_url, "w-7 h-7 rounded-full shrink-0 mb-1")}
+
+                    <div className="flex min-w-0 max-w-full flex-col">
+                      {!isMe && (
+                        <span className="mb-1 ml-1.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                          {msg.sender_name}
+                        </span>
+                      )}
+                      <div
+                        className={`w-fit max-w-[78vw] sm:max-w-md px-4 py-2.5 text-[13.5px] leading-relaxed whitespace-pre-wrap wrap-break-word shadow-xs transition ${
+                          isMe
+                            ? "bg-gradient-to-r from-[#0095F6] via-indigo-600 to-[#A855F7] text-white rounded-[22px] rounded-br-[4px]"
+                            : "bg-white dark:bg-[#262626] border border-slate-200/80 dark:border-slate-800 text-slate-900 dark:text-white rounded-[22px] rounded-bl-[4px]"
+                        }`}
+                      >
+                        {msg.content}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* INSTAGRAM CHAT INPUT BAR */}
+          <form
+            onSubmit={handleSendChatMessage}
+            className="absolute bottom-0 inset-x-0 p-3 bg-white/95 dark:bg-[#090D16]/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 flex gap-2 items-center shrink-0 z-20"
+          >
+            {/* Blue Camera Icon */}
+            <button
+              type="button"
+              onClick={() => setShowMobileLedger(true)}
+              className="p-2.5 rounded-full bg-[#0095F6] text-white hover:bg-blue-600 active:scale-95 transition shrink-0 shadow-xs"
+              title="Upload Proof / View Ledger"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+
+            <input
+              type="text"
+              required
+              placeholder="Message..."
+              className="flex-1 px-4 py-2.5 bg-[#F1F5F9] dark:bg-[#1E293B] border border-slate-200/80 dark:border-slate-700/80 rounded-full text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0095F6] transition"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+            />
+
+            <button
+              type="submit"
+              className="px-3.5 py-2 font-bold text-sm text-[#0095F6] dark:text-[#3897F0] hover:opacity-80 transition shrink-0 active:scale-95"
+            >
+              Send
+            </button>
+          </form>
+        </div>
+
+        {/* RIGHT COLUMN: LEDGER ROOM (SIDE-BY-SIDE ON DESKTOP lg:, SLIDE-OVER DRAWER ON MOBILE) */}
+        {/* Mobile Backdrop */}
+        {showMobileLedger && (
+          <div
+            onClick={() => setShowMobileLedger(false)}
+            className="lg:hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-40"
+          />
+        )}
+
+        <div
+          className={`fixed lg:relative inset-y-0 right-0 z-40 w-full sm:w-[420px] lg:w-[380px] xl:w-[440px] shrink-0 bg-white dark:bg-[#0F172A] border-l border-slate-200 dark:border-slate-800 flex flex-col transition-transform duration-300 ease-in-out shadow-2xl lg:shadow-none ${
+            showMobileLedger ? "translate-x-0" : "translate-x-full lg:translate-x-0"
+          }`}
+        >
+          {/* LEDGER HEADER */}
+          <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-800 shrink-0 bg-white dark:bg-[#0F172A]">
+            <div>
+              <h3 className="text-sm font-extrabold text-slate-950 dark:text-white tracking-wide flex items-center gap-2">
+                <span>📋 Ledger & Proof Stream</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                Daily verification activity & votes
+              </p>
             </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-semibold">
+                Live Stream
+              </span>
+              <button
+                onClick={() => setShowMobileLedger(false)}
+                className="lg:hidden text-xs bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition font-semibold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
 
-            <div className="p-4 overflow-y-auto flex-1 space-y-4 bg-[#F8FAFC]">
-              <div className="rounded-3xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-bold">
-                    Proof Mode
-                  </span>
-                  <span className="text-[10px] px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 font-semibold">
-                    {getProofComposerLabel()}
-                  </span>
-                  <span className="text-[10px] px-2 py-1 rounded-full font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200">
-                    Window closes: {getWindowEndLabel()}
-                  </span>
-                </div>
+          {/* LEDGER CONTENT & SUBMISSION COMPOSER */}
+          <div className="p-4 overflow-y-auto flex-1 space-y-4 bg-[#F8FAFC] dark:bg-[#090D16]">
+            {/* PROOF COMPOSER BOX */}
+            <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#1E293B]/60 p-4 space-y-3 shadow-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400 font-bold">
+                  Submit Mandate
+                </span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900/50 font-semibold">
+                  {getProofComposerLabel()}
+                </span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900/50">
+                  Closes: {getWindowEndLabel()}
+                </span>
+              </div>
 
-                <form onSubmit={handleSendProof} className="space-y-3">
-                  <div className="rounded-2xl border border-slate-200 bg-[#F8FAFC] p-3">
-                    {arenaProofType === "text" ? (
-                      <textarea
+              <form onSubmit={handleSendProof} className="space-y-3">
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-[#F8FAFC] dark:bg-[#090D16] p-3">
+                  {arenaProofType === "text" ? (
+                    <textarea
+                      required
+                      disabled={hasUserSubmittedInActiveWindow()}
+                      rows={3}
+                      placeholder={
+                        hasUserSubmittedInActiveWindow()
+                          ? "Proof submitted for this active window."
+                          : getProofPlaceholder()
+                      }
+                      className="w-full resize-none bg-transparent text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none disabled:opacity-40"
+                      value={proofUrl}
+                      onChange={(e) => setProofUrl(e.target.value)}
+                    />
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={hasUserSubmittedInActiveWindow()}
+                          onClick={() => proofFileInputRef.current?.click()}
+                          className="px-3 py-1.5 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition disabled:opacity-40"
+                        >
+                          Upload Image
+                        </button>
+                        <input
+                          ref={proofFileInputRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleProofFileSelect}
+                          disabled={hasUserSubmittedInActiveWindow()}
+                        />
+                        {proofFileName && (
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                            Selected: {proofFileName}
+                          </span>
+                        )}
+                      </div>
+
+                      {selectedProofPreviewUrl && (
+                        <button
+                          type="button"
+                          onClick={() => openImageViewer(selectedProofPreviewUrl)}
+                          className="group block w-full overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-left"
+                        >
+                          <img
+                            src={selectedProofPreviewUrl}
+                            alt="Selected proof preview"
+                            className="max-h-36 w-full object-cover transition group-hover:scale-[1.01]"
+                            loading="lazy"
+                          />
+                        </button>
+                      )}
+
+                      <input
+                        type="text"
                         required
                         disabled={hasUserSubmittedInActiveWindow()}
-                        rows={4}
                         placeholder={
                           hasUserSubmittedInActiveWindow()
-                            ? "You have submitted your proof for this window."
+                            ? "Proof submitted for this active window."
                             : getProofPlaceholder()
                         }
-                        className="w-full resize-none bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:opacity-40"
-                        value={proofUrl}
-                        onChange={(e) => setProofUrl(e.target.value)}
-                      />
-                    ) : (
-                      <div className="space-y-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            disabled={hasUserSubmittedInActiveWindow()}
-                            onClick={() => proofFileInputRef.current?.click()}
-                            className="px-3 py-2 rounded-full bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40"
-                          >
-                            Upload Image
-                          </button>
-                          <input
-                            ref={proofFileInputRef}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={handleProofFileSelect}
-                            disabled={hasUserSubmittedInActiveWindow()}
-                          />
-                          {proofFileName && (
-                            <span className="text-[11px] text-slate-500 truncate">
-                              Selected: {proofFileName}
-                            </span>
-                          )}
-                        </div>
-
-                        {selectedProofPreviewUrl && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              openImageViewer(selectedProofPreviewUrl)
-                            }
-                            className="group block w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-left"
-                          >
-                            <img
-                              src={selectedProofPreviewUrl}
-                              alt="Selected proof preview"
-                              className="max-h-40 w-full object-cover transition group-hover:scale-[1.01]"
-                              loading="lazy"
-                            />
-                            <div className="border-t border-slate-200 px-3 py-2 text-[11px] text-slate-500">
-                              Tap to open full screen preview
-                            </div>
-                          </button>
-                        )}
-
-                        <input
-                          type="text"
-                          required
-                          disabled={hasUserSubmittedInActiveWindow()}
-                          placeholder={
-                            hasUserSubmittedInActiveWindow()
-                              ? "You have submitted your proof for this window."
-                              : getProofPlaceholder()
-                        }
-                        className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:opacity-40"
-                        value={
-                          proofUrl.startsWith("data:image/") ? "" : proofUrl
-                        }
+                        className="w-full bg-transparent text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none disabled:opacity-40"
+                        value={proofUrl.startsWith("data:image/") ? "" : proofUrl}
                         onChange={(e) => setProofUrl(e.target.value)}
                       />
                     </div>
                   )}
-                  </div>
-
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-[11px] text-slate-500 leading-5">
-                      One proof per day is enforced before the deadline.
-                    </p>
-                    <button
-                      type="submit"
-                      disabled={hasUserSubmittedInActiveWindow()}
-                      className="px-4 py-2.5 bg-[#5B4DFF] disabled:bg-slate-200 disabled:text-slate-500 text-xs font-bold rounded-full text-white whitespace-nowrap transition"
-                    >
-                      {hasUserSubmittedInActiveWindow()
-                        ? "Locked"
-                        : "Submit Proof"}
-                    </button>
-                  </div>
-                </form>
-              </div>
-
-              {/* VERIFICATION HISTORY RECORDS */}
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-[0.2em]">
-                    Verification History
-                  </h4>
                 </div>
-                {submissions.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center">
-                    <p className="text-sm text-slate-600 font-semibold">
-                      No proof posted yet.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-6">
-                    {Object.keys(groupedSubmissions).map((dateGroupLabel) => (
-                      <div key={dateGroupLabel} className="space-y-3 relative">
-                        {/* WhatsApp-style Sticky Date Header */}
-                        <div className="flex justify-center my-4 sticky top-0 z-10">
-                          <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-3 py-1 rounded-full shadow border border-slate-200 uppercase tracking-wide backdrop-blur-sm">
-                            {dateGroupLabel}
-                          </span>
-                        </div>
 
-                        {groupedSubmissions[dateGroupLabel].map((sub) => {
-                          const isMine = sub.user_id === userId;
-                          const isImage =
-                            arenaProofType === "image" ||
-                            isImageProof(sub.proof_url);
-                          return (
-                            <div
-                              key={sub.id}
-                              className={`rounded-2xl border p-4 bg-white shadow-sm ${sub.is_absent ? "border-red-200" : isMine ? "border-indigo-200" : "border-slate-200"}`}
-                            >
-                              <div className="flex justify-between items-start gap-3">
-                                <div className="min-w-0 flex items-start gap-3">
-                                  {renderAvatar(
-                                    sub.user_name,
-                                    sub.user_avatar_url,
-                                    "h-10 w-10",
-                                  )}
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <p className="text-[11px] font-bold text-indigo-700 truncate">
-                                        {sub.user_name}
-                                      </p>
-                                      {sub.is_absent && (
-                                        <span className="text-[9px] font-bold text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full">
-                                          ABSENT
-                                        </span>
-                                      )}
-                                    </div>
-                                    <a
-                                      href={sub.proof_url}
-                                      target={isImage ? undefined : "_blank"}
-                                      rel={isImage ? undefined : "noreferrer"}
-                                      onClick={(event) => {
-                                        if (isImage) {
-                                          event.preventDefault();
-                                          openImageViewer(sub.proof_url);
-                                        }
-                                      }}
-                                      className="mt-1 block break-all text-[12px] text-slate-700 hover:text-slate-900 transition"
-                                    >
-                                      {isImage ? (
-                                        <img
-                                          src={sub.proof_url}
-                                          alt={`Proof from ${sub.user_name}`}
-                                          className="max-h-56 w-full max-w-60 rounded-xl border border-slate-200 object-cover mt-2"
-                                          loading="lazy"
-                                        />
-                                      ) : (
-                                        sub.proof_url
-                                      )}
-                                    </a>
-                                  </div>
-                                </div>
-                                <span className="text-[10px] font-mono text-slate-500 shrink-0">
-                                  {new Date(
-                                    sub.submitted_at,
-                                  ).toLocaleTimeString([], {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                  })}
-                                </span>
-                              </div>
+                <button
+                  type="submit"
+                  disabled={hasUserSubmittedInActiveWindow()}
+                  className="w-full py-2.5 bg-[#0095F6] hover:bg-blue-600 active:bg-blue-700 text-white font-bold text-xs rounded-full transition shadow-xs disabled:opacity-40"
+                >
+                  {hasUserSubmittedInActiveWindow() ? "✓ Proof Submitted" : "Submit Daily Proof"}
+                </button>
+              </form>
+            </div>
 
-                              <div className="mt-3 pt-3 border-t border-slate-200 flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-3 text-[10px] text-slate-500">
-                                  <span>👍 {sub.upvotes || 0}</span>
-                                  <span>👎 {sub.downvotes || 0}</span>
-                                </div>
-                                {sub.user_id !== userId && !sub.is_absent ? (
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      onClick={() =>
-                                        handleVoteProof(sub.id, "up")
-                                      }
-                                      className="px-2.5 py-1.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition"
-                                    >
-                                      Verify
-                                    </button>
-                                    <button
-                                      onClick={() =>
-                                        handleVoteProof(sub.id, "down")
-                                      }
-                                      className="px-2.5 py-1.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition"
-                                    >
-                                      Report
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <span className="text-[10px] text-slate-500">
-                                    Ledger record
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
+            {/* LIVE SUBMISSIONS STREAM */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider px-1">
+                Recent Submissions
+              </h4>
+
+              {submissions.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-400 italic bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+                  No submissions yet in this window.
+                </div>
+              ) : (
+                submissions.map((sub) => (
+                  <div
+                    key={sub.id}
+                    className="p-3.5 rounded-2xl bg-white dark:bg-[#1E293B]/60 border border-slate-200 dark:border-slate-800 space-y-2 shadow-xs"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {renderAvatar(sub.user_name, sub.user_avatar_url, "w-6 h-6 rounded-full shrink-0")}
+                        <span className="text-xs font-bold text-slate-900 dark:text-white">
+                          {sub.user_name}
+                        </span>
                       </div>
-                    ))}
+                      <span className="text-[10px] text-slate-400">
+                        {new Date(sub.submitted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+
+                    <div className="text-xs text-slate-700 dark:text-slate-300">
+                      {sub.proof_url.startsWith("data:image/") || sub.proof_url.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
+                        <button
+                          type="button"
+                          onClick={() => openImageViewer(sub.proof_url)}
+                          className="block w-full overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900"
+                        >
+                          <img
+                            src={sub.proof_url}
+                            alt="Submitted proof"
+                            className="max-h-40 w-full object-cover"
+                            loading="lazy"
+                          />
+                        </button>
+                      ) : (
+                        <p className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 font-mono text-[11px] leading-relaxed">
+                          {sub.proof_url}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800 text-[11px]">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleVoteSubmission(sub.id, "upvote")}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-200 dark:border-emerald-900/50 hover:scale-105 transition"
+                        >
+                          <span>👍</span> {sub.upvotes || 0}
+                        </button>
+                        <button
+                          onClick={() => handleVoteSubmission(sub.id, "downvote")}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-bold border border-rose-200 dark:border-rose-900/50 hover:scale-105 transition"
+                        >
+                          <span>👎</span> {sub.downvotes || 0}
+                        </button>
+                      </div>
+                      <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                        ✓ Verified
+                      </span>
+                    </div>
                   </div>
-                )}
-              </div>
+                ))
+              )}
             </div>
           </div>
         </div>
-      )}
+      </div>
 
-      {/* MODAL 2: CHAMBER INFO / PARTICIPANTS MODAL */}
+      {/* MODAL 1: MEMBERS LIST / INFO MODAL */}
       {showMembersModal && (
-        <div className="fixed inset-0 bg-slate-900/25 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white border border-slate-200 w-full max-w-md rounded-3xl overflow-hidden shadow-xl flex flex-col max-h-[85vh]">
-            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white shrink-0">
-              <h3 className="text-sm font-bold text-slate-900">
-                Chamber Inhabitants ({arenaMembers.length})
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-950 dark:text-white">
+                Arena Members ({arenaMembers.length})
               </h3>
               <button
                 onClick={() => setShowMembersModal(false)}
-                className="text-xs text-slate-500 hover:text-slate-900 transition"
+                className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-3 py-1 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700"
               >
-                ✕
+                Close
               </button>
             </div>
-            <div className="p-4 overflow-y-auto space-y-2 flex-1">
+
+            <div className="max-h-72 overflow-y-auto space-y-3 pr-1">
               {arenaMembers.map((member) => (
                 <div
                   key={member.user_id}
-                  className="flex justify-between items-center p-2 rounded-2xl bg-[#F8FAFC] border border-slate-200"
+                  className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200/60 dark:border-slate-800/60"
                 >
-                  <div>
-                    <p className="text-xs font-semibold text-slate-900">
-                      {member.full_name}
-                    </p>
-                    <p className="text-[10px] text-slate-500">{member.email}</p>
+                  <div className="flex items-center gap-2.5">
+                    {renderAvatar(member.full_name, null, "w-8 h-8 rounded-full")}
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                        {member.full_name}
+                      </h4>
+                      <p className="text-[10px] text-slate-500">{member.email}</p>
+                    </div>
                   </div>
-                  {isAdmin && member.user_id !== userId && (
-                    <button
-                      onClick={() => handleRemoveMember(member.user_id)}
-                      className="text-[10px] text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded-full hover:bg-red-100 transition"
-                    >
-                      Expel
-                    </button>
-                  )}
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900/50">
+                    {member.common_arenas_count} Common
+                  </span>
                 </div>
               ))}
             </div>
@@ -953,135 +825,123 @@ export default function ArenaRoomPage() {
         </div>
       )}
 
-      {/* MODAL 3: ADMIN CONSOLE PARAMETERS */}
-      {showAdminModal && isAdmin && (
-        <div className="fixed inset-0 bg-slate-900/25 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white border border-slate-200 w-full max-w-md rounded-3xl overflow-hidden shadow-xl flex flex-col max-h-[85vh]">
-            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white shrink-0">
-              <h3 className="text-sm font-bold text-slate-900">
-                Admin Hub Console
+      {/* MODAL 2: ADMIN MANAGEMENT HUB MODAL */}
+      {showAdminModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl max-h-[85vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-950 dark:text-white">
+                Admin Console
               </h3>
               <button
                 onClick={() => setShowAdminModal(false)}
-                className="text-xs text-slate-500 hover:text-slate-900 transition"
+                className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-3 py-1 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700"
               >
-                ✕
+                Close
               </button>
             </div>
-            <div className="p-4 space-y-4 overflow-y-auto flex-1">
-              {inviteAssets && (
-                <div className="p-3 bg-[#F8FAFC] border border-slate-200 rounded-2xl space-y-1">
-                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                    Invite Code Credentials
-                  </p>
-                  <p className="text-xs font-mono text-indigo-700 bg-white p-2 rounded-2xl border border-slate-200 break-all select-text">
-                    {inviteAssets.invite_code}
-                  </p>
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Share this string with trusted platform profiles to request
-                    ingress access logs.
-                  </p>
-                </div>
-              )}
 
-              <div className="space-y-2">
-                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                  Pending Gate Access Enlistments ({pendingRequests.length})
-                </p>
-                {pendingRequests.length === 0 ? (
-                  <p className="text-xs text-slate-600 italic">
-                    No active clearance request packets waiting.
-                  </p>
-                ) : (
-                  pendingRequests.map((req) => (
-                    <div
-                      key={req.id}
-                      className="flex items-center justify-between p-2.5 rounded-2xl bg-[#F8FAFC] border border-slate-200"
-                    >
-                      <div>
-                        <p className="text-xs font-semibold text-slate-900">
-                          {req.user_name || `User ID #${req.user_id}`}
-                        </p>
-                        <p className="text-[9px] text-slate-500 uppercase tracking-wide">
-                          Status: {req.status}
-                        </p>
-                      </div>
-                      <div className="flex gap-1.5">
-                        <button
-                          onClick={() =>
-                            handleProcessRequest(req.user_id, "approve")
-                          }
-                          className="px-2.5 py-1 rounded-full bg-emerald-600 active:bg-emerald-700 text-[10px] font-bold text-white transition"
-                        >
-                          Admit
-                        </button>
-                        <button
-                          onClick={() =>
-                            handleProcessRequest(req.user_id, "reject")
-                          }
-                          className="px-2.5 py-1 rounded-full bg-slate-100 active:bg-slate-200 text-[10px] text-slate-700 border border-slate-200 transition"
-                        >
-                          Deny
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
+            {/* Invite Credentials */}
+            {inviteAssets && (
+              <div className="p-4 rounded-2xl bg-indigo-50/60 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/50 space-y-2">
+                <span className="text-[10px] uppercase font-bold text-indigo-600 dark:text-indigo-400">
+                  Invite Code
+                </span>
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-lg font-extrabold text-slate-900 dark:text-white">
+                    {inviteAssets.invite_code}
+                  </span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(inviteAssets.invite_code);
+                      alert("Invite code copied to clipboard!");
+                    }}
+                    className="text-xs px-3 py-1 bg-indigo-600 text-white font-bold rounded-full hover:bg-indigo-700 transition"
+                  >
+                    Copy Key
+                  </button>
+                </div>
               </div>
+            )}
+
+            {/* Pending Requests Section */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                Pending Gate Requests ({pendingRequests.length})
+              </h4>
+
+              {pendingRequests.length === 0 ? (
+                <p className="text-xs text-slate-400 italic p-3 bg-slate-50 dark:bg-slate-950 rounded-2xl text-center">
+                  No pending access requests.
+                </p>
+              ) : (
+                pendingRequests.map((req) => (
+                  <div
+                    key={req.id}
+                    className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+                  >
+                    <span className="text-xs font-bold text-slate-900 dark:text-white">
+                      {req.user_name || `User #${req.user_id}`}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleApprove(req.user_id)}
+                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-full transition"
+                      >
+                        Admit
+                      </button>
+                      <button
+                        onClick={() => handleReject(req.user_id)}
+                        className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-full transition"
+                      >
+                        Deny
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* FULL-SCREEN IMAGE LIGHTBOX VIEWER */}
+      {/* MODAL 3: FULL SCREEN IMAGE LIGHTBOX VIEWER */}
       {viewerImageUrl && (
-        <div className="fixed inset-0 bg-black/95 z-100 flex flex-col justify-between items-center p-4 backdrop-blur-md select-none">
-          <div className="w-full flex justify-between items-center z-10 p-2 bg-linear-to-b from-black/80 to-transparent absolute top-0 inset-x-0">
-            <div className="text-left pl-2">
-              <p className="text-xs font-bold text-white tracking-wide">
-                Evidence Core Engine
-              </p>
-              <p className="text-[10px] text-slate-400">
-                Zoom level: {Math.round(viewerZoom * 100)}%
-              </p>
-            </div>
-            <button
-              onClick={() => setViewerImageUrl(null)}
-              className="bg-slate-900/80 border border-slate-700/60 active:bg-slate-800 text-slate-200 px-4 py-2 rounded-xl text-xs font-extrabold shadow-xl transition"
-            >
-              Close Viewer ✕
-            </button>
-          </div>
-
-          <div className="flex-1 w-full flex items-center justify-center overflow-auto p-4 cursor-zoom-in">
+        <div
+          onClick={closeImageViewer}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative max-w-4xl max-h-[90vh] flex flex-col items-center"
+          >
             <img
               src={viewerImageUrl}
-              alt="Expanded proof file viewport"
+              alt="Full view proof"
               style={{ transform: `scale(${viewerZoom})` }}
-              onClick={() => setViewerZoom((z) => (z === 1 ? 1.6 : 1))}
-              className="max-h-[82vh] max-w-[94vw] object-contain rounded-xl shadow-2xl transition-transform duration-200 ease-out will-change-transform border border-slate-900"
+              className="max-h-[80vh] max-w-full object-contain rounded-2xl transition-transform duration-200"
             />
-          </div>
-
-          <div className="w-full flex justify-center gap-3 items-center z-10 p-4 absolute bottom-0 inset-x-0 bg-linear-to-t from-black/80 to-transparent">
-            <button
-              onClick={() => setViewerZoom((z) => Math.max(0.6, z - 0.2))}
-              className="h-9 w-12 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-center text-sm font-bold text-slate-300 active:bg-slate-800"
-            >
-              －
-            </button>
-            <button
-              onClick={() => setViewerZoom(1)}
-              className="px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-[11px] font-semibold text-slate-400 active:bg-slate-800"
-            >
-              Reset
-            </button>
-            <button
-              onClick={() => setViewerZoom((z) => Math.min(3, z + 0.2))}
-              className="h-9 w-12 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-center text-sm font-bold text-slate-300 active:bg-slate-800"
-            >
-              ＋
-            </button>
+            <div className="mt-4 flex items-center gap-3 bg-slate-900/80 px-4 py-2 rounded-full border border-slate-800 text-white text-xs font-bold">
+              <button
+                onClick={() => setViewerZoom((z) => Math.max(z - 0.2, 0.5))}
+                className="px-2 py-0.5 hover:bg-slate-800 rounded"
+              >
+                -
+              </button>
+              <span>{Math.round(viewerZoom * 100)}%</span>
+              <button
+                onClick={() => setViewerZoom((z) => Math.min(z + 0.2, 3))}
+                className="px-2 py-0.5 hover:bg-slate-800 rounded"
+              >
+                +
+              </button>
+              <button
+                onClick={closeImageViewer}
+                className="ml-4 px-3 py-1 bg-rose-600 text-white rounded-full text-xs hover:bg-rose-700"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

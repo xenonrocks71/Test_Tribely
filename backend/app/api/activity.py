@@ -10,7 +10,7 @@ from app.api.deps import get_current_user
 from app.models.models import Arena, Submission, Message, User, UserProfile, ArenaMembership, SubmissionVote, DailyArenaSheet
 from app.api.websocket import manager as websocket_manager
 
-router = APIRouter(prefix="/activity", tags=["Activity & History Logs"])
+router = APIRouter(prefix="/api/activity", tags=["Activity & History Logs"])
 
 
 def success_response(data: Any) -> Dict[str, Any]:
@@ -92,15 +92,16 @@ def validate_proof_content(proof_type: str, proof_content: str) -> str:
 
 def broadcast_ledger_event(arena_id: int, payload: Dict[str, Any]) -> None:
     try:
-        asyncio.run(websocket_manager.broadcast_to_arena(arena_id, payload))
-    except RuntimeError:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         loop.create_task(websocket_manager.broadcast_to_arena(arena_id, payload))
+    except Exception:
+        pass
 
 
 class SubmissionCreate(BaseModel):
     arena_id: int
     proof_url: str
+    client_submitted_at: str | None = None
 
 
 class VoteRequest(BaseModel):
@@ -125,6 +126,16 @@ def submit_proof(
                     "error_code": "ARENA_NOT_FOUND",
                 },
             )
+
+        # Respect client submission timestamp if provided (for network latency tolerance)
+        submission_time = datetime.utcnow()
+        if payload.client_submitted_at:
+            try:
+                client_dt = datetime.fromisoformat(payload.client_submitted_at.replace("Z", "+00:00")).replace(tzinfo=None)
+                if client_dt <= submission_time + timedelta(minutes=5) and client_dt >= submission_time - timedelta(hours=24):
+                    submission_time = client_dt
+            except Exception:
+                pass
 
         # 1. Calculate dynamic window thresholds based on 12h/24h string values
         window_start, window_end, target_date_str = calculate_active_submission_window(arena.deadline_time)
@@ -154,7 +165,7 @@ def submit_proof(
             arena_id=payload.arena_id,
             proof_url=proof_content,
             user_id=current_user.id,
-            submitted_at=datetime.utcnow(),
+            submitted_at=submission_time,
             upvotes=0,
             downvotes=0,
             is_absent=False
@@ -196,88 +207,111 @@ def submit_proof(
             "allocated_date_day": target_date_str
         })
         
+    except ValueError as ve:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "status": "error",
+                "message": str(ve),
+                "error_code": "PROOF_VALIDATION_FAILED"
+            }
+        )
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database ingestion failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "status": "error",
+                "message": f"Database ingestion failed: {str(e)}",
+                "error_code": "DATABASE_INGESTION_FAILED"
+            }
+        )
 
 
-@router.post("/vote")
-def vote_proof(
-    payload: VoteRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+class DirectVotePayload(BaseModel):
+    vote_type: str
+
+
+def execute_vote_logic(
+    submission_id: int,
+    vote_type_raw: str,
+    db: Session,
+    current_user: User,
 ):
     try:
-        if payload.vote_type not in ["up", "down"]:
-            raise HTTPException(status_code=400, detail={"status": "error", "message": "Invalid vote type selection framework.", "error_code": "VOTE_TYPE_INVALID"})
+        norm_vote = "up" if vote_type_raw in ["up", "upvote"] else "down" if vote_type_raw in ["down", "downvote"] else None
+        if not norm_vote:
+            raise HTTPException(
+                status_code=400,
+                detail={"status": "error", "message": "Invalid vote selection framework.", "error_code": "VOTE_TYPE_INVALID"}
+            )
 
-        submission = db.query(Submission).filter(Submission.id == payload.submission_id).first()
+        submission = db.query(Submission).filter(Submission.id == submission_id).first()
         if not submission:
-            raise HTTPException(status_code=404, detail={"status": "error", "message": "Target submission data row missing.", "error_code": "SUBMISSION_NOT_FOUND"})
+            raise HTTPException(
+                status_code=404,
+                detail={"status": "error", "message": "Target submission not found.", "error_code": "SUBMISSION_NOT_FOUND"}
+            )
+
+        # 1. Self-Voting Restriction: Sender cannot vote on their own proof
+        if submission.user_id == current_user.id:
+            raise HTTPException(
+                status_code=400,
+                detail={"status": "error", "message": "You cannot vote on your own proof submission.", "error_code": "CANNOT_VOTE_OWN_PROOF"}
+            )
+
+        # 2. Active Window Restriction: Voting allowed ONLY for current active window
+        arena = db.query(Arena).filter(Arena.id == submission.arena_id).first()
+        if arena:
+            window_start, window_end, _ = calculate_active_submission_window(arena.deadline_time)
+            if submission.submitted_at < window_start:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"status": "error", "message": "Voting window is closed for past deadline proofs.", "error_code": "VOTING_WINDOW_CLOSED"}
+                )
 
         voter_id = current_user.id
-
         if submission.upvotes is None: submission.upvotes = 0
         if submission.downvotes is None: submission.downvotes = 0
 
         existing_vote = db.query(SubmissionVote).filter(
-            SubmissionVote.submission_id == payload.submission_id,
+            SubmissionVote.submission_id == submission_id,
             SubmissionVote.user_id == voter_id
         ).first()
 
         if existing_vote:
-            if existing_vote.vote_type == payload.vote_type:
-                if payload.vote_type == "up":
+            if existing_vote.vote_type == norm_vote:
+                if norm_vote == "up":
                     submission.upvotes = max(0, submission.upvotes - 1)
                 else:
                     submission.downvotes = max(0, submission.downvotes - 1)
                 db.delete(existing_vote)
                 db.commit()
-                broadcast_ledger_event(
-                    submission.arena_id,
-                    {
-                        "event_type": "ledger_update",
-                        "arena_id": submission.arena_id,
-                        "action": "vote_updated",
-                        "submission_id": submission.id,
-                        "user_id": current_user.id,
-                    },
-                )
-                return success_response({"message": "Vote removed", "upvotes": submission.upvotes, "downvotes": submission.downvotes})
-            
+                msg = "Vote removed"
             else:
-                if payload.vote_type == "up":
+                if norm_vote == "up":
                     submission.upvotes += 1
                     submission.downvotes = max(0, submission.downvotes - 1)
                 else:
                     submission.downvotes += 1
                     submission.upvotes = max(0, submission.upvotes - 1)
-                existing_vote.vote_type = payload.vote_type
+                existing_vote.vote_type = norm_vote
                 db.commit()
-                broadcast_ledger_event(
-                    submission.arena_id,
-                    {
-                        "event_type": "ledger_update",
-                        "arena_id": submission.arena_id,
-                        "action": "vote_updated",
-                        "submission_id": submission.id,
-                        "user_id": current_user.id,
-                    },
-                )
-                return success_response({"message": "Vote switched", "upvotes": submission.upvotes, "downvotes": submission.downvotes})
-
+                msg = "Vote switched"
         else:
-            new_vote = SubmissionVote(submission_id=payload.submission_id, user_id=voter_id, vote_type=payload.vote_type)
+            new_vote = SubmissionVote(submission_id=submission_id, user_id=voter_id, vote_type=norm_vote)
             db.add(new_vote)
-            if payload.vote_type == "up":
+            if norm_vote == "up":
                 submission.upvotes += 1
             else:
                 submission.downvotes += 1
+            db.commit()
+            msg = "Vote recorded"
 
-        db.commit()
-
+        # 3. Disqualification Threshold Check: If downvotes > N/2 of approved arena members
         total_members = db.query(ArenaMembership).filter(
             ArenaMembership.arena_id == submission.arena_id,
             ArenaMembership.status == "approved"
@@ -312,6 +346,7 @@ def vote_proof(
         )
 
         return success_response({
+            "message": msg,
             "upvotes": submission.upvotes,
             "downvotes": submission.downvotes,
             "is_absent": submission.is_absent,
@@ -320,11 +355,49 @@ def vote_proof(
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail={"status": "error", "message": f"Vote orchestration failed: {str(e)}", "error_code": "VOTE_ORCHESTRATION_FAILED"})
+        raise HTTPException(status_code=500, detail={"status": "error", "message": f"Vote operation failed: {str(e)}", "error_code": "VOTE_FAILED"})
+
+
+@router.post("/submission/{submission_id}/vote")
+def vote_submission_by_path(
+    submission_id: int,
+    payload: DirectVotePayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return execute_vote_logic(submission_id=submission_id, vote_type_raw=payload.vote_type, db=db, current_user=current_user)
+
+
+@router.post("/vote")
+def vote_proof(
+    payload: VoteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return execute_vote_logic(submission_id=payload.submission_id, vote_type_raw=payload.vote_type, db=db, current_user=current_user)
 
 
 @router.get("/arena/{arena_id}/history")
-def get_arena_history(arena_id: int, db: Session = Depends(get_db)):
+def get_arena_history(
+    arena_id: int, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    membership = db.query(ArenaMembership).filter(
+        ArenaMembership.arena_id == arena_id,
+        ArenaMembership.user_id == current_user.id
+    ).first()
+    
+    if not membership or membership.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "status": "error",
+                "message": "Membership approval required to access this arena.",
+                "error_code": "ARENA_MEMBERSHIP_NOT_APPROVED"
+            }
+        )
+
     try:
         submissions = db.query(Submission)\
             .filter(Submission.arena_id == arena_id)\
