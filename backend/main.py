@@ -12,29 +12,28 @@ app = FastAPI(
     description="Tribely Backend - Social Accountability Micro-Arena Engine",
     version="1.0.0"
 )
+
 Base.metadata.create_all(bind=engine)
-# Configure Cross-Origin Resource Sharing (CORS)
+
+# Configure CORS for local IP testing, localhost, and production domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origins=["*"],  # Allows local IP (192.168.1.125), localhost, and production frontends
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Connect our modular HTTP and persistent WebSocket router stacks
+# Connect modular HTTP and persistent WebSocket router stacks
 app.include_router(auth.router)
 app.include_router(arenas.router)
 app.include_router(activity.router)
 app.include_router(websocket.router)
-app.include_router(admin_arena.router)  # Mounted admin router here
+app.include_router(admin_arena.router)
 app.include_router(profile.router)
+
 @app.get("/", tags=["Health"])
 def health_check():
-    """
-    Core API server health status check endpoint.
-    """
     return {
         "status": "healthy",
         "project": settings.PROJECT_NAME,
@@ -42,4 +41,5 @@ def health_check():
     }
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    # 0.0.0.0 binds FastAPI to all network interfaces (Localhost + Wi-Fi IP)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

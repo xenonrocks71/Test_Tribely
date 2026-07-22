@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import api from "../utils/api";
+import { useTheme } from "../context/ThemeContext";
 
 type ProfileData = {
   full_name: string;
@@ -16,6 +17,7 @@ export default function UserProfileClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const currentArenaId = searchParams.get("arena_id");
+  const { theme, setTheme } = useTheme();
 
   const [userId, setUserId] = useState<number | null>(null);
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
@@ -467,6 +469,48 @@ export default function UserProfileClient() {
               </>
             ) : (
               <>
+                {/* Appearance & Theme Section */}
+                <div className="rounded-3xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-800 p-6 md:p-8 shadow-sm">
+                  <div className="mb-6">
+                    <h3 className="text-lg font-bold text-slate-950 dark:text-white flex items-center gap-2">
+                      <span>🎨</span> Appearance & Theme
+                    </h3>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                      Choose your preferred interface theme across Tribely.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setTheme("dark")}
+                      className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all ${
+                        theme === "dark"
+                          ? "border-[#5B4DFF] bg-[#5B4DFF]/10 text-[#5B4DFF]"
+                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 hover:border-slate-300"
+                      }`}
+                    >
+                      <span className="text-2xl mb-2">🌙</span>
+                      <span className="text-sm font-bold">Dark Mode</span>
+                      <span className="text-xs opacity-75 mt-0.5">Sleek dark theme</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setTheme("light")}
+                      className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all ${
+                        theme === "light"
+                          ? "border-[#5B4DFF] bg-[#5B4DFF]/10 text-[#5B4DFF]"
+                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 hover:border-slate-300"
+                      }`}
+                    >
+                      <span className="text-2xl mb-2">☀️</span>
+                      <span className="text-sm font-bold">Light Mode</span>
+                      <span className="text-xs opacity-75 mt-0.5">Clean light theme</span>
+                    </button>
+                  </div>
+                </div>
+
                 {/* Change Password Section */}
                 <div className="rounded-3xl border border-slate-200 bg-white p-6 md:p-8 shadow-sm">
                   <div className="mb-6">

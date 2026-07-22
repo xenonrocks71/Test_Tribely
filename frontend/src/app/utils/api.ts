@@ -1,44 +1,72 @@
 import axios from "axios";
-import { API_BASE_URL } from "./config";
+
+/**
+ * Resolve backend URL.
+ *
+ * Priority:
+ * 1. Production environment variable
+ * 2. Current browser hostname (same WiFi)
+ * 3. Localhost fallback for SSR
+ */
+const getBaseUrl = () => {
+  // Production
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+
+  // Browser
+  if (typeof window !== "undefined") {
+    const hostname = window.location.hostname;
+
+    // Always use HTTP for local development.
+    // FastAPI is not serving HTTPS locally.
+    return `http://${hostname}:8000`;
+  }
+
+  // SSR fallback
+  return "http://127.0.0.1:8000";
+};
 
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: getBaseUrl(),
+
+  // Increased timeout for slower mobile WiFi
+  timeout: 10000,
+
+  headers: {
+    "Content-Type": "application/json",
+  },
 });
 
-// Outgoing Request Interceptor: Automatically injects bearer tokens into HTTP headers
+// Automatically attach JWT token
 api.interceptors.request.use(
   (config) => {
     if (typeof window !== "undefined") {
       const token = localStorage.getItem("tribely_token");
+
       if (token) {
-        config.headers = config.headers ?? {};
         config.headers.Authorization = `Bearer ${token}`;
       }
     }
+
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  },
+  (error) => Promise.reject(error),
 );
 
-// Incoming Response Interceptor: Redirects to login if session expires globally
+// Handle expired authentication
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response && error.response.status === 401) {
-      if (typeof window !== "undefined") {
-        localStorage.removeItem("tribely_token");
-        localStorage.removeItem("tribely_user_id");
-        // If they are on a protected page, force them to login
-        if (
-          !window.location.pathname.includes("/login") &&
-          !window.location.pathname.includes("/register")
-        ) {
-          window.location.href = "/login";
-        }
+    if (typeof window !== "undefined" && error?.response?.status === 401) {
+      localStorage.removeItem("tribely_token");
+
+      // Prevent redirect loop
+      if (!window.location.pathname.startsWith("/login")) {
+        window.location.href = "/login?session=expired";
       }
     }
+
     return Promise.reject(error);
   },
 );

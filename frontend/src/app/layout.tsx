@@ -37,6 +37,8 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
+import { ThemeProvider } from "./context/ThemeContext";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -46,12 +48,13 @@ export default function RootLayout({
     <html
       lang="en"
       data-scroll-behavior="smooth"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
       suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col bg-[#F3F4F6] text-slate-900">
-        {children}
+      <body className="min-h-full flex flex-col bg-[#F3F4F6] text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors duration-200">
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );
 }
+
