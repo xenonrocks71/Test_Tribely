@@ -33,27 +33,16 @@ def parse_arena_deadline(deadline_time: str) -> time:
 
 
 def calculate_active_submission_window(deadline_str: str) -> Tuple[datetime, datetime, str]:
-    """
-    Computes the boundaries of the target execution period dynamically.
-    Returns:
-        Tuple containing:
-        - window_start (datetime)
-        - window_end (datetime)
-        - target_date_str (str): The logical tracking day (YYYY-MM-DD) for metrics logs.
-    """
     now = datetime.utcnow()
     deadline_time_obj = parse_arena_deadline(deadline_str)
     
-    # Establish today's cutoff baseline
     today_cutoff = datetime.combine(now.date(), deadline_time_obj)
     
     if now <= today_cutoff:
-        # Prior to today's deadline: Window covers from yesterday's deadline up to today's deadline.
         window_start = today_cutoff - timedelta(days=1)
         window_end = today_cutoff
         target_date_str = now.date().isoformat()
     else:
-        # Today's deadline has passed: Window is already active for the upcoming cycle tomorrow.
         window_start = today_cutoff
         window_end = today_cutoff + timedelta(days=1)
         target_date_str = (now.date() + timedelta(days=1)).isoformat()
@@ -62,35 +51,46 @@ def calculate_active_submission_window(deadline_str: str) -> Tuple[datetime, dat
 
 
 def validate_proof_content(proof_type: str, proof_content: str) -> str:
+    """Strictly validates submission payload according to the Arena's configured proof_type."""
     cleaned = proof_content.strip()
     if not cleaned:
         raise ValueError("Proof content cannot be empty.")
 
     normalized_type = proof_type.strip().lower()
+
     if normalized_type == "text":
+        if cleaned.startswith("data:image/"):
+            raise ValueError("This arena only accepts text proof. Image submissions are strictly disallowed.")
         return cleaned
 
     if normalized_type == "link":
+        if cleaned.startswith("data:image/"):
+            raise ValueError("This arena accepts external link URLs. Base64 image files are disallowed.")
+        
         parsed = urlparse(cleaned)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("Link proofs must be a valid http or https URL.")
+            raise ValueError("Invalid link format. Submissions for this arena must be a valid http:// or https:// URL.")
         return cleaned
 
     if normalized_type == "image":
+        # 1. Base64 Data Payload Validation
         if cleaned.startswith("data:image/"):
+            if ";base64," not in cleaned:
+                raise ValueError("Corrupted base64 image payload.")
             return cleaned
-        parsed = urlparse(cleaned)
-        image_extensions = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg")
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("Image proofs must be a valid image URL or data:image payload.")
-        if not parsed.path.lower().endswith(image_extensions):
-            raise ValueError("Image proofs must point to an image file URL or data:image payload.")
-        return cleaned
 
-    raise ValueError("Unsupported proof type configured for arena.")
+        # 2. HTTP/HTTPS Image URL Validation
+        parsed = urlparse(cleaned)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return cleaned
+
+        raise ValueError("This arena strictly requires an image file upload or a valid image URL.")
+
+    raise ValueError(f"Unsupported proof type '{proof_type}' configured for this arena.")
 
 
 def broadcast_ledger_event(arena_id: int, payload: Dict[str, Any]) -> None:
+    """Broadcasts real-time events to all connected clients in the arena WebSocket channel."""
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(websocket_manager.broadcast_to_arena(arena_id, payload))
@@ -105,8 +105,7 @@ class SubmissionCreate(BaseModel):
 
 
 class VoteRequest(BaseModel):
-    submission_id: int
-    vote_type: str  # Must parse "up" or "down"
+    vote_type: str
 
 
 @router.post("/submit", status_code=status.HTTP_201_CREATED)
@@ -127,7 +126,6 @@ def submit_proof(
                 },
             )
 
-        # Respect client submission timestamp if provided (for network latency tolerance)
         submission_time = datetime.utcnow()
         if payload.client_submitted_at:
             try:
@@ -137,10 +135,8 @@ def submit_proof(
             except Exception:
                 pass
 
-        # 1. Calculate dynamic window thresholds based on 12h/24h string values
         window_start, window_end, target_date_str = calculate_active_submission_window(arena.deadline_time)
 
-        # 2. Check if a submission has already been registered inside this active logical block
         existing = db.query(Submission).filter(
             Submission.arena_id == payload.arena_id,
             Submission.user_id == current_user.id,
@@ -158,8 +154,18 @@ def submit_proof(
                 },
             )
 
-        # 3. Validate and apply proof criteria safely
-        proof_content = validate_proof_content(arena.proof_type, payload.proof_url)
+        # Enforce strict submission validation matching arena proof_type
+        try:
+            proof_content = validate_proof_content(arena.proof_type, payload.proof_url)
+        except ValueError as ve:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "status": "error",
+                    "message": str(ve),
+                    "error_code": "INVALID_PROOF_PAYLOAD"
+                }
+            )
 
         new_submission = Submission(
             arena_id=payload.arena_id,
@@ -174,28 +180,37 @@ def submit_proof(
         db.commit()
         db.refresh(new_submission)
 
-        # 4. Map directly to historical metric ledger using computed destination day string
         try:
             historical_log = DailyArenaSheet(
                 arena_id=payload.arena_id,
                 user_id=current_user.id,
                 date_day=target_date_str,
                 status="present",
-                proof_type="url"
+                proof_type=arena.proof_type
             )
             db.add(historical_log)
             db.commit()
         except Exception:
             db.rollback()
 
+        # Real-time WebSockets broadcast for live ledger update across all connected users
         broadcast_ledger_event(
             payload.arena_id,
             {
                 "event_type": "ledger_update",
                 "arena_id": payload.arena_id,
                 "action": "submission_created",
-                "submission_id": new_submission.id,
-                "user_id": current_user.id,
+                "submission": {
+                    "id": new_submission.id,
+                    "user_id": current_user.id,
+                    "user_name": current_user.full_name or f"Member #{current_user.id}",
+                    "user_avatar_url": get_user_avatar_url(db, current_user.id),
+                    "proof_url": new_submission.proof_url,
+                    "submitted_at": str(new_submission.submitted_at),
+                    "upvotes": 0,
+                    "downvotes": 0,
+                    "is_absent": False
+                }
             },
         )
 
@@ -204,19 +219,7 @@ def submit_proof(
             "id": new_submission.id,
             "proof_type": arena.proof_type,
             "target_window_end": str(window_end),
-            "allocated_date_day": target_date_str
         })
-        
-    except ValueError as ve:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "status": "error",
-                "message": str(ve),
-                "error_code": "PROOF_VALIDATION_FAILED"
-            }
-        )
     except HTTPException:
         raise
     except Exception as e:
@@ -225,14 +228,10 @@ def submit_proof(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "status": "error",
-                "message": f"Database ingestion failed: {str(e)}",
-                "error_code": "DATABASE_INGESTION_FAILED"
+                "message": f"Proof submission failed: {str(e)}",
+                "error_code": "SUBMISSION_FAILED"
             }
         )
-
-
-class DirectVotePayload(BaseModel):
-    vote_type: str
 
 
 def execute_vote_logic(
@@ -256,14 +255,12 @@ def execute_vote_logic(
                 detail={"status": "error", "message": "Target submission not found.", "error_code": "SUBMISSION_NOT_FOUND"}
             )
 
-        # 1. Self-Voting Restriction: Sender cannot vote on their own proof
         if submission.user_id == current_user.id:
             raise HTTPException(
                 status_code=400,
                 detail={"status": "error", "message": "You cannot vote on your own proof submission.", "error_code": "CANNOT_VOTE_OWN_PROOF"}
             )
 
-        # 2. Active Window Restriction: Voting allowed ONLY for current active window
         arena = db.query(Arena).filter(Arena.id == submission.arena_id).first()
         if arena:
             window_start, window_end, _ = calculate_active_submission_window(arena.deadline_time)
@@ -311,7 +308,6 @@ def execute_vote_logic(
             db.commit()
             msg = "Vote recorded"
 
-        # 3. Disqualification Threshold Check: If downvotes > N/2 of approved arena members
         total_members = db.query(ArenaMembership).filter(
             ArenaMembership.arena_id == submission.arena_id,
             ArenaMembership.status == "approved"
@@ -334,6 +330,7 @@ def execute_vote_logic(
             except Exception:
                 db.rollback()
 
+        # Real-time WS ledger broadcast for live vote tally sync across all connected users
         broadcast_ledger_event(
             submission.arena_id,
             {
@@ -341,7 +338,9 @@ def execute_vote_logic(
                 "arena_id": submission.arena_id,
                 "action": "vote_updated",
                 "submission_id": submission.id,
-                "user_id": current_user.id,
+                "upvotes": submission.upvotes,
+                "downvotes": submission.downvotes,
+                "is_absent": submission.is_absent,
             },
         )
 
@@ -361,20 +360,11 @@ def execute_vote_logic(
 @router.post("/submission/{submission_id}/vote")
 def vote_submission_by_path(
     submission_id: int,
-    payload: DirectVotePayload,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    return execute_vote_logic(submission_id=submission_id, vote_type_raw=payload.vote_type, db=db, current_user=current_user)
-
-
-@router.post("/vote")
-def vote_proof(
     payload: VoteRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return execute_vote_logic(submission_id=payload.submission_id, vote_type_raw=payload.vote_type, db=db, current_user=current_user)
+    return execute_vote_logic(submission_id=submission_id, vote_type_raw=payload.vote_type, db=db, current_user=current_user)
 
 
 @router.get("/arena/{arena_id}/history")

@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from app.core.database import get_db
 from app.api.deps import get_current_user
-# Ensure these exact models are imported from your app models directory
 from app.models.models import Arena, ArenaMembership, User
 
 from typing import List, Dict, Any
@@ -18,7 +17,6 @@ router = APIRouter(prefix="/api/arenas", tags=["Arenas"])
 def success_response(data: Any) -> Dict[str, Any]:
     return {"status": "success", "data": data}
 
-# --- NEW: Pydantic Schema for our Discovery Landing Join Requests ---
 class DiscoveryJoinRequest(BaseModel):
     arena_id: int
 
@@ -33,15 +31,12 @@ def discover_all_arenas(db: Session = Depends(get_db)):
     with real-time total member counts for landing page exploration.
     """
     try:
-        # Aggregates active approved member counts per arena group matrix
         counts_query = db.query(
             ArenaMembership.arena_id, 
             func.count(ArenaMembership.id).label("total_members")
         ).filter(ArenaMembership.status == "approved").group_by(ArenaMembership.arena_id).all()
         
         counts_map = {row.arena_id: row.total_members for row in counts_query}
-
-        # Pull all arenas globally for discovery mapping
         arenas = db.query(Arena).all()
 
         results = []
@@ -92,7 +87,6 @@ def request_membership_gatekeeper(
                 },
             )
 
-        # Check for pre-existing memberships
         existing = db.query(ArenaMembership).filter(
             ArenaMembership.arena_id == payload.arena_id,
             ArenaMembership.user_id == current_user.id
@@ -118,7 +112,6 @@ def request_membership_gatekeeper(
                     },
                 )
 
-        # Rule evaluation context matching (Private vs Public Gatekeeping)
         assigned_status = "pending" if arena.is_private else "approved"
         
         new_member = ArenaMembership(
@@ -290,4 +283,86 @@ def get_arena_members_list(arena_id: int, db: Session = Depends(get_db)):
                 "message": str(e),
                 "error_code": "ARENA_MEMBERS_LIST_FAILED",
             },
+        )
+
+@router.post("/{arena_id}/leave")
+def leave_arena(
+    arena_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Allows a user/admin to leave an arena room. 
+    If the leaving user is an admin/creator, ownership automatically transfers 
+    to the next oldest member who joined the room.
+    """
+    try:
+        arena = db.query(Arena).filter(Arena.id == arena_id).first()
+        if not arena:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "status": "error",
+                    "message": "Arena room not found.",
+                    "error_code": "ARENA_NOT_FOUND"
+                }
+            )
+
+        membership = db.query(ArenaMembership).filter(
+            ArenaMembership.arena_id == arena_id,
+            ArenaMembership.user_id == current_user.id
+        ).first()
+
+        if not membership:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "status": "error",
+                    "message": "No active membership record found for this user.",
+                    "error_code": "MEMBERSHIP_NOT_FOUND"
+                }
+            )
+
+        is_leaving_admin = (arena.creator_id == current_user.id or membership.role == "admin")
+
+        # Delete outgoing user's membership
+        db.delete(membership)
+        db.flush()
+
+        if is_leaving_admin:
+            # Find the next oldest approved member who joined right after
+            next_successor = db.query(ArenaMembership).filter(
+                ArenaMembership.arena_id == arena_id,
+                ArenaMembership.status == "approved",
+                ArenaMembership.user_id != current_user.id
+            ).order_by(ArenaMembership.id.asc()).first()
+
+            if next_successor:
+                # Transfer primary admin rights & creator ownership seamlessly
+                next_successor.role = "admin"
+                arena.creator_id = next_successor.user_id
+                message = f"You exited the arena. Admin ownership transferred to User #{next_successor.user_id}."
+            else:
+                # If no members remain, delete the arena room cleanly
+                db.delete(arena)
+                message = "You exited the arena. Room deleted as no members remained."
+        else:
+            message = "Successfully exited the arena room."
+
+        db.commit()
+
+        return success_response({
+            "message": message
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "message": f"Failed leaving the arena room: {str(e)}",
+                "error_code": "LEAVE_ARENA_FAILED"
+            }
         )

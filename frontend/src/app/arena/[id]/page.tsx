@@ -69,13 +69,14 @@ export default function ArenaRoomPage() {
 
   const [proofUrl, setProofUrl] = useState("");
   const [proofFileName, setProofFileName] = useState("");
-  const [selectedProofFile, setSelectedProofFile] = useState<File | null>(null);
-  const [selectedProofPreviewUrl, setSelectedProofPreviewUrl] = useState<string | null>(null);
+  const [selectedProofPreviewUrl, setSelectedProofPreviewUrl] = useState<
+    string | null
+  >(null);
   const [chatInput, setChatInput] = useState("");
   const [viewerImageUrl, setViewerImageUrl] = useState<string | null>(null);
   const [viewerZoom, setViewerZoom] = useState(1);
 
-  // Layout View Controls
+  // Modal / Sidebar Controls
   const [arenaMembers, setArenaMembers] = useState<ArenaMember[]>([]);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
@@ -96,7 +97,7 @@ export default function ArenaRoomPage() {
   const renderAvatar = (
     name: string,
     imageUrl?: string | null,
-    className: string = "w-8 h-8 rounded-full text-xs font-bold shrink-0"
+    className: string = "w-8 h-8 rounded-full text-xs font-bold shrink-0",
   ) => {
     if (imageUrl) {
       return (
@@ -122,7 +123,8 @@ export default function ArenaRoomPage() {
       const payload = res.data?.data;
 
       if (payload) {
-        if (Array.isArray(payload.submissions)) setSubmissions(payload.submissions);
+        if (Array.isArray(payload.submissions))
+          setSubmissions(payload.submissions);
         if (Array.isArray(payload.messages)) setMessages(payload.messages);
       }
     } catch (err: any) {
@@ -174,19 +176,6 @@ export default function ArenaRoomPage() {
     fetchHistory();
     fetchMembersList();
 
-    const syncPendingProof = async () => {
-      try {
-        const saved = localStorage.getItem(`tribely_pending_proof_${id}`);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          await api.post("/api/activity/submit", parsed);
-          localStorage.removeItem(`tribely_pending_proof_${id}`);
-          fetchHistory();
-        }
-      } catch (e) {}
-    };
-    syncPendingProof();
-
     const checkAdminPrivileges = async () => {
       try {
         const arenasRes = await api.get("/api/arenas/");
@@ -195,7 +184,9 @@ export default function ArenaRoomPage() {
 
         if (currentArena) {
           setArenaName(currentArena.name);
-          setArenaProofType((currentArena.proof_type as ArenaProofType) || "text");
+          setArenaProofType(
+            (currentArena.proof_type as ArenaProofType) || "text",
+          );
           setArenaDeadlineTime(currentArena.deadline_time || "10:00 PM");
 
           if (currentArena.user_role === "admin") {
@@ -205,36 +196,59 @@ export default function ArenaRoomPage() {
           }
         }
       } catch (err) {
-        console.error("Admin verification routine error:", err);
+        console.error("Arena initialization error:", err);
         setArenaName(`Chamber #${id}`);
       }
     };
     checkAdminPrivileges();
 
+    // Setup Live WebSocket Channel for Chat AND Real-time Ledger Sync
     const wsBase = API_BASE_URL.replace(/^http/, "ws");
     const wsUrl = `${wsBase}/ws/arena/${id}`;
     const wsToken = localStorage.getItem("tribely_token");
     const ws = new WebSocket(
-      wsToken ? `${wsUrl}?token=${encodeURIComponent(wsToken)}` : wsUrl
+      wsToken ? `${wsUrl}?token=${encodeURIComponent(wsToken)}` : wsUrl,
     );
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
       try {
         const liveData = JSON.parse(event.data);
+
+        // Real-Time Ledger Sync
         if (liveData?.event_type === "ledger_update") {
-          fetchHistory();
+          if (liveData.action === "submission_created" && liveData.submission) {
+            setSubmissions((prev) => [
+              liveData.submission,
+              ...prev.filter((s) => s.id !== liveData.submission.id),
+            ]);
+          } else if (liveData.action === "vote_updated") {
+            setSubmissions((prev) =>
+              prev.map((sub) =>
+                sub.id === liveData.submission_id
+                  ? {
+                      ...sub,
+                      upvotes: liveData.upvotes,
+                      downvotes: liveData.downvotes,
+                      is_absent: liveData.is_absent,
+                    }
+                  : sub,
+              ),
+            );
+          } else {
+            fetchHistory();
+          }
           return;
         }
+
+        // Live Chat Sync
         setMessages((prev) => [liveData, ...prev]);
       } catch (e) {
-        console.error("Failed to parse message packet", e);
+        console.error("Failed to parse socket payload:", e);
       }
     };
 
-    ws.onerror = () => {
-      // Silent connection handling - no annoying banner
-    };
+    ws.onerror = () => {};
 
     return () => {
       ws.close();
@@ -263,14 +277,13 @@ export default function ArenaRoomPage() {
       hour,
       minute,
       0,
-      0
+      0,
     );
   };
 
   const getActiveProofWindowStart = () => {
     const cutoff = parseDeadlineDate(arenaDeadlineTime);
-    const windowStart = new Date(cutoff.getTime() - 24 * 60 * 60 * 1000);
-    return windowStart;
+    return new Date(cutoff.getTime() - 24 * 60 * 60 * 1000);
   };
 
   const hasUserSubmittedInActiveWindow = () => {
@@ -288,9 +301,7 @@ export default function ArenaRoomPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setSelectedProofFile(file);
     setProofFileName(file.name);
-
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
@@ -310,43 +321,44 @@ export default function ArenaRoomPage() {
     }
 
     if (!proofUrl.trim()) {
-      setError("Please provide your daily proof.");
+      setError("Proof payload cannot be empty.");
       return;
     }
 
-    const clientSubmittedAt = new Date().toISOString();
-    const pendingPayload = {
+    if (arenaProofType === "link") {
+      if (!proofUrl.startsWith("http://") && !proofUrl.startsWith("https://")) {
+        setError("This arena requires a valid http:// or https:// URL link.");
+        return;
+      }
+    }
+
+    const payload = {
       arena_id: Number(id),
       proof_url: proofUrl,
-      client_submitted_at: clientSubmittedAt,
+      client_submitted_at: new Date().toISOString(),
     };
 
     try {
-      localStorage.setItem(`tribely_pending_proof_${id}`, JSON.stringify(pendingPayload));
-    } catch (e) {}
-
-    try {
-      await api.post("/api/activity/submit", pendingPayload);
-
-      try {
-        localStorage.removeItem(`tribely_pending_proof_${id}`);
-      } catch (e) {}
-
+      await api.post("/api/activity/submit", payload);
       setProofUrl("");
       setProofFileName("");
-      setSelectedProofFile(null);
       setSelectedProofPreviewUrl(null);
       fetchHistory();
     } catch (err: any) {
       const detail = err.response?.data?.detail;
-      const msg = typeof detail === "string" ? detail : (detail?.message || "Proof submission saved locally. Auto-syncing with server...");
+      let msg = "Proof submission failed.";
+      if (typeof detail === "string") {
+        msg = detail;
+      } else if (detail?.message) {
+        msg = detail.message;
+      }
       setError(msg);
     }
   };
 
   const handleVoteSubmission = async (
     submissionId: number,
-    voteType: "upvote" | "downvote"
+    voteType: "upvote" | "downvote",
   ) => {
     try {
       await api.post(`/api/activity/submission/${submissionId}/vote`, {
@@ -355,7 +367,8 @@ export default function ArenaRoomPage() {
       fetchHistory();
     } catch (err: any) {
       const detail = err.response?.data?.detail;
-      const msg = typeof detail === "string" ? detail : (detail?.message || "Vote failed.");
+      const msg =
+        typeof detail === "string" ? detail : detail?.message || "Vote failed.";
       alert(msg);
     }
   };
@@ -368,9 +381,45 @@ export default function ArenaRoomPage() {
       JSON.stringify({
         content: chatInput,
         message_type: "text",
-      })
+      }),
     );
     setChatInput("");
+  };
+
+  // --- NEW: Handle Proof Type Change (Admin) ---
+  const handleUpdateProofType = async (newType: string) => {
+    try {
+      await api.patch(`/api/admin/arenas/${id}/proof-type`, {
+        proof_type: newType,
+      });
+      setArenaProofType(newType as ArenaProofType);
+
+      // Clear out any in-progress proof if the type changed
+      setProofUrl("");
+      setSelectedProofPreviewUrl(null);
+      setProofFileName("");
+
+      alert(`Arena verification rule updated to strictly accept: ${newType}`);
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || "Failed to update proof type.";
+      alert(msg);
+    }
+  };
+
+  // --- NEW: Handle Leaving the Arena (Any Member) ---
+  const handleLeaveArena = async () => {
+    const confirmLeave = window.confirm(
+      "Are you sure you want to leave this arena? Your history will remain, but you will lose access.",
+    );
+    if (!confirmLeave) return;
+
+    try {
+      await api.post(`/api/arenas/${id}/leave`);
+      router.push("/dashboard");
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || "Failed to leave the arena.";
+      alert(msg);
+    }
   };
 
   const handleApprove = async (reqUserId: number) => {
@@ -409,24 +458,14 @@ export default function ArenaRoomPage() {
   };
 
   const getProofComposerLabel = () => {
-    if (arenaProofType === "image") return "Image File Upload";
-    if (arenaProofType === "link") return "External Link URL";
-    return "Mandate Text Proof";
-  };
-
-  const getProofPlaceholder = () => {
-    if (arenaProofType === "image") return "Upload your daily photo proof...";
-    if (arenaProofType === "link") return "https://example.com/proof...";
-    return "Describe your completed mandate today...";
-  };
-
-  const getWindowEndLabel = () => {
-    return `${arenaDeadlineTime} Today`;
+    if (arenaProofType === "image") return "Image Proof Required";
+    if (arenaProofType === "link") return "External Link Required";
+    return "Text Proof Required";
   };
 
   return (
     <div className="h-screen w-full flex flex-col bg-[#F8FAFC] dark:bg-[#090D16] text-slate-900 dark:text-slate-100 overflow-hidden font-sans transition-colors duration-200">
-      {/* 1. INSTAGRAM STYLE HEADER BAR */}
+      {/* HEADER */}
       <header className="sticky top-0 z-30 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/90 dark:bg-[#090D16]/90 backdrop-blur-md px-4 py-3 shrink-0 flex items-center justify-between shadow-xs">
         <div className="flex items-center space-x-3 min-w-0">
           <Link
@@ -437,21 +476,24 @@ export default function ArenaRoomPage() {
             ←
           </Link>
           <div className="flex items-center gap-2.5 min-w-0">
-            {renderAvatar(arenaName || `Arena #${id}`, null, "w-9 h-9 rounded-full shrink-0")}
+            {renderAvatar(
+              arenaName || `Arena #${id}`,
+              null,
+              "w-9 h-9 rounded-full shrink-0",
+            )}
             <div className="min-w-0">
               <h1 className="truncate text-sm font-extrabold text-slate-900 dark:text-white tracking-tight capitalize">
                 {arenaName || `Chamber #${id}`}
               </h1>
               <p className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>Active Battle Room</span>
+                <span>Live Arena Sync</span>
               </p>
             </div>
           </div>
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
-          {/* Mobile Ledger Drawer Toggle */}
           <button
             onClick={() => setShowMobileLedger(!showMobileLedger)}
             className="lg:hidden text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-full active:bg-slate-200 dark:active:bg-slate-700 transition font-bold flex items-center gap-1.5 shadow-xs"
@@ -471,7 +513,7 @@ export default function ArenaRoomPage() {
               onClick={() => setShowAdminModal(true)}
               className="text-xs bg-[#0095F6] hover:bg-blue-600 text-white font-bold px-3 py-1.5 rounded-full transition shadow-xs"
             >
-              ⚙️ Admin ({pendingRequests.length})
+              ⚙️ Admin
             </button>
           )}
         </div>
@@ -483,11 +525,10 @@ export default function ArenaRoomPage() {
         </div>
       )}
 
-      {/* 2. MAIN LAYOUT CONTAINER (SIDE-BY-SIDE ON DESKTOP lg:, SLIDE DRAWER ON MOBILE) */}
+      {/* MAIN CONTAINER */}
       <div className="flex-1 flex min-h-0 overflow-hidden relative">
-        {/* LEFT COLUMN: INSTAGRAM CHATTING ROOM */}
+        {/* REAL-TIME CHAT STREAM */}
         <div className="flex-1 min-w-0 flex flex-col bg-[#F8FAFC] dark:bg-[#090D16] relative border-r border-slate-200/60 dark:border-slate-800/60">
-          {/* MESSAGES FEED */}
           <div className="flex-1 px-3 sm:px-4 py-4 overflow-y-auto flex flex-col-reverse gap-3 pb-24">
             <div ref={chatBottomRef} />
 
@@ -496,9 +537,11 @@ export default function ArenaRoomPage() {
                 <div className="w-16 h-16 rounded-full bg-indigo-50 dark:bg-slate-900 text-[#0095F6] text-2xl flex items-center justify-center mx-auto mb-3">
                   💬
                 </div>
-                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">No Messages Yet</h3>
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                  No Messages Yet
+                </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs mx-auto">
-                  Start the conversation! Drop a dispatch in your battle room.
+                  Start the conversation! Dispatch messages to your battle room.
                 </p>
               </div>
             ) : (
@@ -511,7 +554,12 @@ export default function ArenaRoomPage() {
                       isMe ? "self-end flex-row-reverse" : "self-start"
                     }`}
                   >
-                    {!isMe && renderAvatar(msg.sender_name, msg.sender_avatar_url, "w-7 h-7 rounded-full shrink-0 mb-1")}
+                    {!isMe &&
+                      renderAvatar(
+                        msg.sender_name,
+                        msg.sender_avatar_url,
+                        "w-7 h-7 rounded-full shrink-0 mb-1",
+                      )}
 
                     <div className="flex min-w-0 max-w-full flex-col">
                       {!isMe && (
@@ -535,21 +583,34 @@ export default function ArenaRoomPage() {
             )}
           </div>
 
-          {/* INSTAGRAM CHAT INPUT BAR */}
           <form
             onSubmit={handleSendChatMessage}
             className="absolute bottom-0 inset-x-0 p-3 bg-white/95 dark:bg-[#090D16]/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 flex gap-2 items-center shrink-0 z-20"
           >
-            {/* Blue Camera Icon */}
             <button
               type="button"
               onClick={() => setShowMobileLedger(true)}
               className="p-2.5 rounded-full bg-[#0095F6] text-white hover:bg-blue-600 active:scale-95 transition shrink-0 shadow-xs"
-              title="Upload Proof / View Ledger"
+              title="Submit Proof / Open Ledger"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
+                />
               </svg>
             </button>
 
@@ -571,8 +632,7 @@ export default function ArenaRoomPage() {
           </form>
         </div>
 
-        {/* RIGHT COLUMN: LEDGER ROOM (SIDE-BY-SIDE ON DESKTOP lg:, SLIDE-OVER DRAWER ON MOBILE) */}
-        {/* Mobile Backdrop */}
+        {/* REAL-TIME LEDGER STREAM ROOM */}
         {showMobileLedger && (
           <div
             onClick={() => setShowMobileLedger(false)}
@@ -582,22 +642,24 @@ export default function ArenaRoomPage() {
 
         <div
           className={`fixed lg:relative inset-y-0 right-0 z-40 w-full sm:w-[420px] lg:w-[380px] xl:w-[440px] shrink-0 bg-white dark:bg-[#0F172A] border-l border-slate-200 dark:border-slate-800 flex flex-col transition-transform duration-300 ease-in-out shadow-2xl lg:shadow-none ${
-            showMobileLedger ? "translate-x-0" : "translate-x-full lg:translate-x-0"
+            showMobileLedger
+              ? "translate-x-0"
+              : "translate-x-full lg:translate-x-0"
           }`}
         >
-          {/* LEDGER HEADER */}
           <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-800 shrink-0 bg-white dark:bg-[#0F172A]">
             <div>
               <h3 className="text-sm font-extrabold text-slate-950 dark:text-white tracking-wide flex items-center gap-2">
-                <span>📋 Ledger & Proof Stream</span>
+                <span>📋 Live Proof Stream</span>
               </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                Daily verification activity & votes
+                Real-time activity & verification votes
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-semibold">
-                Live Stream
+              <span className="text-[10px] px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                Live Sync
               </span>
               <button
                 onClick={() => setShowMobileLedger(false)}
@@ -608,39 +670,56 @@ export default function ArenaRoomPage() {
             </div>
           </div>
 
-          {/* LEDGER CONTENT & SUBMISSION COMPOSER */}
           <div className="p-4 overflow-y-auto flex-1 space-y-4 bg-[#F8FAFC] dark:bg-[#090D16]">
-            {/* PROOF COMPOSER BOX */}
+            {/* STRICT PROOF COMPOSER FORM BASED ON ADMIN CONFIGURATION */}
             <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#1E293B]/60 p-4 space-y-3 shadow-xs">
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[10px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400 font-bold">
-                  Submit Mandate
+                  Submit Proof
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900/50 font-semibold">
+                <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900/50 font-bold capitalize">
                   {getProofComposerLabel()}
-                </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900/50">
-                  Closes: {getWindowEndLabel()}
                 </span>
               </div>
 
               <form onSubmit={handleSendProof} className="space-y-3">
                 <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-[#F8FAFC] dark:bg-[#090D16] p-3">
-                  {arenaProofType === "text" ? (
+                  {/* TYPE 1: STRICT TEXT SUBMISSION */}
+                  {arenaProofType === "text" && (
                     <textarea
                       required
                       disabled={hasUserSubmittedInActiveWindow()}
                       rows={3}
                       placeholder={
                         hasUserSubmittedInActiveWindow()
-                          ? "Proof submitted for this active window."
-                          : getProofPlaceholder()
+                          ? "Proof already verified for active window."
+                          : "Describe your completed task..."
                       }
                       className="w-full resize-none bg-transparent text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none disabled:opacity-40"
                       value={proofUrl}
                       onChange={(e) => setProofUrl(e.target.value)}
                     />
-                  ) : (
+                  )}
+
+                  {/* TYPE 2: STRICT LINK SUBMISSION */}
+                  {arenaProofType === "link" && (
+                    <input
+                      type="url"
+                      required
+                      disabled={hasUserSubmittedInActiveWindow()}
+                      placeholder={
+                        hasUserSubmittedInActiveWindow()
+                          ? "Proof already verified for active window."
+                          : "https://example.com/proof-link"
+                      }
+                      className="w-full bg-transparent text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none disabled:opacity-40"
+                      value={proofUrl}
+                      onChange={(e) => setProofUrl(e.target.value)}
+                    />
+                  )}
+
+                  {/* TYPE 3: STRICT IMAGE SUBMISSION */}
+                  {arenaProofType === "image" && (
                     <div className="space-y-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <button
@@ -649,7 +728,7 @@ export default function ArenaRoomPage() {
                           onClick={() => proofFileInputRef.current?.click()}
                           className="px-3 py-1.5 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition disabled:opacity-40"
                         >
-                          Upload Image
+                          📷 Choose Image File
                         </button>
                         <input
                           ref={proofFileInputRef}
@@ -660,8 +739,8 @@ export default function ArenaRoomPage() {
                           disabled={hasUserSubmittedInActiveWindow()}
                         />
                         {proofFileName && (
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                            Selected: {proofFileName}
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[180px]">
+                            {proofFileName}
                           </span>
                         )}
                       </div>
@@ -669,31 +748,39 @@ export default function ArenaRoomPage() {
                       {selectedProofPreviewUrl && (
                         <button
                           type="button"
-                          onClick={() => openImageViewer(selectedProofPreviewUrl)}
+                          onClick={() =>
+                            openImageViewer(selectedProofPreviewUrl)
+                          }
                           className="group block w-full overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-left"
                         >
                           <img
                             src={selectedProofPreviewUrl}
                             alt="Selected proof preview"
                             className="max-h-36 w-full object-cover transition group-hover:scale-[1.01]"
-                            loading="lazy"
                           />
                         </button>
                       )}
 
-                      <input
-                        type="text"
-                        required
-                        disabled={hasUserSubmittedInActiveWindow()}
-                        placeholder={
-                          hasUserSubmittedInActiveWindow()
-                            ? "Proof submitted for this active window."
-                            : getProofPlaceholder()
-                        }
-                        className="w-full bg-transparent text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none disabled:opacity-40"
-                        value={proofUrl.startsWith("data:image/") ? "" : proofUrl}
-                        onChange={(e) => setProofUrl(e.target.value)}
-                      />
+                      <div className="border-t border-slate-200 dark:border-slate-800 pt-2">
+                        <input
+                          type="text"
+                          disabled={hasUserSubmittedInActiveWindow()}
+                          placeholder={
+                            hasUserSubmittedInActiveWindow()
+                              ? "Proof already submitted."
+                              : "Or paste direct image URL (https://...)"
+                          }
+                          className="w-full bg-transparent text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none disabled:opacity-40"
+                          value={
+                            proofUrl.startsWith("data:image/") ? "" : proofUrl
+                          }
+                          onChange={(e) => {
+                            setSelectedProofPreviewUrl(null);
+                            setProofFileName("");
+                            setProofUrl(e.target.value);
+                          }}
+                        />
+                      </div>
                     </div>
                   )}
                 </div>
@@ -703,41 +790,51 @@ export default function ArenaRoomPage() {
                   disabled={hasUserSubmittedInActiveWindow()}
                   className="w-full py-2.5 bg-[#0095F6] hover:bg-blue-600 active:bg-blue-700 text-white font-bold text-xs rounded-full transition shadow-xs disabled:opacity-40"
                 >
-                  {hasUserSubmittedInActiveWindow() ? "✓ Proof Submitted" : "Submit Daily Proof"}
+                  {hasUserSubmittedInActiveWindow()
+                    ? "✓ Proof Submitted"
+                    : "Submit Daily Proof"}
                 </button>
               </form>
             </div>
 
-            {/* LIVE SUBMISSIONS STREAM */}
+            {/* REAL-TIME SUBMISSION LEDGER */}
             <div className="space-y-3">
               <h4 className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider px-1">
-                Recent Submissions
+                Submissions Stream ({submissions.length})
               </h4>
 
               {submissions.length === 0 ? (
                 <div className="p-6 text-center text-xs text-slate-400 italic bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
-                  No submissions yet in this window.
+                  No submissions recorded yet for this active cycle.
                 </div>
               ) : (
                 submissions.map((sub) => (
                   <div
                     key={sub.id}
-                    className="p-3.5 rounded-2xl bg-white dark:bg-[#1E293B]/60 border border-slate-200 dark:border-slate-800 space-y-2 shadow-xs"
+                    className="p-3.5 rounded-2xl bg-white dark:bg-[#1E293B]/60 border border-slate-200 dark:border-slate-800 space-y-2.5 shadow-xs transition animate-fade-in"
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        {renderAvatar(sub.user_name, sub.user_avatar_url, "w-6 h-6 rounded-full shrink-0")}
+                        {renderAvatar(
+                          sub.user_name,
+                          sub.user_avatar_url,
+                          "w-6 h-6 rounded-full shrink-0",
+                        )}
                         <span className="text-xs font-bold text-slate-900 dark:text-white">
                           {sub.user_name}
                         </span>
                       </div>
                       <span className="text-[10px] text-slate-400">
-                        {new Date(sub.submitted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(sub.submitted_at).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </span>
                     </div>
 
                     <div className="text-xs text-slate-700 dark:text-slate-300">
-                      {sub.proof_url.startsWith("data:image/") || sub.proof_url.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
+                      {sub.proof_url.startsWith("data:image/") ||
+                      sub.proof_url.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
                         <button
                           type="button"
                           onClick={() => openImageViewer(sub.proof_url)}
@@ -750,8 +847,18 @@ export default function ArenaRoomPage() {
                             loading="lazy"
                           />
                         </button>
+                      ) : sub.proof_url.startsWith("http://") ||
+                        sub.proof_url.startsWith("https://") ? (
+                        <a
+                          href={sub.proof_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 font-mono text-[11px] text-[#0095F6] underline truncate"
+                        >
+                          🔗 {sub.proof_url}
+                        </a>
                       ) : (
-                        <p className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 font-mono text-[11px] leading-relaxed">
+                        <p className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 font-sans text-xs leading-relaxed text-slate-800 dark:text-slate-200">
                           {sub.proof_url}
                         </p>
                       )}
@@ -761,20 +868,28 @@ export default function ArenaRoomPage() {
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => handleVoteSubmission(sub.id, "upvote")}
-                          className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-200 dark:border-emerald-900/50 hover:scale-105 transition"
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-200 dark:border-emerald-900/50 hover:scale-105 active:scale-95 transition"
                         >
                           <span>👍</span> {sub.upvotes || 0}
                         </button>
                         <button
-                          onClick={() => handleVoteSubmission(sub.id, "downvote")}
-                          className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-bold border border-rose-200 dark:border-rose-900/50 hover:scale-105 transition"
+                          onClick={() =>
+                            handleVoteSubmission(sub.id, "downvote")
+                          }
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-bold border border-rose-200 dark:border-rose-900/50 hover:scale-105 active:scale-95 transition"
                         >
                           <span>👎</span> {sub.downvotes || 0}
                         </button>
                       </div>
-                      <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                        ✓ Verified
-                      </span>
+                      {sub.is_absent ? (
+                        <span className="text-[10px] font-bold text-rose-500">
+                          ❌ Failed
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                          ✓ Verified
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))
@@ -784,7 +899,7 @@ export default function ArenaRoomPage() {
         </div>
       </div>
 
-      {/* MODAL 1: MEMBERS LIST / INFO MODAL */}
+      {/* MODALS */}
       {showMembersModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl">
@@ -807,12 +922,18 @@ export default function ArenaRoomPage() {
                   className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200/60 dark:border-slate-800/60"
                 >
                   <div className="flex items-center gap-2.5">
-                    {renderAvatar(member.full_name, null, "w-8 h-8 rounded-full")}
+                    {renderAvatar(
+                      member.full_name,
+                      null,
+                      "w-8 h-8 rounded-full",
+                    )}
                     <div>
                       <h4 className="text-xs font-bold text-slate-900 dark:text-white">
                         {member.full_name}
                       </h4>
-                      <p className="text-[10px] text-slate-500">{member.email}</p>
+                      <p className="text-[10px] text-slate-500">
+                        {member.email}
+                      </p>
                     </div>
                   </div>
                   <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900/50">
@@ -821,11 +942,20 @@ export default function ArenaRoomPage() {
                 </div>
               ))}
             </div>
+
+            {/* LEAVE ARENA BUTTON ESCAPE HATCH */}
+            <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-800">
+              <button
+                onClick={handleLeaveArena}
+                className="w-full py-2.5 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 font-bold text-xs rounded-2xl border border-rose-200 dark:border-rose-900/50 hover:bg-rose-100 dark:hover:bg-rose-900/60 transition active:scale-[0.98]"
+              >
+                Exit Arena Room
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* MODAL 2: ADMIN MANAGEMENT HUB MODAL */}
       {showAdminModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl max-h-[85vh] overflow-y-auto">
@@ -841,9 +971,34 @@ export default function ArenaRoomPage() {
               </button>
             </div>
 
-            {/* Invite Credentials */}
+            {/* DYNAMIC PROOF TYPE CONTROL */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                Arena Rules
+              </h4>
+              <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                <div>
+                  <span className="block text-xs font-bold text-slate-900 dark:text-white">
+                    Validation Type
+                  </span>
+                  <span className="block text-[10px] text-slate-500">
+                    Allowed submission format
+                  </span>
+                </div>
+                <select
+                  value={arenaProofType}
+                  onChange={(e) => handleUpdateProofType(e.target.value)}
+                  className="text-xs font-semibold text-slate-900 dark:text-white bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 outline-none focus:ring-2 focus:ring-[#0095F6] cursor-pointer"
+                >
+                  <option value="text">Text Only</option>
+                  <option value="link">Link (URL)</option>
+                  <option value="image">Image Upload</option>
+                </select>
+              </div>
+            </div>
+
             {inviteAssets && (
-              <div className="p-4 rounded-2xl bg-indigo-50/60 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/50 space-y-2">
+              <div className="p-4 rounded-2xl bg-indigo-50/60 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/50 space-y-2 mt-2">
                 <span className="text-[10px] uppercase font-bold text-indigo-600 dark:text-indigo-400">
                   Invite Code
                 </span>
@@ -864,14 +1019,13 @@ export default function ArenaRoomPage() {
               </div>
             )}
 
-            {/* Pending Requests Section */}
-            <div className="space-y-3">
+            <div className="space-y-3 pt-2">
               <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                Pending Gate Requests ({pendingRequests.length})
+                Pending Requests ({pendingRequests.length})
               </h4>
 
               {pendingRequests.length === 0 ? (
-                <p className="text-xs text-slate-400 italic p-3 bg-slate-50 dark:bg-slate-950 rounded-2xl text-center">
+                <p className="text-xs text-slate-400 italic p-3 bg-slate-50 dark:bg-slate-950 rounded-2xl text-center border border-slate-200 dark:border-slate-800">
                   No pending access requests.
                 </p>
               ) : (
@@ -905,7 +1059,6 @@ export default function ArenaRoomPage() {
         </div>
       )}
 
-      {/* MODAL 3: FULL SCREEN IMAGE LIGHTBOX VIEWER */}
       {viewerImageUrl && (
         <div
           onClick={closeImageViewer}
