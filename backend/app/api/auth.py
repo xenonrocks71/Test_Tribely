@@ -4,10 +4,10 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import verify_password, create_access_token
+from app.core.security import create_access_token
 from app.core.config import settings
-from app.schemas.schemas import UserCreate, UserResponse, Token
-from app.crud import crud_user
+from app.schemas.schemas import UserCreate, UserResponse
+from app.services.auth_service import auth_service
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
@@ -15,27 +15,17 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
     """
     Registers a new user in the Tribely application database.
+    Delegates validation, password hashing, and user creation to AuthService.
     """
-    # Check if a user with this email already exists
-    existing_user = crud_user.get_user_by_email(db, email=user_in.email)
-    if existing_user:
-        raise HTTPException(
-            status_code=400,
-            detail="A user with this email is already registered."
-        )
-    
-    # Create the new user profile row
-    new_user = crud_user.create_user(db, user_in=user_in)
-    return new_user
+    return auth_service.register_user(db, user_in=user_in)
 
 @router.post("/login")
 def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """
-    Authenticates user credentials and returns a secure signed JWT Access Token.
-    Note: OAuth2PasswordRequestForm expects data sent via form-data (username/password fields).
+    Authenticates user credentials and returns a secure signed JWT Access Token with user metadata.
+    Delegates authentication checks to AuthService.
     """
-    # 1. Look up the user by email (OAuth2 uses 'username' field)
-    user = crud_user.get_user_by_email(db, email=form_data.username)
+    user = auth_service.authenticate_user(db, email=form_data.username, password=form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -43,15 +33,6 @@ def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = D
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # 2. Check if the password hash matches
-    if not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    # 3. Create the secure token payload
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         subject=user.id, expires_delta=access_token_expires

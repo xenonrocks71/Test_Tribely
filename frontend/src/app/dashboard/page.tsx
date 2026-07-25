@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import api from "../utils/api";
+import { useTheme } from "../context/ThemeContext";
 
 interface Arena {
   id: number;
@@ -16,17 +17,58 @@ interface Arena {
   is_private: boolean;
   membership_status?: "approved" | "pending";
   user_role?: "admin" | "member";
+  icon_url?: string | null;
+  last_activity_at?: string | null;
+  last_activity_snippet?: string;
 }
+
+function formatRelativeTime(isoStr?: string | null) {
+  if (!isoStr) return "";
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return "";
+  const now = new Date();
+  const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+  if (diffSec < 60) return "Just now";
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  if (diffSec < 172800) return "Yesterday";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function SunIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+    </svg>
+  );
+}
+function MoonIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+    </svg>
+  );
+}
+
+// Proof type icon
+const proofIcon = (t: string) =>
+  t === "image" ? "📸" : t === "link" ? "🔗" : "✍️";
 
 export default function DashboardPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-[#F3F4F6] flex items-center justify-center text-slate-500">
-          Loading...
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--bg)", color: "var(--fg-muted)" }}>
+        <div className="flex flex-col items-center gap-3">
+          <svg className="w-8 h-8 animate-spin" style={{ color: "var(--accent)" }} fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span className="text-sm font-medium">Loading dashboard…</span>
         </div>
-      }
-    >
+      </div>
+    }>
       <DashboardContent />
     </Suspense>
   );
@@ -35,28 +77,29 @@ export default function DashboardPage() {
 function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === "dark";
+
   const [userName, setUserName] = useState("");
   const [profileImageUrl, setProfileImageUrl] = useState("");
   const [arenas, setArenas] = useState<Arena[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
+  const [successMsg, setSuccessMsg] = useState("");
   const isProcessingJoin = useRef(false);
 
-  // Creation State Management
+  // Create modal state
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newProofType, setNewProofType] = useState("image");
   const [newPenalty, setNewPenalty] = useState(500);
   const [isPrivate, setIsPrivate] = useState(false);
-
-  // 12-Hour State Management
   const [deadlineHour, setDeadlineHour] = useState("10");
   const [deadlineMinute, setDeadlineMinute] = useState("00");
   const [deadlinePeriod, setDeadlinePeriod] = useState("PM");
 
-  // Joining State Management
+  // Join modal state
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
 
@@ -64,297 +107,214 @@ function DashboardContent() {
     const token = localStorage.getItem("tribely_token");
     const storedUserId = localStorage.getItem("tribely_user_id");
     const storedName = localStorage.getItem("tribely_user_name");
-
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-
+    if (!token) { router.push("/login"); return; }
     setUserName(storedName || "Tribe Member");
 
-    const fetchProfileSummary = async () => {
-      if (!storedUserId) {
-        return;
+    const init = async () => {
+      if (storedUserId) {
+        try {
+          const r = await api.get(`/users/profile/${storedUserId}`);
+          setProfileImageUrl(r.data?.data?.profile_image_url || "");
+        } catch { setProfileImageUrl(""); }
       }
-
-      try {
-        const response = await api.get(`/users/profile/${storedUserId}`);
-        setProfileImageUrl(response.data?.data?.profile_image_url || "");
-      } catch {
-        setProfileImageUrl("");
-      }
-    };
-
-    const initializeDashboardState = async () => {
-      await fetchProfileSummary();
       await fetchArenas();
       await checkAndProcessDeferredArenaJoin();
     };
-
-    initializeDashboardState();
+    init();
   }, []);
 
   useEffect(() => {
-    if (searchParams?.get("create") === "1") {
-      setShowCreateModal(true);
-    }
+    if (searchParams?.get("create") === "1") setShowCreateModal(true);
   }, [searchParams]);
 
   const fetchArenas = async () => {
     try {
-      const response = await api.get("/api/arenas/");
-      setArenas(response.data?.data || []);
-    } catch (err: any) {
-      setError("Could not retrieve your habit Arenas.");
-    } finally {
-      setLoading(false);
-    }
+      const r = await api.get("/api/arenas/");
+      setArenas(r.data?.data || []);
+    } catch { setError("Could not retrieve your habit Arenas."); }
+    finally { setLoading(false); }
   };
 
   const checkAndProcessDeferredArenaJoin = async () => {
     const pendingArenaId = sessionStorage.getItem("pending_join_arena_id");
     const isPrivateStr = sessionStorage.getItem("pending_join_is_private");
-
     if (!pendingArenaId || isProcessingJoin.current) return;
     isProcessingJoin.current = true;
-
-    const clearPendingJoin = () => {
-      sessionStorage.removeItem("pending_join_arena_id");
-      sessionStorage.removeItem("pending_join_is_private");
-    };
-
+    const clear = () => { sessionStorage.removeItem("pending_join_arena_id"); sessionStorage.removeItem("pending_join_is_private"); };
     const arenaId = parseInt(pendingArenaId, 10);
-    if (Number.isNaN(arenaId)) {
-      clearPendingJoin();
-      isProcessingJoin.current = false;
-      return;
-    }
-
+    if (Number.isNaN(arenaId)) { clear(); isProcessingJoin.current = false; return; }
     try {
-      const response = await api.post("/api/arenas/discovery/join", {
-        arena_id: arenaId,
-      });
-
-      clearPendingJoin();
-
-      const joinData = response.data?.data;
-
-      if (joinData?.room_state === "pending" || isPrivateStr === "true") {
-        setError(
-          "Join request sent. The arena admin will review your request.",
-        );
-      } else {
-        router.push(`/arena/${arenaId}`);
-      }
-
+      const r = await api.post("/api/arenas/discovery/join", { arena_id: arenaId });
+      clear();
+      if (r.data?.data?.room_state === "pending" || isPrivateStr === "true") {
+        setSuccessMsg("Join request sent — the arena admin will review your request.");
+      } else { router.push(`/arena/${arenaId}`); }
       fetchArenas();
     } catch (err: any) {
-      clearPendingJoin();
-
+      clear();
       const detail = err.response?.data?.detail;
-      const errorCode =
-        typeof detail === "object" && detail !== null
-          ? detail.error_code
-          : undefined;
-      const message =
-        typeof detail === "object" && detail !== null
-          ? detail.message
-          : typeof detail === "string"
-            ? detail
-            : undefined;
-
-      if (err.response?.status === 404) {
-        // Stale or sample arena id — ignore silently.
-        fetchArenas();
-      } else if (errorCode === "ARENA_MEMBERSHIP_ALREADY_APPROVED") {
-        router.push(`/arena/${arenaId}`);
-        fetchArenas();
-      } else if (errorCode === "ARENA_MEMBERSHIP_PENDING") {
-        setError(
-          message ||
-            "Your request to join that arena is already pending approval.",
-        );
-        fetchArenas();
-      } else {
-        setError(message || "Could not join the selected arena.");
-        fetchArenas();
-      }
-    } finally {
-      isProcessingJoin.current = false;
-    }
+      const errorCode = typeof detail === "object" && detail !== null ? detail.error_code : undefined;
+      const message = typeof detail === "object" && detail !== null ? detail.message : typeof detail === "string" ? detail : undefined;
+      if (err.response?.status === 404) { fetchArenas(); }
+      else if (errorCode === "ARENA_MEMBERSHIP_ALREADY_APPROVED") { router.push(`/arena/${arenaId}`); fetchArenas(); }
+      else if (errorCode === "ARENA_MEMBERSHIP_PENDING") { setSuccessMsg(message || "Your request is already pending approval."); fetchArenas(); }
+      else { setError(message || "Could not join the selected arena."); fetchArenas(); }
+    } finally { isProcessingJoin.current = false; }
   };
 
   const handleCreateArena = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-
-    const formattedDeadline = `${deadlineHour}:${deadlineMinute} ${deadlinePeriod}`;
-
+    e.preventDefault(); setError("");
     try {
       await api.post("/api/arenas/", {
-        name: newName,
-        description: newDesc,
-        proof_type: newProofType,
+        name: newName, description: newDesc, proof_type: newProofType,
         penalty_amount: Number(newPenalty),
-        deadline_time: formattedDeadline,
+        deadline_time: `${deadlineHour}:${deadlineMinute} ${deadlinePeriod}`,
         is_private: isPrivate,
       });
-
-      setShowCreateModal(false);
-      setNewName("");
-      setNewDesc("");
-      setIsPrivate(false);
+      setShowCreateModal(false); setNewName(""); setNewDesc(""); setIsPrivate(false);
       fetchArenas();
     } catch (err: any) {
-      setError(
-        err.response?.data?.detail ||
-          "Failed to establish your accountability Arena.",
-      );
+      setError(err.response?.data?.detail || "Failed to create Arena.");
     }
   };
 
   const handleJoinArena = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    const cleanCode = inviteCode.trim().toUpperCase();
-
+    e.preventDefault(); setError("");
     try {
-      const response = await api.post("/api/arenas/join-by-code", {
-        invite_code: cleanCode,
-      });
-      alert(
-        response.data?.data?.detail || "Join response evaluated successfully.",
-      );
-      setShowJoinModal(false);
-      setInviteCode("");
-      fetchArenas();
+      const r = await api.post("/api/arenas/join-by-code", { invite_code: inviteCode.trim().toUpperCase() });
+      setSuccessMsg(r.data?.data?.detail || "Join request evaluated successfully.");
+      setShowJoinModal(false); setInviteCode(""); fetchArenas();
     } catch (err: any) {
       setError(err.response?.data?.detail || "Failed to join via invite key.");
     }
   };
 
+  const initials = (name: string) => name.split(" ").map(p => p[0]).slice(0, 2).join("").toUpperCase();
+
   return (
-    <div className="min-h-screen bg-[#F3F4F6] dark:bg-[#090D16] text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200">
-      <header className="border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-4 md:px-6 py-4 flex justify-between items-center shadow-sm">
-        <h1 className="text-lg md:text-xl font-bold bg-linear-to-r from-[#5B4DFF] to-[#2F80ED] bg-clip-text text-transparent">
-          TRIBELY<span className="hidden sm:inline"> WORKSPACE</span>
-        </h1>
-        <div className="flex items-center gap-2 md:gap-4">
-          {/* Profile Link - Full on desktop, icon-only on mobile */}
-          <Link
-            href="/profile"
-            className="hidden md:flex items-center gap-3 rounded-full border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 transition hover:border-indigo-300 dark:hover:border-indigo-500 hover:bg-slate-50 dark:hover:bg-slate-800"
-          >
-            <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-sm font-bold text-slate-700 dark:text-slate-200">
-              {profileImageUrl ? (
-                <img
-                  src={profileImageUrl}
-                  alt="Profile"
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <span>{(userName || "T").slice(0, 1).toUpperCase()}</span>
-              )}
-            </div>
-            <div className="flex flex-col items-start">
-              <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
-                Profile
-              </span>
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                Welcome, {userName}
-              </span>
-            </div>
-          </Link>
+    <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)", color: "var(--fg)" }}>
 
-          {/* Mobile Profile Icon Only */}
-          <Link
-            href="/profile"
-            className="md:hidden flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 transition hover:border-indigo-300 dark:hover:border-indigo-500 hover:bg-slate-50 dark:hover:bg-slate-800"
-          >
-            <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200">
-              {profileImageUrl ? (
-                <img
-                  src={profileImageUrl}
-                  alt="Profile"
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <span>{(userName || "T").slice(0, 1).toUpperCase()}</span>
-              )}
-            </div>
-          </Link>
+      {/* ── TOPBAR ── */}
+      <header className="sticky top-0 z-30 px-5 md:px-8 py-4 flex justify-between items-center glass"
+        style={{ borderBottom: "1px solid var(--border)" }}>
+        <Link href="/" className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl flex items-center justify-center font-black text-white text-sm"
+            style={{ background: "var(--accent)" }}>T</div>
+          <span className="font-extrabold text-base tracking-tight hidden sm:block" style={{ color: "var(--fg)" }}>
+            TRIBELY
+          </span>
+        </Link>
 
-          {/* Logout - Text on desktop, Icon on mobile */}
-          <button
-            onClick={() => {
-              localStorage.clear();
-              router.push("/login");
-            }}
-            title="Log Out"
-            className="hidden md:block text-xs font-semibold px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-full transition active:scale-95"
-          >
-            Log Out
+        <div className="flex items-center gap-2 md:gap-3">
+          {/* theme toggle */}
+          <button onClick={toggleTheme}
+            className="p-2.5 rounded-full transition-all hover:scale-110"
+            style={{ background: "var(--bg-raised)", border: "1px solid var(--border)", color: "var(--fg-muted)" }}
+            aria-label="Toggle theme">
+            {isDark ? <SunIcon /> : <MoonIcon />}
           </button>
-          <button
-            onClick={() => {
-              localStorage.clear();
-              router.push("/login");
-            }}
-            title="Log Out"
-            className="md:hidden flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-rose-200 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 transition active:scale-95 text-lg"
-          >
-            ↪️
+
+          {/* profile */}
+          <Link href="/profile"
+            className="flex items-center gap-2.5 px-3 py-2 rounded-2xl transition-all"
+            style={{ background: "var(--bg-raised)", border: "1px solid var(--border)" }}>
+            <div className="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center font-bold text-xs text-white"
+              style={{ background: profileImageUrl ? "transparent" : "var(--accent)" }}>
+              {profileImageUrl ? <img src={profileImageUrl} alt="Profile" className="h-full w-full object-cover" /> : initials(userName || "TM")}
+            </div>
+            <div className="hidden md:block text-left">
+              <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--fg-subtle)" }}>Welcome back</p>
+              <p className="text-sm font-semibold" style={{ color: "var(--fg)" }}>{userName}</p>
+            </div>
+          </Link>
+
+          {/* logout */}
+          <button onClick={() => { localStorage.clear(); router.push("/login"); }}
+            className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold transition-all hover:opacity-80"
+            style={{ background: "var(--bg-raised)", border: "1px solid var(--border)", color: "var(--fg-muted)" }}>
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            Sign Out
+          </button>
+          <button onClick={() => { localStorage.clear(); router.push("/login"); }}
+            className="md:hidden p-2.5 rounded-full transition-all hover:opacity-80"
+            style={{ background: "var(--bg-raised)", border: "1px solid var(--border)", color: "var(--fg-muted)" }}>
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
           </button>
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl w-full mx-auto p-6 md:p-8 space-y-8">
+      {/* ── MAIN ── */}
+      <main className="flex-1 max-w-6xl w-full mx-auto px-5 md:px-8 py-10 space-y-8">
+        {/* banner messages */}
         {error && (
-          <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 p-4 rounded-2xl text-sm text-center">
+          <div className="px-5 py-4 rounded-2xl text-sm flex items-center gap-3 animate-fade-in"
+            style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.20)", color: "var(--danger)" }}>
+            <svg className="w-4 h-4 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            </svg>
             {error}
           </div>
         )}
+        {successMsg && (
+          <div className="px-5 py-4 rounded-2xl text-sm flex items-center gap-3 animate-fade-in"
+            style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.20)", color: "var(--success)" }}>
+            <svg className="w-4 h-4 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+            </svg>
+            {successMsg}
+          </div>
+        )}
 
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        {/* page heading */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5">
           <div>
-            <h2 className="text-2xl font-extrabold tracking-tight text-slate-950 dark:text-white">
-              Your Accountability Arenas
-            </h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              Conquer your skin-in-the-game habit challenges with local stakes.
+            <h1 className="text-2xl font-extrabold tracking-tight" style={{ color: "var(--fg)" }}>Your Accountability Arenas</h1>
+            <p className="text-sm mt-1" style={{ color: "var(--fg-muted)" }}>
+              Conquer skin-in-the-game habit challenges with local stakes.
             </p>
           </div>
           <div className="flex gap-3">
-            <button
-              onClick={() => setShowJoinModal(true)}
-              className="px-4 py-2 text-sm font-semibold bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-full transition shadow-sm"
-            >
+            <button onClick={() => setShowJoinModal(true)}
+              className="btn-ghost px-5 py-2.5 rounded-full text-sm font-semibold flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+              </svg>
               Join via Code
             </button>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 text-sm font-semibold bg-[#5B4DFF] hover:bg-[#4B3EEB] text-white rounded-full transition shadow-lg shadow-indigo-600/20"
-            >
-              + Create Arena
+            <button onClick={() => setShowCreateModal(true)}
+              className="btn-accent px-5 py-2.5 rounded-full text-sm flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Create Arena
             </button>
           </div>
         </div>
 
-        {arenas.length === 0 ? (
-          <div className="border border-dashed border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 rounded-[28px] p-12 text-center max-w-md mx-auto mt-12 shadow-sm">
-            <div className="text-4xl mb-4">🥋</div>
-            <h3 className="text-lg font-bold text-slate-950 dark:text-white">
-              No active Arenas found
-            </h3>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 mb-6">
-              Create an accountability structure and set custom stakes to back
-              your discipline.
+        {/* loading skeleton */}
+        {loading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1,2,3].map(i => (
+              <div key={i} className="h-64 rounded-[28px] animate-shimmer"
+                style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }} />
+            ))}
+          </div>
+        ) : arenas.length === 0 ? (
+          /* empty state */
+          <div className="flex flex-col items-center justify-center py-24 text-center rounded-3xl max-w-md mx-auto"
+            style={{ background: "var(--bg-card)", border: "1px dashed var(--border)" }}>
+            <div className="text-5xl mb-5">🥋</div>
+            <h3 className="text-lg font-bold mb-2" style={{ color: "var(--fg)" }}>No active Arenas yet</h3>
+            <p className="text-sm mb-8" style={{ color: "var(--fg-muted)" }}>
+              Create an accountability arena and set custom stakes to back your discipline.
             </p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 text-sm font-semibold bg-[#5B4DFF]/10 text-[#5B4DFF] hover:bg-[#5B4DFF] hover:text-white rounded-full transition"
-            >
-              Instantiate Your First Arena
+            <button onClick={() => setShowCreateModal(true)}
+              className="btn-accent px-6 py-3 rounded-full text-sm font-bold">
+              Create Your First Arena
             </button>
           </div>
         ) : (
@@ -362,75 +322,147 @@ function DashboardContent() {
             {arenas.map((arena) => {
               const isPending = arena.membership_status === "pending";
               return (
-                <div
-                  key={arena.id}
-                  className={`border rounded-[28px] p-6 flex flex-col justify-between transition duration-300 shadow-sm ${
-                    isPending
-                      ? "bg-slate-50/80 dark:bg-slate-950/60 border-amber-300/80 dark:border-amber-900/60 opacity-85"
-                      : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-500"
-                  }`}
-                >
+                <div key={arena.id}
+                  className={`rounded-[28px] p-6 flex flex-col justify-between shadow-sm transition-all duration-200 ${isPending ? "opacity-75" : "card-hover"}`}
+                  style={{
+                    background: "var(--bg-card)",
+                    border: `1px solid ${isPending ? "rgba(245,158,11,0.40)" : "var(--border)"}`,
+                    ...(isPending ? { backdropFilter: "saturate(80%)" } : {}),
+                  }}>
                   <div>
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="text-lg font-bold text-slate-950 dark:text-white tracking-tight line-clamp-1">
-                        {arena.name}
-                      </h3>
-                      <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                        {isPending ? (
-                          <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 flex items-center gap-1">
-                            <span>🔒</span> Pending Approval
-                          </span>
-                        ) : (
-                          <span
-                            className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-full ${
-                              arena.is_private
-                                ? "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-900/50"
-                                : "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900/50"
-                            }`}
+                    {/* Arena Avatar & Title Row */}
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="relative p-0.5 rounded-full ring-2 ring-emerald-500/70 dark:ring-emerald-400/80 shadow-sm shrink-0">
+                        <div
+                          className="w-10 h-10 rounded-full flex items-center justify-center font-extrabold text-white text-sm overflow-hidden"
+                          style={{
+                            background: arena.icon_url
+                              ? "transparent"
+                              : "linear-gradient(135deg, var(--accent), #0095F6)",
+                          }}
+                        >
+                          {arena.icon_url ? (
+                            <img
+                              src={arena.icon_url}
+                              alt={arena.name}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            arena.name[0]?.toUpperCase() || "A"
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <h3
+                            className="text-base font-extrabold truncate"
+                            style={{ color: "var(--fg)" }}
                           >
-                            {arena.is_private ? "Private" : "Public"}
-                          </span>
+                            {arena.name}
+                          </h3>
+                          {arena.last_activity_at && (
+                            <span
+                              className="text-[10px] font-bold shrink-0"
+                              style={{ color: "var(--accent)" }}
+                            >
+                              {formatRelativeTime(arena.last_activity_at)}
+                            </span>
+                          )}
+                        </div>
+                        {arena.last_activity_snippet && (
+                          <p
+                            className="text-xs truncate font-medium mt-0.5"
+                            style={{ color: "var(--fg-muted)" }}
+                          >
+                            {arena.last_activity_snippet}
+                          </p>
                         )}
-                        <span className="text-xs font-mono font-bold bg-[#F1F5F9] dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
-                          {arena.invite_code}
-                        </span>
                       </div>
                     </div>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 line-clamp-2 h-10">
+
+                    <div className="flex items-center gap-1.5 flex-wrap mb-2">
+                      {isPending ? (
+                        <span
+                          className="pill"
+                          style={{
+                            background: "rgba(245,158,11,0.12)",
+                            color: "var(--warning)",
+                            border: "1px solid rgba(245,158,11,0.25)",
+                          }}
+                        >
+                          🔒 Pending
+                        </span>
+                      ) : (
+                        <span
+                          className="pill"
+                          style={{
+                            background: arena.is_private
+                              ? "rgba(245,158,11,0.10)"
+                              : "rgba(16,185,129,0.10)",
+                            color: arena.is_private
+                              ? "var(--warning)"
+                              : "var(--success)",
+                            border: `1px solid ${
+                              arena.is_private
+                                ? "rgba(245,158,11,0.20)"
+                                : "rgba(16,185,129,0.20)"
+                            }`,
+                          }}
+                        >
+                          {arena.is_private ? "Private" : "Public"}
+                        </span>
+                      )}
+                      <span
+                        className="pill font-mono"
+                        style={{
+                          background: "var(--bg-raised)",
+                          color: "var(--fg-muted)",
+                          border: "1px solid var(--border)",
+                        }}
+                      >
+                        {arena.invite_code}
+                      </span>
+                    </div>
+
+                    <p
+                      className="text-xs line-clamp-2 mt-1"
+                      style={{ color: "var(--fg-muted)" }}
+                    >
                       {arena.description || "No description set."}
                     </p>
 
-                    <div className="mt-4 space-y-2 border-t border-slate-200 dark:border-slate-800 pt-4 text-xs font-medium text-slate-500 dark:text-slate-400">
-                      <div className="flex justify-between">
-                        <span>Proof Action Required:</span>
-                        <span className="text-slate-900 dark:text-slate-100 capitalize font-semibold">
-                          {arena.proof_type} Only
+                    <div className="mt-5 pt-4 border-t space-y-2.5 text-xs font-medium"
+                      style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}>
+                      <div className="flex justify-between items-center">
+                        <span>Proof Required</span>
+                        <span className="font-semibold capitalize flex items-center gap-1" style={{ color: "var(--fg)" }}>
+                          {proofIcon(arena.proof_type)} {arena.proof_type}
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span>Daily Cutoff Deadline:</span>
-                        <span className="text-slate-900 dark:text-slate-100 font-mono font-semibold">
-                          {arena.deadline_time}
-                        </span>
+                        <span>Daily Cutoff</span>
+                        <span className="font-mono font-semibold" style={{ color: "var(--fg)" }}>{arena.deadline_time}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span>Stakes / Penalty:</span>
-                        <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                          ₹ {arena.penalty_amount} INR
-                        </span>
+                        <span>Penalty Stake</span>
+                        <span className="font-bold" style={{ color: "var(--success)" }}>₹ {arena.penalty_amount}</span>
                       </div>
                     </div>
                   </div>
+
                   <button
                     onClick={() => !isPending && router.push(`/arena/${arena.id}`)}
                     disabled={isPending}
-                    className={`w-full mt-6 py-2.5 text-xs font-bold text-center rounded-full transition shadow-md ${
-                      isPending
-                        ? "bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-800/60 cursor-not-allowed"
-                        : "bg-slate-950 dark:bg-indigo-600 hover:bg-[#5B4DFF] text-white border border-transparent active:scale-95"
-                    }`}
-                  >
-                    {isPending ? "🔒 Pending Admin Approval" : "Enter Battle Arena"}
+                    className="w-full mt-5 py-2.5 text-sm font-bold rounded-full transition-all duration-150 active:scale-95"
+                    style={{
+                      background: isPending ? "rgba(245,158,11,0.12)" : "var(--accent)",
+                      color: isPending ? "var(--warning)" : "#fff",
+                      border: isPending ? "1px solid rgba(245,158,11,0.25)" : "none",
+                      cursor: isPending ? "not-allowed" : "pointer",
+                      boxShadow: isPending ? "none" : "0 4px 16px var(--accent-glow2)",
+                    }}>
+                    {isPending ? "🔒 Awaiting Admin Approval" : "Enter Arena →"}
                   </button>
                 </div>
               );
@@ -439,214 +471,136 @@ function DashboardContent() {
         )}
       </main>
 
-      {/* CREATE ARENA MODAL */}
+      {/* ── CREATE MODAL ── */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[28px] w-full max-w-md p-6 shadow-2xl relative">
-            <h3 className="text-xl font-bold text-slate-950 dark:text-white mb-1">
-              Create Accountability Arena
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">
-              Architect custom rules bounds for habit validation tracking
-              matrices.
-            </p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"
+          style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)" }}>
+          <div className="w-full max-w-md rounded-3xl p-7 shadow-2xl animate-scale-in space-y-5"
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="text-xl font-bold" style={{ color: "var(--fg)" }}>Create Arena</h3>
+                <p className="text-xs mt-0.5" style={{ color: "var(--fg-muted)" }}>Architect your habit accountability room</p>
+              </div>
+              <button onClick={() => setShowCreateModal(false)}
+                className="p-2 rounded-full transition hover:opacity-70"
+                style={{ background: "var(--bg-raised)", color: "var(--fg-muted)" }}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
 
             <form onSubmit={handleCreateArena} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-gray-400 dark:text-slate-400 uppercase tracking-wider mb-1">
-                  Arena Title
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g., 5AM Lean Dev Club"
-                  className="w-full px-3 py-3 bg-[#F8FAFC] dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-4 focus:ring-indigo-100 dark:focus:ring-indigo-900/30 focus:border-indigo-300"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                />
+                <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "var(--fg-muted)" }}>Arena Title</label>
+                <input type="text" required placeholder="e.g., 5AM Lean Dev Club"
+                  className="input-base focus-accent" value={newName} onChange={e => setNewName(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "var(--fg-muted)" }}>Description</label>
+                <textarea placeholder="What is the daily mandate?" rows={2}
+                  className="input-base focus-accent resize-none" value={newDesc} onChange={e => setNewDesc(e.target.value)} />
               </div>
 
+              {/* privacy toggle */}
               <div>
-                <label className="block text-xs font-semibold text-gray-400 dark:text-slate-400 uppercase tracking-wider mb-1">
-                  Description
-                </label>
-                <textarea
-                  placeholder="What is the daily mandate?"
-                  rows={2}
-                  className="w-full px-3 py-3 bg-[#F8FAFC] dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-4 focus:ring-indigo-100 dark:focus:ring-indigo-900/30 focus:border-indigo-300 resize-none"
-                  value={newDesc}
-                  onChange={(e) => setNewDesc(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-400 dark:text-slate-400 uppercase tracking-wider mb-1.5">
-                  Arena Privacy Visibility Type
-                </label>
+                <label className="text-[10px] font-bold uppercase tracking-widest block mb-2" style={{ color: "var(--fg-muted)" }}>Visibility</label>
                 <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setIsPrivate(false)}
-                    className={`py-2 px-3 text-xs font-bold rounded-full border text-center transition ${!isPrivate ? "bg-[#5B4DFF]/10 border-[#5B4DFF]/20 text-[#5B4DFF]" : "bg-[#F8FAFC] dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400"}`}
-                  >
-                    🔓 Public (Open Click)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsPrivate(true)}
-                    className={`py-2 px-3 text-xs font-bold rounded-full border text-center transition ${isPrivate ? "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900/50 text-amber-700 dark:text-amber-300" : "bg-[#F8FAFC] dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400"}`}
-                  >
-                    🔒 Private (Admin Review)
-                  </button>
+                  {[{ v: false, icon: "🔓", label: "Public" }, { v: true, icon: "🔒", label: "Private" }].map(o => (
+                    <button key={String(o.v)} type="button" onClick={() => setIsPrivate(o.v)}
+                      className="py-2.5 px-3 text-xs font-bold rounded-2xl border text-center transition-all duration-150"
+                      style={{
+                        background: isPrivate === o.v ? "var(--accent-light)" : "var(--bg-raised)",
+                        border: `1px solid ${isPrivate === o.v ? "rgba(0,122,204,0.30)" : "var(--border)"}`,
+                        color: isPrivate === o.v ? "var(--accent)" : "var(--fg-muted)",
+                      }}>
+                      {o.icon} {o.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-gray-400 dark:text-slate-400 uppercase tracking-wider mb-1">
-                    Validation Proof
-                  </label>
-                  <select
-                    className="w-full px-3 py-3 bg-[#F8FAFC] dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-4 focus:ring-indigo-100 dark:focus:ring-indigo-900/30 focus:border-indigo-300"
-                    value={newProofType}
-                    onChange={(e) => setNewProofType(e.target.value)}
-                  >
-                    <option value="image" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">📸 Screenshot / Image</option>
-                    <option value="text" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">✍️ Text Confirmation</option>
-                    <option value="link" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">🔗 Hyperlink URL</option>
+                  <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "var(--fg-muted)" }}>Proof Type</label>
+                  <select className="input-base focus-accent" value={newProofType} onChange={e => setNewProofType(e.target.value)}>
+                    <option value="image">📸 Image</option>
+                    <option value="text">✍️ Text</option>
+                    <option value="link">🔗 Link</option>
                   </select>
                 </div>
-
-                {/* THE FIXED DROP-DOWN BLOCK */}
                 <div>
-                  <label className="block text-xs font-semibold text-gray-400 dark:text-slate-400 uppercase tracking-wider mb-1">
-                    Daily Deadline
-                  </label>
-                  <div className="grid grid-cols-3 gap-1 bg-[#F8FAFC] dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-1 h-9.5 items-center">
-                    <select
-                      value={deadlineHour}
-                      onChange={(e) => setDeadlineHour(e.target.value)}
-                      className="bg-transparent text-sm text-slate-900 dark:text-white focus:outline-none w-full text-center cursor-pointer border-none"
-                    >
-                      {Array.from({ length: 12 }, (_, i) =>
-                        String(i + 1).padStart(2, "0"),
-                      ).map((h) => (
-                        <option
-                          key={h}
-                          value={h}
-                          className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                        >
-                          {h}
-                        </option>
-                      ))}
+                  <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "var(--fg-muted)" }}>Daily Deadline</label>
+                  <div className="flex gap-1 items-center input-base focus-accent p-0 overflow-hidden">
+                    <select value={deadlineHour} onChange={e => setDeadlineHour(e.target.value)}
+                      className="flex-1 h-full bg-transparent text-sm text-center py-2.5 focus:outline-none" style={{ color: "var(--fg)" }}>
+                      {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0")).map(h => <option key={h} value={h}>{h}</option>)}
                     </select>
-
-                    <select
-                      value={deadlineMinute}
-                      onChange={(e) => setDeadlineMinute(e.target.value)}
-                      className="bg-transparent text-sm text-slate-900 dark:text-white focus:outline-none w-full text-center cursor-pointer border-none"
-                    >
-                      {["00", "15", "30", "45"].map((m) => (
-                        <option
-                          key={m}
-                          value={m}
-                          className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                        >
-                          {m}
-                        </option>
-                      ))}
+                    <span style={{ color: "var(--fg-muted)" }}>:</span>
+                    <select value={deadlineMinute} onChange={e => setDeadlineMinute(e.target.value)}
+                      className="flex-1 h-full bg-transparent text-sm text-center py-2.5 focus:outline-none" style={{ color: "var(--fg)" }}>
+                      {["00","15","30","45"].map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
-
-                    <select
-                      value={deadlinePeriod}
-                      onChange={(e) => setDeadlinePeriod(e.target.value)}
-                      className="bg-[#5B4DFF]/10 text-xs font-bold text-[#5B4DFF] rounded-2xl h-full text-center cursor-pointer border border-[#5B4DFF]/20"
-                    >
-                      <option value="AM" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                        AM
-                      </option>
-                      <option value="PM" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                        PM
-                      </option>
+                    <select value={deadlinePeriod} onChange={e => setDeadlinePeriod(e.target.value)}
+                      className="h-full bg-transparent text-xs font-bold px-2 focus:outline-none" style={{ color: "var(--accent)" }}>
+                      <option value="AM">AM</option>
+                      <option value="PM">PM</option>
                     </select>
                   </div>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-400 dark:text-slate-400 uppercase tracking-wider mb-1">
-                  Penalty Stake Amount (₹ INR)
-                </label>
+                <label className="text-[10px] font-bold uppercase tracking-widest block mb-1.5" style={{ color: "var(--fg-muted)" }}>Penalty Stake (₹ INR)</label>
                 <div className="relative">
-                  <span className="absolute left-3 top-2 text-sm font-bold text-gray-500 dark:text-slate-400">
-                    ₹
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={50}
-                    required
-                    className="w-full pl-7 pr-3 py-3 bg-[#F8FAFC] dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl text-sm text-slate-900 dark:text-white font-mono focus:outline-none focus:ring-4 focus:ring-indigo-100 dark:focus:ring-indigo-900/30 focus:border-indigo-300"
-                    value={newPenalty}
-                    onChange={(e) => setNewPenalty(Number(e.target.value))}
-                  />
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold" style={{ color: "var(--fg-muted)" }}>₹</span>
+                  <input type="number" min={0} step={50} required
+                    className="input-base focus-accent pl-8 font-mono" value={newPenalty} onChange={e => setNewPenalty(Number(e.target.value))} />
                 </div>
               </div>
 
-              <div className="flex gap-3 mt-6 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="flex-1 py-2 text-sm font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-full transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2 text-sm font-semibold bg-[#5B4DFF] hover:bg-[#4B3EEB] text-white rounded-full transition shadow-lg shadow-indigo-600/20"
-                >
-                  Launch Arena
-                </button>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowCreateModal(false)}
+                  className="btn-ghost flex-1 py-3 rounded-2xl text-sm font-semibold">Cancel</button>
+                <button type="submit"
+                  className="btn-accent flex-1 py-3 rounded-2xl text-sm font-bold">Launch Arena</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* JOIN ARENA MODAL */}
+      {/* ── JOIN MODAL ── */}
       {showJoinModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[28px] w-full max-w-sm p-6 shadow-2xl relative">
-            <h3 className="text-xl font-bold text-slate-950 dark:text-white mb-1">
-              Join via Invitation Key
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">
-              Enter a 6-character alpha-numeric room code.
-            </p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"
+          style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)" }}>
+          <div className="w-full max-w-sm rounded-3xl p-7 shadow-2xl animate-scale-in space-y-5"
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="text-xl font-bold" style={{ color: "var(--fg)" }}>Join via Code</h3>
+                <p className="text-xs mt-0.5" style={{ color: "var(--fg-muted)" }}>Enter the 6-character invite code</p>
+              </div>
+              <button onClick={() => setShowJoinModal(false)}
+                className="p-2 rounded-full transition hover:opacity-70"
+                style={{ background: "var(--bg-raised)", color: "var(--fg-muted)" }}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
             <form onSubmit={handleJoinArena} className="space-y-4">
-              <input
-                type="text"
-                maxLength={6}
-                required
-                placeholder="A7B9X2"
-                className="w-full px-4 py-3 bg-[#F8FAFC] dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl text-center text-lg font-mono font-bold uppercase text-[#5B4DFF] placeholder-slate-400 dark:placeholder-slate-600 tracking-widest focus:outline-none focus:ring-4 focus:ring-indigo-100 dark:focus:ring-indigo-900/30 focus:border-indigo-300"
-                value={inviteCode}
-                onChange={(e) => setInviteCode(e.target.value)}
-              />
-              <div className="flex gap-3 mt-6">
-                <button
-                  type="button"
-                  onClick={() => setShowJoinModal(false)}
-                  className="flex-1 py-2.5 text-sm font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl transition active:scale-95"
-                >
-                  Dismiss
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 text-sm font-semibold bg-[#5B4DFF] hover:bg-[#4B3EEB] text-white rounded-xl transition shadow-lg shadow-indigo-600/20 active:scale-95"
-                >
-                  Verify & Enter
-                </button>
+              <input type="text" maxLength={6} required placeholder="A7B9X2"
+                className="w-full py-4 text-center text-2xl font-mono font-bold uppercase rounded-2xl tracking-[0.3em] focus-accent"
+                style={{ background: "var(--bg-raised)", border: "1px solid var(--border)", color: "var(--accent)" }}
+                value={inviteCode} onChange={e => setInviteCode(e.target.value)} />
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={() => setShowJoinModal(false)}
+                  className="btn-ghost flex-1 py-3 rounded-2xl text-sm font-semibold">Cancel</button>
+                <button type="submit"
+                  className="btn-accent flex-1 py-3 rounded-2xl text-sm font-bold">Verify & Enter</button>
               </div>
             </form>
           </div>

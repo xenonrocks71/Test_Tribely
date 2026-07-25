@@ -47,6 +47,7 @@ class ArenaBase(BaseModel):
     penalty_amount: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0.00"))
     deadline_time: str = Field("12:00 AM", description="Deterministic 12-hour format: HH:MM AM/PM")
     is_private: bool = Field(default=False)
+    icon_url: Optional[str] = None
 
     @field_validator("proof_type")
     @classmethod

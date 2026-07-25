@@ -3,13 +3,14 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from app.core.database import get_db
 from app.api.deps import get_current_user
-from app.models.models import Arena, ArenaMembership, User
+from app.models.models import Arena, ArenaMembership, User, Message, Submission
 
 from typing import List, Dict, Any
 from pydantic import BaseModel
 
 from app.schemas.schemas import ApiSuccessResponse, ArenaCreate, ArenaResponse, MembershipCreate, MembershipResponse
-from app.crud import crud_arena
+from app.services.arena_service import arena_service
+from app.repositories.arena_repository import arena_repository
 
 router = APIRouter(prefix="/api/arenas", tags=["Arenas"])
 
@@ -29,6 +30,7 @@ def discover_all_arenas(db: Session = Depends(get_db)):
     """
     Public Endpoint: Returns public and private arena information coupled 
     with real-time total member counts for landing page exploration.
+    Delegates to ArenaRepository and ArenaService.
     """
     try:
         counts_query = db.query(
@@ -37,7 +39,7 @@ def discover_all_arenas(db: Session = Depends(get_db)):
         ).filter(ArenaMembership.status == "approved").group_by(ArenaMembership.arena_id).all()
         
         counts_map = {row.arena_id: row.total_members for row in counts_query}
-        arenas = db.query(Arena).all()
+        arenas = arena_repository.get_multi(db, skip=0, limit=200)
 
         results = []
         for arena in arenas:
@@ -74,23 +76,11 @@ def request_membership_gatekeeper(
     """
     Binds visitors to arenas. Instantly approves public entry,
     while holding private room entries as 'pending' for admin approval.
+    Delegates validation and persistence to ArenaService.
     """
     try:
-        arena = db.query(Arena).filter(Arena.id == payload.arena_id).first()
-        if not arena:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "status": "error",
-                    "message": "Target arena room layout missing.",
-                    "error_code": "ARENA_NOT_FOUND",
-                },
-            )
-
-        existing = db.query(ArenaMembership).filter(
-            ArenaMembership.arena_id == payload.arena_id,
-            ArenaMembership.user_id == current_user.id
-        ).first()
+        arena = arena_service.get_arena_by_id(db, arena_id=payload.arena_id)
+        existing = arena_repository.get_membership(db, user_id=current_user.id, arena_id=payload.arena_id)
 
         if existing:
             if existing.status == "approved":
@@ -112,20 +102,10 @@ def request_membership_gatekeeper(
                     },
                 )
 
-        assigned_status = "pending" if arena.is_private else "approved"
-        
-        new_member = ArenaMembership(
-            user_id=current_user.id,
-            arena_id=payload.arena_id,
-            status=assigned_status,
-            role="member"
-        )
-        
-        db.add(new_member)
-        db.commit()
+        membership = arena_service.join_arena(db, user_id=current_user.id, arena_id=payload.arena_id)
 
         return success_response({
-            "room_state": assigned_status,
+            "room_state": membership.status,
             "is_private": arena.is_private,
             "message": "Access request logged cleanly under rule frameworks.",
         })
@@ -150,35 +130,26 @@ def request_membership_gatekeeper(
 @router.post("/", response_model=ApiSuccessResponse, status_code=status.HTTP_201_CREATED)
 def create_new_arena(arena_in: ArenaCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
-    Creates a new micro-arena room configuration and maps the authenticated user as Owner/Admin.
+    Creates a new micro-arena room configuration and maps authenticated user as Owner/Admin.
+    Delegates domain creation to ArenaService.
     """
-    created_arena = crud_arena.create_arena(db, arena_in=arena_in, creator_id=current_user.id)
+    created_arena = arena_service.create_arena(db, arena_in=arena_in, creator_id=current_user.id)
     return success_response(ArenaResponse.model_validate(created_arena, from_attributes=True).model_dump())
 
 @router.post("/join", response_model=ApiSuccessResponse)
 def join_arena_by_invite(payload: MembershipCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
-    Joins an existing arena using its auto-generated 6-character alphanumeric invite code.
+    Joins an existing arena using auto-generated 6-character alphanumeric invite code.
+    Delegates to ArenaService.
     """
-    arena = crud_arena.get_arena_by_invite_code(db, invite_code=payload.invite_code)
-    if not arena:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "status": "error",
-                "message": "The invite code provided does not match any active Arena.",
-                "error_code": "ARENA_INVITE_NOT_FOUND",
-            },
-        )
-    
-    membership = crud_arena.join_arena_by_code(db, user_id=current_user.id, arena_id=arena.id)
+    membership = arena_service.join_by_invite_code(db, user_id=current_user.id, invite_code=payload.invite_code)
     return success_response(MembershipResponse.model_validate(membership, from_attributes=True).model_dump())
 
 @router.get("/", response_model=ApiSuccessResponse)
 def list_my_arenas(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
     Retrieves all accountability arenas the authenticated user has joined or created,
-    including their membership status and role.
+    sorted by recent activity (chat messages, proof submissions, join dates) descending (WhatsApp order).
     """
     memberships = db.query(ArenaMembership).filter(ArenaMembership.user_id == current_user.id).all()
     membership_map = {m.arena_id: m for m in memberships}
@@ -192,14 +163,51 @@ def list_my_arenas(db: Session = Depends(get_db), current_user: User = Depends(g
         mem = membership_map.get(arena.id)
         item["membership_status"] = mem.status if mem else "approved"
         item["user_role"] = mem.role if mem else ("admin" if arena.creator_id == current_user.id else "member")
+
+        # Query latest chat message
+        latest_msg = db.query(Message)\
+            .filter(Message.arena_id == arena.id)\
+            .order_by(Message.created_at.desc())\
+            .first()
+
+        # Query latest proof submission
+        latest_sub = db.query(Submission)\
+            .filter(Submission.arena_id == arena.id)\
+            .order_by(Submission.submitted_at.desc())\
+            .first()
+
+        msg_time = latest_msg.created_at if latest_msg else None
+        sub_time = latest_sub.submitted_at if latest_sub else None
+        mem_time = mem.joined_at if (mem and getattr(mem, 'joined_at', None)) else arena.created_at
+
+        # Calculate latest activity timestamp
+        valid_times = [t for t in [msg_time, sub_time, mem_time, arena.created_at] if t is not None]
+        last_activity_dt = max(valid_times) if valid_times else arena.created_at
+
+        # Formulate last activity preview snippet (WhatsApp style)
+        snippet = "No recent activity"
+        if latest_msg and (not sub_time or latest_msg.created_at >= sub_time):
+            sender_name = latest_msg.user.full_name.split()[0] if (latest_msg.user and getattr(latest_msg.user, 'full_name', None)) else "Member"
+            snippet = f"💬 {sender_name}: {latest_msg.content[:36]}{'...' if len(latest_msg.content) > 36 else ''}"
+        elif latest_sub:
+            sub_name = latest_sub.user.full_name.split()[0] if (latest_sub.user and getattr(latest_sub.user, 'full_name', None)) else "Member"
+            snippet = f"📸 {sub_name} submitted daily proof"
+        elif mem:
+            snippet = "Active in chamber"
+
+        item["last_activity_at"] = last_activity_dt.isoformat() if last_activity_dt else None
+        item["last_activity_snippet"] = snippet
         arena_payload.append(item)
+
+    # Sort WhatsApp-style: most recent activity at the top!
+    arena_payload.sort(key=lambda x: x.get("last_activity_at") or "", reverse=True)
 
     return success_response(arena_payload)
 
 @router.post("/join-by-code", response_model=ApiSuccessResponse)
 def join_arena_by_code(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
-    Looks up an arena by its 6-character invite code and creates a membership record.
+    Looks up an arena by code and creates a membership record.
     """
     invite_code = payload.get("invite_code", "").strip().upper()
     if not invite_code:
@@ -212,7 +220,7 @@ def join_arena_by_code(payload: dict, db: Session = Depends(get_db), current_use
             },
         )
         
-    arena = db.query(Arena).filter(Arena.invite_code == invite_code).first()
+    arena = arena_repository.get_by_invite_code(db, invite_code=invite_code)
     if not arena:
         raise HTTPException(
             status_code=404,
@@ -223,40 +231,54 @@ def join_arena_by_code(payload: dict, db: Session = Depends(get_db), current_use
             },
         )
         
-    existing_membership = db.query(ArenaMembership).filter(
-        ArenaMembership.arena_id == arena.id,
-        ArenaMembership.user_id == current_user.id
-    ).first()
+    existing_membership = arena_repository.get_membership(db, user_id=current_user.id, arena_id=arena.id)
     
     if existing_membership:
         if existing_membership.status == "approved":
             return success_response({"detail": "You are already an approved member of this arena.", "arena_id": arena.id, "membership_status": "approved"})
         return success_response({"detail": "Your join request is still pending admin approval.", "arena_id": arena.id, "membership_status": "pending"})
         
-    initial_status = "pending" if arena.is_private else "approved"
-    new_membership = ArenaMembership(
-        arena_id=arena.id,
-        user_id=current_user.id,
-        status=initial_status,
-        role="member"
-    )
-    db.add(new_membership)
-    db.commit()
+    membership = arena_service.join_arena(db, user_id=current_user.id, arena_id=arena.id)
     
-    msg = "Join request submitted successfully. Awaiting admin approval." if initial_status == "pending" else "Joined arena successfully."
-    return success_response({"detail": msg, "arena_id": arena.id, "membership_status": initial_status})
+    # Broadcast real-time join_request event
+    try:
+        import asyncio
+        from app.core.managers.websocket_manager import websocket_manager
+        join_payload = {
+            "event_type": "join_request",
+            "arena_id": arena.id,
+            "user_id": current_user.id,
+            "user_name": current_user.full_name,
+            "status": membership.status
+        }
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(websocket_manager.broadcast_to_arena(arena.id, join_payload))
+            else:
+                loop.run_until_complete(websocket_manager.broadcast_to_arena(arena.id, join_payload))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    msg = "Join request submitted successfully. Awaiting admin approval." if membership.status == "pending" else "Joined arena successfully."
+    return success_response({"detail": msg, "arena_id": arena.id, "membership_status": membership.status})
 
 @router.get("/{arena_id}/members", response_model=ApiSuccessResponse)
 def get_arena_members_list(arena_id: int, db: Session = Depends(get_db)):
     """
     Fetches all approved active members inside an arena room alongside 
-    pre-calculated total arena room overlap metrics (Common Arenas count).
+    pre-calculated total arena room overlap metrics.
     """
     try:
         memberships = db.query(ArenaMembership)\
             .filter(ArenaMembership.arena_id == arena_id, ArenaMembership.status == "approved")\
             .options(joinedload(ArenaMembership.user))\
             .all()
+
+        arena_obj = db.query(Arena).filter(Arena.id == arena_id).first()
+        creator_id = arena_obj.creator_id if arena_obj else None
 
         results = []
         for member in memberships:
@@ -269,8 +291,10 @@ def get_arena_members_list(arena_id: int, db: Session = Depends(get_db)):
 
             results.append({
                 "user_id": member.user_id,
+                "user_name": member.user.full_name,
                 "full_name": member.user.full_name,
                 "email": member.user.email,
+                "role": member.role or ("admin" if member.user_id == creator_id else "member"),
                 "common_arenas_count": common_count
             })
 
@@ -293,25 +317,12 @@ def leave_arena(
 ):
     """
     Allows a user/admin to leave an arena room. 
-    If the leaving user is an admin/creator, ownership automatically transfers 
-    to the next oldest member who joined the room.
+    Transfers ownership if leaving user is admin/creator.
     """
     try:
-        arena = db.query(Arena).filter(Arena.id == arena_id).first()
-        if not arena:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "status": "error",
-                    "message": "Arena room not found.",
-                    "error_code": "ARENA_NOT_FOUND"
-                }
-            )
+        arena = arena_service.get_arena_by_id(db, arena_id=arena_id)
 
-        membership = db.query(ArenaMembership).filter(
-            ArenaMembership.arena_id == arena_id,
-            ArenaMembership.user_id == current_user.id
-        ).first()
+        membership = arena_repository.get_membership(db, user_id=current_user.id, arena_id=arena_id)
 
         if not membership:
             raise HTTPException(
@@ -325,12 +336,10 @@ def leave_arena(
 
         is_leaving_admin = (arena.creator_id == current_user.id or membership.role == "admin")
 
-        # Delete outgoing user's membership
         db.delete(membership)
         db.flush()
 
         if is_leaving_admin:
-            # Find the next oldest approved member who joined right after
             next_successor = db.query(ArenaMembership).filter(
                 ArenaMembership.arena_id == arena_id,
                 ArenaMembership.status == "approved",
@@ -338,12 +347,10 @@ def leave_arena(
             ).order_by(ArenaMembership.id.asc()).first()
 
             if next_successor:
-                # Transfer primary admin rights & creator ownership seamlessly
                 next_successor.role = "admin"
                 arena.creator_id = next_successor.user_id
                 message = f"You exited the arena. Admin ownership transferred to User #{next_successor.user_id}."
             else:
-                # If no members remain, delete the arena room cleanly
                 db.delete(arena)
                 message = "You exited the arena. Room deleted as no members remained."
         else:

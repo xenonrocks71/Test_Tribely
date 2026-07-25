@@ -9,6 +9,8 @@ from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.models.models import Arena, Submission, Message, User, UserProfile, ArenaMembership, SubmissionVote, DailyArenaSheet
 from app.api.websocket import manager as websocket_manager
+from app.schemas.schemas import MessageCreate
+from app.crud import crud_activity
 
 router = APIRouter(prefix="/api/activity", tags=["Activity & History Logs"])
 
@@ -108,7 +110,32 @@ class VoteRequest(BaseModel):
     vote_type: str
 
 
+from app.core.storage.storage_factory import storage_engine
+
+class PresignedUrlRequest(BaseModel):
+    filename: str
+    content_type: str = "image/jpeg"
+
+
+
+@router.post("/upload-url")
+def get_presigned_media_upload_url(
+    payload: PresignedUrlRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Generates a presigned media upload URL allowing client applications to upload 
+    binary image proofs directly to S3 / Cloudflare R2 / Local Storage.
+    """
+    import uuid, os
+    ext = os.path.splitext(payload.filename)[1] or ".jpg"
+    unique_key = f"proofs/user_{current_user.id}/{uuid.uuid4().hex}{ext}"
+    res = storage_engine.generate_presigned_upload_url(object_name=unique_key, expiration=3600)
+    return success_response(res)
+
+
 @router.post("/submit", status_code=status.HTTP_201_CREATED)
+
 def submit_proof(
     payload: SubmissionCreate,
     db: Session = Depends(get_db),
@@ -429,3 +456,68 @@ def get_arena_history(
         })
     except Exception as e:
         return success_response({"submissions": [], "messages": [], "error": str(e)})
+
+
+class MessageCreatePayload(BaseModel):
+    content: str
+    message_type: str = "text"
+
+
+@router.post("/arena/{arena_id}/message", status_code=status.HTTP_201_CREATED)
+async def send_arena_message(
+    arena_id: int,
+    payload: MessageCreatePayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    HTTP POST endpoint to send a chat message into an arena.
+    Persists message to database and broadcasts real-time update to all WebSocket connections.
+    """
+    membership = db.query(ArenaMembership).filter(
+        ArenaMembership.arena_id == arena_id,
+        ArenaMembership.user_id == current_user.id
+    ).first()
+    
+    if not membership or membership.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "status": "error",
+                "message": "Membership approval required to send messages in this arena.",
+                "error_code": "ARENA_MEMBERSHIP_NOT_APPROVED"
+            }
+        )
+
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"status": "error", "message": "Message content cannot be empty."}
+        )
+
+    msg_schema = MessageCreate(content=content, message_type=payload.message_type)
+    db_msg = crud_activity.create_message(db, message_in=msg_schema, arena_id=arena_id, user_id=current_user.id)
+
+    sender_name = current_user.full_name if (current_user and getattr(current_user, 'full_name', None)) else f"Member #{current_user.id}"
+    sender_avatar_url = get_user_avatar_url(db, current_user.id)
+
+    broadcast_payload = {
+        "event_type": "chat_message",
+        "id": db_msg.id,
+        "arena_id": arena_id,
+        "user_id": current_user.id,
+        "sender_name": sender_name,
+        "sender_avatar_url": sender_avatar_url,
+        "content": content,
+        "text": content,
+        "message_type": payload.message_type,
+        "created_at": str(db_msg.created_at)
+    }
+
+    try:
+        await websocket_manager.broadcast_to_arena(arena_id, broadcast_payload)
+    except Exception as e:
+        print(f"Error broadcasting message via websocket: {e}")
+
+    return success_response(broadcast_payload)

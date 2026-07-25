@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from app.api import profile
 import uvicorn
 from fastapi import FastAPI
@@ -15,10 +16,23 @@ app = FastAPI(
 
 Base.metadata.create_all(bind=engine)
 
+# Auto-migrate newly added columns for existing PostgreSQL tables
+try:
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE arenas ADD COLUMN IF NOT EXISTS icon_url TEXT;"))
+        conn.commit()
+except Exception as _e:
+    pass
+
 # Configure CORS for local IP testing, localhost, and production domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows local IP (192.168.1.125), localhost, and production frontends
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+    ],
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

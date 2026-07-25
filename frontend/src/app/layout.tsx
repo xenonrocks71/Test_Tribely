@@ -1,15 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700", "800", "900"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -25,56 +22,57 @@ export const metadata: Metadata = {
     statusBarStyle: "default",
     title: "Tribely",
   },
-  formatDetection: {
-    telephone: false,
-  },
+  formatDetection: { telephone: false },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#5B4DFF",
+  themeColor: "#007ACC",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
 };
 
 import { ThemeProvider } from "./context/ThemeContext";
+import { ToastProvider } from "./context/ToastContext";
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html
       lang="en"
-      data-scroll-behavior="smooth"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${inter.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <head>
+        {/* Instant theme flash prevention */}
         <script
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
                 try {
-                  var theme = localStorage.getItem('tribely_theme');
-                  if (theme === 'dark') {
+                  var t = localStorage.getItem('tribely_theme');
+                  if (t === 'dark') {
                     document.documentElement.classList.add('dark');
                     document.documentElement.style.colorScheme = 'dark';
                   } else {
                     document.documentElement.classList.remove('dark');
                     document.documentElement.style.colorScheme = 'light';
                   }
-                } catch (e) {}
+                } catch(e) {}
               })();
             `,
           }}
         />
       </head>
-      <body className="min-h-full flex flex-col bg-[#F8FAFC] text-slate-900 dark:bg-[#090D16] dark:text-slate-100 transition-colors duration-200">
-        <ThemeProvider>{children}</ThemeProvider>
+      <body
+        className="min-h-full flex flex-col transition-colors duration-200"
+        style={{ background: "var(--bg)", color: "var(--fg)", fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}
+      >
+        <ThemeProvider>
+          <ToastProvider>{children}</ToastProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
 }
-

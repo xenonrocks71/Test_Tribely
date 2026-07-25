@@ -227,10 +227,29 @@ def remove_existing_member(
         if next_successor:
             next_successor.role = "admin"
             arena.creator_id = next_successor.user_id
-        else:
-            db.delete(arena)
-
     db.commit()
+
+    # Broadcast real-time kick event to all connected arena clients
+    try:
+        import asyncio
+        from app.core.managers.websocket_manager import websocket_manager
+        kick_payload = {
+            "event_type": "member_removed",
+            "arena_id": action.arena_id,
+            "user_id": action.user_id,
+            "message": "A member was removed from the arena."
+        }
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(websocket_manager.broadcast_to_arena(action.arena_id, kick_payload))
+            else:
+                loop.run_until_complete(websocket_manager.broadcast_to_arena(action.arena_id, kick_payload))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     return success_response({"detail": "Member removed and admin roles adjusted seamlessly."})
 
 @router.get("/{arena_id}/invite-assets")
@@ -250,4 +269,108 @@ def generate_invite_assets(arena_id: int, db: Session = Depends(get_db), current
         "invite_code": arena.invite_code,
         "invite_link": invite_link,
         "qr_payload_string": f"TRIBELY_INVITE:{arena.invite_code}"
+    })
+
+class UpdateArenaSettingsRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    icon_url: str | None = None
+    proof_type: str | None = None
+    deadline_time: str | None = None
+    penalty_amount: float | None = None
+
+@router.delete("/{arena_id}")
+def delete_arena(
+    arena_id: int, 
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Permanently deletes an arena and all associated activity data.
+    """
+    arena = db.query(Arena).filter(Arena.id == arena_id).first()
+    if not arena:
+        raise HTTPException(status_code=404, detail="Arena not found.")
+    
+    admin_membership = db.query(ArenaMembership).filter(
+        ArenaMembership.arena_id == arena_id,
+        ArenaMembership.user_id == current_user.id,
+        ArenaMembership.role == "admin"
+    ).first()
+    
+    if arena.creator_id != current_user.id and not admin_membership:
+        raise HTTPException(status_code=403, detail="Unauthorized Admin access.")
+        
+    db.delete(arena)
+    db.commit()
+    return success_response({"detail": "Arena deleted successfully."})
+
+@router.patch("/{arena_id}/settings")
+def update_arena_settings(
+    arena_id: int,
+    payload: UpdateArenaSettingsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Updates general arena settings including DP icon URL, description, and rules.
+    """
+    arena = db.query(Arena).filter(Arena.id == arena_id).first()
+    if not arena:
+        raise HTTPException(status_code=404, detail="Arena not found.")
+        
+    admin_membership = db.query(ArenaMembership).filter(
+        ArenaMembership.arena_id == arena_id,
+        ArenaMembership.user_id == current_user.id,
+        ArenaMembership.role == "admin"
+    ).first()
+    
+    if arena.creator_id != current_user.id and not admin_membership:
+        raise HTTPException(status_code=403, detail="Unauthorized Admin access.")
+        
+    if payload.name is not None:
+        arena.name = payload.name
+    if payload.description is not None:
+        arena.description = payload.description
+    if payload.icon_url is not None:
+        arena.icon_url = payload.icon_url
+    if payload.proof_type is not None:
+        arena.proof_type = payload.proof_type
+    if payload.deadline_time is not None:
+        arena.deadline_time = payload.deadline_time
+    if payload.penalty_amount is not None:
+        arena.penalty_amount = payload.penalty_amount
+        
+    db.commit()
+
+    # Broadcast real-time settings update (deadline_time, proof_type, etc.)
+    try:
+        import asyncio
+        from app.core.managers.websocket_manager import websocket_manager
+        update_payload = {
+            "event_type": "arena_settings_updated",
+            "arena_id": arena_id,
+            "deadline_time": arena.deadline_time,
+            "proof_type": arena.proof_type,
+            "name": arena.name,
+            "description": arena.description,
+            "icon_url": arena.icon_url,
+        }
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(websocket_manager.broadcast_to_arena(arena_id, update_payload))
+            else:
+                loop.run_until_complete(websocket_manager.broadcast_to_arena(arena_id, update_payload))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    return success_response({
+        "detail": "Arena settings updated successfully.",
+        "icon_url": arena.icon_url,
+        "name": arena.name,
+        "deadline_time": arena.deadline_time,
+        "proof_type": arena.proof_type,
     })

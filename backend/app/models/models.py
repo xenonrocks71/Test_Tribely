@@ -43,6 +43,7 @@ class Arena(Base):
     penalty_amount = Column(Numeric(10, 2), default=0.00)
     deadline_time = Column(String, default="00:00") 
     is_private = Column(Boolean, default=False)
+    icon_url = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     memberships = relationship("ArenaMembership", back_populates="arena", cascade="all, delete-orphan")
