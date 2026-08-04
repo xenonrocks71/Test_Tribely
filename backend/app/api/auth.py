@@ -6,12 +6,13 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import create_access_token
 from app.core.config import settings
+from app.core.rate_limiter import RateLimiter
 from app.schemas.schemas import UserCreate, UserResponse
 from app.services.auth_service import auth_service
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(RateLimiter(times=10, seconds=60))])
 def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
     """
     Registers a new user in the Tribely application database.
@@ -19,7 +20,7 @@ def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
     """
     return auth_service.register_user(db, user_in=user_in)
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(RateLimiter(times=10, seconds=60))])
 def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """
     Authenticates user credentials and returns a secure signed JWT Access Token with user metadata.

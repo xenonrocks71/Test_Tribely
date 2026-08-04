@@ -54,18 +54,23 @@ class RoomConnectionPool:
     async def broadcast(self, message: Dict[str, Any]) -> None:
         """
         Broadcast JSON payload to all active client connections in this room pool.
+        Isolates client send exceptions so dead sockets are cleaned up without interrupting active clients.
 
         :param message: Dict message payload to serialize.
         """
         payload = json.dumps(message)
         stale_connections = []
-        for connection in self.active_connections:
+        
+        # Take a snapshot list copy to prevent Set size modification during iteration
+        connections_snapshot = list(self.active_connections)
+        for connection in connections_snapshot:
             try:
                 await connection.send_text(payload)
-            except Exception:
+            except Exception as e:
+                # Capture closed or dead client socket for immediate cleanup
                 stale_connections.append(connection)
 
-        # Cleanup stale/broken connections
+        # Cleanup stale/broken connections immediately
         for stale in stale_connections:
             self.remove(stale)
 

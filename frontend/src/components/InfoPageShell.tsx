@@ -1,11 +1,13 @@
 import Link from "next/link";
-import TribelyLogo from "@/components/TribelyLogo";
+import FastLink from "@/components/FastLink";
 import React from "react";
+import { Flame } from "lucide-react";
+import Image from "next/image";
 
 interface InfoPageShellProps {
   title: string;
   subtitle?: string;
-  icon?: string;
+  icon?: React.ReactNode;
   children: React.ReactNode;
 }
 
@@ -22,78 +24,76 @@ export default function InfoPageShell({
     >
       {/* ── HEADER ── */}
       <header
-        className="sticky top-0 z-30 px-5 sm:px-8 h-14 flex items-center justify-between glass"
-        style={{ borderBottom: "1px solid var(--border)" }}
+        className="sticky top-0 z-30 px-5 sm:px-8 h-16 flex items-center justify-between glass-header"
       >
-        <Link href="/" className="flex items-center gap-2.5 group">
+        <FastLink href="/" className="flex items-center gap-3 group">
           <div
-            className="w-8 h-8 rounded-xl flex items-center justify-center font-black text-white text-sm"
-            style={{ background: "var(--accent)" }}
+            className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-md transition transform group-hover:scale-105 overflow-hidden border border-[var(--border)] relative"
+            style={{ background: "#FFFFFF" }}
           >
-            T
+            <Image src="/logo.png" alt="Tribely" fill priority sizes="40px" style={{ objectFit: "contain" }} />
           </div>
-          <span
-            className="font-extrabold text-base tracking-tight hidden sm:block"
-            style={{ color: "var(--fg)" }}
-          >
-            TRIBELY
-          </span>
-        </Link>
+          <div>
+            <span
+              className="font-black text-lg tracking-tight block leading-none"
+              style={{ color: "var(--fg)", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}
+            >
+              Tribely
+            </span>
+            <span className="text-[10px] font-bold tracking-wider uppercase bg-clip-text text-transparent bg-gradient-to-r from-orange-500 to-red-500">
+              Protocol Docs
+            </span>
+          </div>
+        </FastLink>
 
-        <Link
+        <FastLink
           href="/login"
-          className="px-5 py-2 rounded-full text-sm font-bold text-white transition hover:opacity-90 active:scale-95"
-          style={{
-            background: "var(--accent)",
-            boxShadow: "0 4px 16px var(--accent-glow2)",
-          }}
+          className="btn-accent px-5 py-2 rounded-xl text-xs font-extrabold shadow-md transition active:scale-95"
         >
           Sign in
-        </Link>
+        </FastLink>
       </header>
 
       {/* ── MAIN ── */}
-      <main className="max-w-2xl mx-auto px-5 sm:px-8 py-12 sm:py-16">
-        {/* page heading */}
-        <div className="mb-10">
+      <main className="max-w-3xl mx-auto px-5 sm:px-8 py-10 sm:py-14 space-y-8">
+        {/* Page Heading */}
+        <div>
           {icon && (
             <div
-              className="w-12 h-12 rounded-2xl flex items-center justify-center text-xl mb-5"
-              style={{ background: "var(--accent-light)" }}
+              className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4 shadow-sm"
+              style={{ background: "var(--accent-light)", color: "var(--accent)" }}
             >
               {icon}
             </div>
           )}
           <h1
-            className="text-2xl sm:text-3xl font-extrabold tracking-tight"
-            style={{ color: "var(--fg)" }}
+            className="text-3xl sm:text-4xl font-black tracking-tight"
+            style={{ color: "var(--fg)", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}
           >
             {title}
           </h1>
           {subtitle && (
-            <p className="mt-2 text-sm" style={{ color: "var(--fg-muted)" }}>
+            <p className="mt-2 text-sm sm:text-base font-medium" style={{ color: "var(--fg-muted)" }}>
               {subtitle}
             </p>
           )}
         </div>
 
-        {/* content card */}
+        {/* Content Card */}
         <div
-          className="rounded-3xl p-7 sm:p-9 space-y-5 text-sm leading-relaxed"
+          className="glass-card rounded-3xl p-7 sm:p-9 space-y-6 text-sm leading-relaxed"
           style={{
-            background: "var(--bg-card)",
-            border: "1px solid var(--border)",
             color: "var(--fg-muted)",
           }}
         >
           {children}
         </div>
 
-        {/* back link */}
-        <div className="mt-8 flex items-center gap-4">
-          <Link
+        {/* Back Link */}
+        <div className="pt-2 flex items-center gap-5 text-xs sm:text-sm">
+          <FastLink
             href="/"
-            className="inline-flex items-center gap-1.5 text-sm font-semibold transition hover:opacity-70"
+            className="inline-flex items-center gap-1.5 font-bold transition hover:opacity-80"
             style={{ color: "var(--accent)" }}
           >
             <svg
@@ -105,25 +105,26 @@ export default function InfoPageShell({
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                strokeWidth={2}
+                strokeWidth={2.5}
                 d="M15 19l-7-7 7-7"
               />
             </svg>
             Back to Home
-          </Link>
-          <Link
+          </FastLink>
+          <FastLink
             href="/dashboard"
-            className="inline-flex items-center gap-1.5 text-sm font-semibold transition hover:opacity-70"
+            prefetchApi="/api/arenas/"
+            className="inline-flex items-center gap-1.5 font-bold transition hover:opacity-80"
             style={{ color: "var(--fg-muted)" }}
           >
             Dashboard →
-          </Link>
+          </FastLink>
         </div>
       </main>
 
       {/* ── FOOTER ── */}
       <footer
-        className="border-t py-8 text-xs text-center"
+        className="border-t py-8 text-xs text-center font-medium"
         style={{ borderColor: "var(--border)", color: "var(--fg-subtle)" }}
       >
         © {new Date().getFullYear()} Tribely Technologies. All rights reserved.

@@ -1,18 +1,33 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 
 /**
+ * Resolve backend URL dynamically.
+ */
+const getBaseUrl = (): string => {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    if (hostname.includes('trycloudflare.com') || hostname.includes('loca.lt') || hostname.includes('ngrok')) {
+      return 'http://localhost:8000';
+    }
+    return `http://${hostname}:8000`;
+  }
+  return 'http://127.0.0.1:8000';
+};
+
+/**
  * Production HTTP API Client Singleton.
  * Configured with automatic JWT auth header injection, base URL resolution,
  * request/response interceptors, and typed response handling.
- * Designed for Instagram-scale enterprise frontend architecture.
  */
 class ApiClient {
-  private instance: AxiosInstance;
+  public instance: AxiosInstance;
 
   constructor() {
-    const baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     this.instance = axios.create({
-      baseURL,
+      baseURL: getBaseUrl(),
       headers: {
         'Content-Type': 'application/json',
       },
@@ -26,13 +41,17 @@ class ApiClient {
    * Configure Axios request and response interceptors.
    */
   private initializeInterceptors(): void {
-    // Request Interceptor: Attach JWT Bearer token from localStorage
+    // Request Interceptor: Attach JWT Bearer token from localStorage (checking both key variants)
     this.instance.interceptors.request.use(
       (config: InternalAxiosRequestConfig) => {
         if (typeof window !== 'undefined') {
-          const token = localStorage.getItem('token');
+          const token = localStorage.getItem('tribely_token') || localStorage.getItem('token');
           if (token && config.headers) {
-            config.headers.Authorization = `Bearer ${token}`;
+            if (typeof config.headers.set === 'function') {
+              config.headers.set('Authorization', `Bearer ${token}`);
+            } else {
+              config.headers['Authorization'] = `Bearer ${token}`;
+            }
           }
         }
         return config;
@@ -40,12 +59,12 @@ class ApiClient {
       (error) => Promise.reject(error)
     );
 
-    // Response Interceptor: Uniform error extraction
+    // Response Interceptor: Expired session cleanup
     this.instance.interceptors.response.use(
       (response: AxiosResponse) => response,
       (error) => {
         if (error.response?.status === 401 && typeof window !== 'undefined') {
-          // Token expired or invalid
+          localStorage.removeItem('tribely_token');
           localStorage.removeItem('token');
           localStorage.removeItem('user');
         }
@@ -77,3 +96,4 @@ class ApiClient {
 
 // Global Singleton Axios Client Instance
 export const apiClient = new ApiClient();
+

@@ -17,6 +17,16 @@ export const metadata: Metadata = {
   description:
     "Habit-tracking groups with daily proof, group chat, and real stakes when you miss a deadline.",
   applicationName: "Tribely",
+  icons: {
+    icon: [
+      { url: "/logo.png", sizes: "32x32", type: "image/png" },
+      { url: "/logo.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: [
+      { url: "/logo.png", sizes: "180x180", type: "image/png" },
+    ],
+    shortcut: "/logo.png",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -26,7 +36,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#007ACC",
+  themeColor: "#FF5E00",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
@@ -34,43 +44,28 @@ export const viewport: Viewport = {
 
 import { ThemeProvider } from "./context/ThemeContext";
 import { ToastProvider } from "./context/ToastContext";
+import SplashScreen from "@/components/SplashScreen";
 
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html
-      lang="en"
-      className={`${inter.variable} h-full antialiased`}
-      suppressHydrationWarning
-    >
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
       <head>
-        {/* Instant theme flash prevention */}
+        <link rel="icon" href="/logo.png" type="image/png" />
+        <link rel="apple-touch-icon" href="/logo.png" />
         <script
           dangerouslySetInnerHTML={{
-            __html: `
-              (function() {
-                try {
-                  var t = localStorage.getItem('tribely_theme');
-                  if (t === 'dark') {
-                    document.documentElement.classList.add('dark');
-                    document.documentElement.style.colorScheme = 'dark';
-                  } else {
-                    document.documentElement.classList.remove('dark');
-                    document.documentElement.style.colorScheme = 'light';
-                  }
-                } catch(e) {}
-              })();
-            `,
+            __html: `(function(){try{var t=localStorage.getItem("tribely_theme")||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");if(t==="dark"){document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark";}else{document.documentElement.classList.remove("dark");document.documentElement.style.colorScheme="light";}}catch(e){}})()`,
           }}
         />
       </head>
-      <body
-        className="min-h-full flex flex-col transition-colors duration-200"
-        style={{ background: "var(--bg)", color: "var(--fg)", fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}
-      >
+      <body className="antialiased selection:bg-[#FF5E00]/20 selection:text-[#FF5E00]">
         <ThemeProvider>
-          <ToastProvider>{children}</ToastProvider>
+          <ToastProvider>
+            <SplashScreen />
+            {children}
+          </ToastProvider>
         </ThemeProvider>
       </body>
     </html>

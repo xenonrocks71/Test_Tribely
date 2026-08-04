@@ -1,18 +1,36 @@
 from sqlalchemy import text
-from app.api import profile
 import uvicorn
 from fastapi import FastAPI
 from app.core.database import engine, Base
 from app.models import models
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api import auth, arenas, activity, websocket, admin_arena  # Ensure admin_arena is imported here
+from app.api import (
+    auth,
+    arenas,
+    activity,
+    websocket,
+    admin_arena,
+    profile,
+    upload,
+    streak,
+    escrow,
+    huddle,
+    bot_webhook,
+)
+
+import os
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="Tribely Backend - Social Accountability Micro-Arena Engine",
     version="1.0.0"
 )
+
+# Ensure static uploads directory exists and mount static files route
+os.makedirs("static/uploads", exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 Base.metadata.create_all(bind=engine)
 
@@ -24,18 +42,23 @@ try:
 except Exception as _e:
     pass
 
-# Configure CORS for local IP testing, localhost, and production domains
+from app.core.rate_limiter import RateLimiterMiddleware
+
+# Configure CORS & Rate Limiting for local IP testing, localhost, and production domains
+app.add_middleware(RateLimiterMiddleware, requests_per_minute=200)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:8000",
+        "http://127.0.0.1:8000",
     ],
     allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Connect modular HTTP and persistent WebSocket router stacks
@@ -45,6 +68,11 @@ app.include_router(activity.router)
 app.include_router(websocket.router)
 app.include_router(admin_arena.router)
 app.include_router(profile.router)
+app.include_router(upload.router)
+app.include_router(streak.router)
+app.include_router(escrow.router)
+app.include_router(huddle.router)
+app.include_router(bot_webhook.router)
 
 @app.get("/", tags=["Health"])
 def health_check():

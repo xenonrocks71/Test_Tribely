@@ -1,32 +1,88 @@
-#This file instantiates the core SQLAlchemy Database Engine using our configuration URL. It handles connection pooling behind the scenes. We create a SessionLocal factory that spawns individual database transaction connections, and a Base class that all future database models (Users, Arenas, Messages) will inherit from.#
-
-#We also introduce get_db(), a context-managed dependency injector. When an API route hits our server, get_db() yields a session for that single request, handles the database interactions, and guarantees the connection closes cleanly once the request completes, preventing memory or connection leaks.#
-
-
+from typing import AsyncGenerator, Generator
 from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, sessionmaker
-from typing import Generator
 from app.core.config import settings
 
-# Create the synchronous SQLAlchemy engine
-# pool_pre_ping=True automatically tests connections before executing queries to prevent stale connection errors
-engine = create_engine(
-    settings.SQLALCHEMY_DATABASE_URI,
-    pool_pre_ping=True
+# ------------------------------------------------------------------
+# 1. Async Engine & High-Concurrency Connection Pool (Asyncpg)
+# ------------------------------------------------------------------
+async_engine_kwargs = {
+    "pool_size": 20,
+    "max_overflow": 10,
+    "pool_timeout": 30,
+    "pool_recycle": 1800,
+    "pool_pre_ping": True,
+}
+
+async_engine = create_async_engine(
+    settings.ASYNC_DATABASE_URI,
+    **async_engine_kwargs
 )
 
-# Create a customized database session factory class
-SessionLocal = sessionmaker(
+AsyncSessionLocal = async_sessionmaker(
+    bind=async_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
     autocommit=False,
-    autoflush=False,
-    bind=engine
+    autoflush=False
 )
 
-# The base class that our models will inherit from to be mapped to database tables
+# ------------------------------------------------------------------
+# 2. Sync Engine & Fallback Session Factory (Psycopg2 / SQLite)
+# ------------------------------------------------------------------
+sync_db_uri = settings.SYNC_DATABASE_URI
+is_sqlite = sync_db_uri.startswith("sqlite")
+sync_connect_args = {"check_same_thread": False} if is_sqlite else {}
+
+sync_engine = create_engine(
+    sync_db_uri,
+    connect_args=sync_connect_args,
+    pool_pre_ping=True,
+    **({} if is_sqlite else {
+        "pool_size": 20,
+        "max_overflow": 10,
+        "pool_recycle": 1800,
+    })
+)
+
+SessionLocal = sessionmaker(
+    bind=sync_engine,
+    autocommit=False,
+    autoflush=False
+)
+
+# Maintain engine alias for backward compatibility
+engine = sync_engine
+
+# ------------------------------------------------------------------
+# 3. Base ORM Model Class
+# ------------------------------------------------------------------
 Base = declarative_base()
 
-# Dependency injector to provide a clean database session context per request
+# ------------------------------------------------------------------
+# 4. Dependency Injectors
+# ------------------------------------------------------------------
+async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
+    """Yield an asynchronous Database Session for FastAPI async route dependencies."""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
+
+
 def get_db() -> Generator:
+    """Yield a synchronous Database Session for FastAPI sync route dependencies & workers."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def get_read_db() -> Generator:
+    """Read-Replica session dependency for high-concurrency read operations."""
     db = SessionLocal()
     try:
         yield db

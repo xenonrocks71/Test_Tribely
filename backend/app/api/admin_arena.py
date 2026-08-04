@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
 from app.api.deps import get_current_user
-from app.models.models import Arena, ArenaMembership, User
+from app.models.models import Arena, ArenaMembership, User, Submission, SubmissionVote, Message, DailyArenaSheet, ArenaLogbook
 
 router = APIRouter(prefix="/api/admin/arenas", tags=["Admin Arena Management"])
 
@@ -301,9 +301,22 @@ def delete_arena(
     if arena.creator_id != current_user.id and not admin_membership:
         raise HTTPException(status_code=403, detail="Unauthorized Admin access.")
         
+    # Explicitly cascade-delete all related records across all tables
+    db.query(DailyArenaSheet).filter(DailyArenaSheet.arena_id == arena_id).delete(synchronize_session=False)
+    db.query(ArenaLogbook).filter(ArenaLogbook.arena_id == arena_id).delete(synchronize_session=False)
+    db.query(Message).filter(Message.arena_id == arena_id).delete(synchronize_session=False)
+
+    # Submissions and votes
+    submissions = db.query(Submission).filter(Submission.arena_id == arena_id).all()
+    sub_ids = [s.id for s in submissions]
+    if sub_ids:
+        db.query(SubmissionVote).filter(SubmissionVote.submission_id.in_(sub_ids)).delete(synchronize_session=False)
+        db.query(Submission).filter(Submission.arena_id == arena_id).delete(synchronize_session=False)
+
+    db.query(ArenaMembership).filter(ArenaMembership.arena_id == arena_id).delete(synchronize_session=False)
     db.delete(arena)
     db.commit()
-    return success_response({"detail": "Arena deleted successfully."})
+    return success_response({"detail": "Arena and all associated data permanently deleted."})
 
 @router.patch("/{arena_id}/settings")
 def update_arena_settings(

@@ -70,6 +70,42 @@ def update_profile_image(
     db.refresh(profile)
     return success_response({"profile_image_url": profile.profile_image_url})
 
+
+class ProfileDetailsUpdateRequest(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+
+
+@router.patch("/profile/details")
+def update_profile_details(
+    payload: ProfileDetailsUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update user's full name and/or email."""
+    if payload.full_name is not None:
+        stripped = payload.full_name.strip()
+        if not stripped:
+            raise HTTPException(status_code=400, detail="Name cannot be empty.")
+        current_user.full_name = stripped
+
+    if payload.email is not None:
+        email_str = str(payload.email).strip().lower()
+        # Check if email already taken by another user
+        existing = db.query(User).filter(User.email == email_str, User.id != current_user.id).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="This email is already in use by another account.")
+        current_user.email = email_str
+
+    db.commit()
+    db.refresh(current_user)
+    return success_response({
+        "full_name": current_user.full_name,
+        "email": current_user.email,
+    })
+
+
+
 @router.post("/profile/change-password")
 def change_user_password(
     payload: PasswordChangeRequest,

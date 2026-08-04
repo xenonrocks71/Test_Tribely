@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.config import settings
 from app.models.models import User
-from app.crud import crud_user
+from app.repositories.user_repository import user_repository
 
 # Directs FastAPI's Swagger UI to know where to request tokens from
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -34,7 +34,7 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
     except (JWTError, TypeError, ValueError):
         raise credentials_exception
 
-    user = crud_user.get_user_by_id(db, user_id=user_id)
+    user = user_repository.get_by_id(db, id=user_id)
     if user is None:
         raise credentials_exception
 

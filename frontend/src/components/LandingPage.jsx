@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import TribelyLogo from "@/components/TribelyLogo";
 import api from "@/app/utils/api";
+import dataCache from "@/app/utils/dataCache";
+import FastLink from "@/components/FastLink";
 import { FALLBACK_ARENAS, mapDiscoveryArena, storePendingArenaJoin } from "@/app/utils/arenas";
 import { useTheme } from "@/app/context/ThemeContext";
 
@@ -51,18 +53,17 @@ export default function LandingPage({ initialTab = "explore" }) {
 
     let active = true;
     const load = async () => {
-      setIsLoading(true);
-      const timeout = new Promise((_, r) => setTimeout(() => r(new Error("Timeout")), 8000));
-      try {
-        const res = await Promise.race([api.get("/api/arenas/discovery/list"), timeout]);
-        const data = res.data?.data;
+      await dataCache.fetchSWR("/api/arenas/discovery/list", (data) => {
         if (active && Array.isArray(data) && data.length > 0) {
           setArenas(data.map(mapDiscoveryArena));
           setIsLoading(false);
-          return;
         }
-      } catch { /* fall through */ }
-      if (active) { setArenas(FALLBACK_ARENAS || []); setIsLoading(false); }
+      }, () => {
+        if (active) {
+          setArenas(FALLBACK_ARENAS || []);
+          setIsLoading(false);
+        }
+      });
     };
     load();
     return () => { active = false; window.removeEventListener("scroll", onScroll); };
@@ -117,14 +118,19 @@ export default function LandingPage({ initialTab = "explore" }) {
       >
         <div className="max-w-7xl mx-auto px-5 sm:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-8">
-            <Link href="/" className="flex items-center gap-2.5 group">
+            <FastLink href="/" className="flex items-center gap-2.5 group">
               <TribelyLogo className="h-7 w-auto" style={{ color: "var(--accent)" }} />
               <span className="font-extrabold text-lg tracking-tight" style={{ color: "var(--fg)" }}>TRIBELY</span>
-            </Link>
+            </FastLink>
             <nav className="hidden md:flex items-center gap-6 text-sm font-medium" style={{ color: "var(--fg-muted)" }}>
               {NAV_LINKS.map(l => (
-                <a key={l.href} href={l.href} className="transition-colors hover:text-[var(--accent)]"
-                  style={{ transition: "color 0.15s" }}>{l.label}</a>
+                l.href.startsWith("/") ? (
+                  <FastLink key={l.href} href={l.href} className="transition-colors hover:text-[var(--accent)]"
+                    style={{ transition: "color 0.15s" }}>{l.label}</FastLink>
+                ) : (
+                  <a key={l.href} href={l.href} className="transition-colors hover:text-[var(--accent)]"
+                    style={{ transition: "color 0.15s" }}>{l.label}</a>
+                )
               ))}
             </nav>
           </div>

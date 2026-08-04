@@ -10,6 +10,9 @@ from app.models.models import Submission, Message, SubmissionVote, ArenaMembersh
 from app.schemas.schemas import SubmissionCreate, MessageCreate
 from app.repositories.activity_repository import activity_repository, ActivityRepository
 from app.repositories.arena_repository import arena_repository, ArenaRepository
+from app.core.verifiers.proof_verifier import ProofVerifierFactory
+from app.services.ai_verifier import ai_proof_auditor
+from app.core.events.domain_events import domain_event_publisher, ProofSubmittedEvent
 
 
 class ActivityService:
@@ -33,13 +36,13 @@ class ActivityService:
 
     def submit_daily_proof(self, db: Session, *, submission_in: SubmissionCreate, user_id: int) -> Submission:
         """
-        Submit daily habit proof with single same-day constraint enforcement.
+        Submit daily habit proof with single same-day constraint enforcement and AI Strategy audit.
 
         :param db: Active database session.
         :param submission_in: Submission proof schema.
         :param user_id: Submitting user identifier.
         :return: Persisted Submission instance.
-        :raises HTTPException: 403 Forbidden if not an arena member, or 400 Bad Request if already submitted today.
+        :raises HTTPException: 403 Forbidden if not an arena member, or 400 Bad Request if invalid or already submitted.
         """
         # 1. Verify active membership in the target arena
         if not self.activity_repo.is_user_in_arena(db, user_id=user_id, arena_id=submission_in.arena_id):
@@ -58,7 +61,35 @@ class ActivityService:
                 detail="Proof already submitted for today."
             )
 
-        return self.activity_repo.create_submission(db, submission_in=submission_in, user_id=user_id)
+        # 3. Fetch target arena & execute Proof Verification Strategy
+        target_arena = self.arena_repo.get_by_id(db, id=submission_in.arena_id)
+        target_proof_type = target_arena.proof_type if target_arena else "image"
+
+        verifier = ProofVerifierFactory.get_verifier(target_proof_type)
+        result = verifier.verify(submission_in.proof_url)
+
+        if not result.is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Proof validation failed ({target_proof_type.upper()} rules): {result.reason}"
+            )
+
+        submission = self.activity_repo.create_submission(db, submission_in=submission_in, user_id=user_id)
+
+        # 4. Dispatch Domain Event
+        try:
+            domain_event_publisher.publish(
+                ProofSubmittedEvent(
+                    submission_id=submission.id,
+                    user_id=user_id,
+                    arena_id=submission_in.arena_id,
+                    proof_type=target_proof_type,
+                )
+            )
+        except Exception:
+            pass
+
+        return submission
 
     def vote_on_submission(self, db: Session, *, submission_id: int, user_id: int, vote_type: str) -> Dict[str, Any]:
         """

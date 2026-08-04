@@ -10,7 +10,7 @@ from app.api.deps import get_current_user
 from app.models.models import Arena, Submission, Message, User, UserProfile, ArenaMembership, SubmissionVote, DailyArenaSheet
 from app.api.websocket import manager as websocket_manager
 from app.schemas.schemas import MessageCreate
-from app.crud import crud_activity
+from app.repositories.activity_repository import activity_repository
 
 router = APIRouter(prefix="/api/activity", tags=["Activity & History Logs"])
 
@@ -134,8 +134,9 @@ def get_presigned_media_upload_url(
     return success_response(res)
 
 
-@router.post("/submit", status_code=status.HTTP_201_CREATED)
+from app.core.rate_limiter import RateLimiter
 
+@router.post("/submit", status_code=status.HTTP_201_CREATED, dependencies=[Depends(RateLimiter(times=5, seconds=60))])
 def submit_proof(
     payload: SubmissionCreate,
     db: Session = Depends(get_db),
@@ -384,7 +385,7 @@ def execute_vote_logic(
         raise HTTPException(status_code=500, detail={"status": "error", "message": f"Vote operation failed: {str(e)}", "error_code": "VOTE_FAILED"})
 
 
-@router.post("/submission/{submission_id}/vote")
+@router.post("/submission/{submission_id}/vote", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
 def vote_submission_by_path(
     submission_id: int,
     payload: VoteRequest,
@@ -463,7 +464,7 @@ class MessageCreatePayload(BaseModel):
     message_type: str = "text"
 
 
-@router.post("/arena/{arena_id}/message", status_code=status.HTTP_201_CREATED)
+@router.post("/arena/{arena_id}/message", status_code=status.HTTP_201_CREATED, dependencies=[Depends(RateLimiter(times=20, seconds=60))])
 async def send_arena_message(
     arena_id: int,
     payload: MessageCreatePayload,
@@ -497,7 +498,7 @@ async def send_arena_message(
         )
 
     msg_schema = MessageCreate(content=content, message_type=payload.message_type)
-    db_msg = crud_activity.create_message(db, message_in=msg_schema, arena_id=arena_id, user_id=current_user.id)
+    db_msg = activity_repository.create_message(db, message_in=msg_schema, arena_id=arena_id, user_id=current_user.id)
 
     sender_name = current_user.full_name if (current_user and getattr(current_user, 'full_name', None)) else f"Member #{current_user.id}"
     sender_avatar_url = get_user_avatar_url(db, current_user.id)

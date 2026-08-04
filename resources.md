@@ -5,7 +5,7 @@ git init
 git add .
 git commit -m "Initial commit"
 git branch -M main
-git remote add origin <REMOTE_REPOSITORY_URL>
+git remote add origin https://github.com/xenonrocks71/Tribely.git
 git push -u origin main
 
 
