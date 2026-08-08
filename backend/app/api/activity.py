@@ -7,7 +7,8 @@ import asyncio
 from urllib.parse import urlparse
 from app.core.database import get_db
 from app.api.deps import get_current_user
-from app.models.models import Arena, Submission, Message, User, UserProfile, ArenaMembership, SubmissionVote, DailyArenaSheet
+from app.models.models import Arena, Submission, Message, User, UserProfile, ArenaMembership, SubmissionVote, DailyArenaSheet, UserWallet
+
 from app.api.websocket import manager as websocket_manager
 from app.schemas.schemas import MessageCreate
 from app.repositories.activity_repository import activity_repository
@@ -32,6 +33,14 @@ def parse_arena_deadline(deadline_time: str) -> time:
         except ValueError:
             continue
     raise ValueError("Invalid arena deadline_time format.")
+
+
+def make_naive(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
 
 
 def calculate_active_submission_window(deadline_str: str) -> Tuple[datetime, datetime, str]:
@@ -283,21 +292,6 @@ def execute_vote_logic(
                 detail={"status": "error", "message": "Target submission not found.", "error_code": "SUBMISSION_NOT_FOUND"}
             )
 
-        if submission.user_id == current_user.id:
-            raise HTTPException(
-                status_code=400,
-                detail={"status": "error", "message": "You cannot vote on your own proof submission.", "error_code": "CANNOT_VOTE_OWN_PROOF"}
-            )
-
-        arena = db.query(Arena).filter(Arena.id == submission.arena_id).first()
-        if arena:
-            window_start, window_end, _ = calculate_active_submission_window(arena.deadline_time)
-            if submission.submitted_at < window_start:
-                raise HTTPException(
-                    status_code=400,
-                    detail={"status": "error", "message": "Voting window is closed for past deadline proofs.", "error_code": "VOTING_WINDOW_CLOSED"}
-                )
-
         voter_id = current_user.id
         if submission.upvotes is None: submission.upvotes = 0
         if submission.downvotes is None: submission.downvotes = 0
@@ -308,33 +302,23 @@ def execute_vote_logic(
         ).first()
 
         if existing_vote:
-            if existing_vote.vote_type == norm_vote:
-                if norm_vote == "up":
-                    submission.upvotes = max(0, submission.upvotes - 1)
-                else:
-                    submission.downvotes = max(0, submission.downvotes - 1)
-                db.delete(existing_vote)
-                db.commit()
-                msg = "Vote removed"
-            else:
-                if norm_vote == "up":
-                    submission.upvotes += 1
-                    submission.downvotes = max(0, submission.downvotes - 1)
-                else:
-                    submission.downvotes += 1
-                    submission.upvotes = max(0, submission.upvotes - 1)
-                existing_vote.vote_type = norm_vote
-                db.commit()
-                msg = "Vote switched"
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "status": "error",
+                    "message": "Your vote transaction on this proof is permanent and irreversible.",
+                    "error_code": "VOTE_IRREVERSIBLE"
+                }
+            )
+
+        new_vote = SubmissionVote(submission_id=submission_id, user_id=voter_id, vote_type=norm_vote)
+        db.add(new_vote)
+        if norm_vote == "up":
+            submission.upvotes += 1
         else:
-            new_vote = SubmissionVote(submission_id=submission_id, user_id=voter_id, vote_type=norm_vote)
-            db.add(new_vote)
-            if norm_vote == "up":
-                submission.upvotes += 1
-            else:
-                submission.downvotes += 1
-            db.commit()
-            msg = "Vote recorded"
+            submission.downvotes += 1
+        db.commit()
+        msg = "Vote recorded permanently"
 
         total_members = db.query(ArenaMembership).filter(
             ArenaMembership.arena_id == submission.arena_id,
@@ -415,6 +399,19 @@ def get_arena_history(
                 "error_code": "ARENA_MEMBERSHIP_NOT_APPROVED"
             }
         )
+
+    # 0 Kudos Wallet Protection Check
+    wallet = db.query(UserWallet).filter(UserWallet.user_id == current_user.id).first()
+    if wallet and wallet.kudos_balance <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "status": "error",
+                "message": "Arena access blocked due to 0 Kudos balance. Please recharge your wallet (INR 50 = 5,000 Kudos) to enter arenas and submit proof.",
+                "error_code": "ZERO_KUDOS_BLOCKED"
+            }
+        )
+
 
     try:
         submissions = db.query(Submission)\

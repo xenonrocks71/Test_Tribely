@@ -88,6 +88,10 @@ class ArenaService:
         if existing:
             return existing
 
+        # Deduct entry stake from joining user wallet and deposit to arena vault
+        from app.services.kudos_service import kudos_service
+        kudos_service.deduct_arena_join_stake(db, user_id, arena)
+
         initial_status = "pending" if arena.is_private else "approved"
         return self.arena_repo.join_arena(db, user_id=user_id, arena_id=arena_id, status=initial_status, role="member")
 
@@ -108,7 +112,12 @@ class ArenaService:
                 detail="Invalid invite code."
             )
 
+        # Deduct entry stake from joining user wallet and deposit to arena vault
+        from app.services.kudos_service import kudos_service
+        kudos_service.deduct_arena_join_stake(db, user_id, arena)
+
         return self.arena_repo.join_arena(db, user_id=user_id, arena_id=arena.id, status="approved", role="member")
+
 
 
 # Global Singleton Service Instance

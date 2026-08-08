@@ -4,20 +4,22 @@ import { useEffect, useState } from "react";
 import Image from "next/image";
 
 export default function SplashScreen() {
+  const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(true);
   const [fadeOut, setFadeOut] = useState(false);
 
   useEffect(() => {
-    // Start fade-out after 1.6s, fully remove after 2.1s
-    const fadeTimer = setTimeout(() => setFadeOut(true), 1600);
-    const hideTimer = setTimeout(() => setVisible(false), 2100);
+    setMounted(true);
+    // Start fade-out after 1.2s, fully remove after 1.6s
+    const fadeTimer = setTimeout(() => setFadeOut(true), 1200);
+    const hideTimer = setTimeout(() => setVisible(false), 1600);
     return () => {
       clearTimeout(fadeTimer);
       clearTimeout(hideTimer);
     };
   }, []);
 
-  if (!visible) return null;
+  if (!mounted || !visible) return null;
 
   return (
     <div
@@ -29,8 +31,8 @@ export default function SplashScreen() {
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        background: "#FFFFFF",
-        transition: "opacity 0.5s ease",
+        background: "var(--bg, #FFFFFF)",
+        transition: "opacity 0.4s ease",
         opacity: fadeOut ? 0 : 1,
         pointerEvents: fadeOut ? "none" : "all",
       }}
@@ -42,10 +44,10 @@ export default function SplashScreen() {
           flexDirection: "column",
           alignItems: "center",
           gap: 0,
-          width: 180,
-          height: 180,
+          width: 160,
+          height: 160,
           position: "relative",
-          animation: "splashPop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
+          animation: "splashPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
         }}
       >
         <Image
@@ -53,14 +55,14 @@ export default function SplashScreen() {
           alt="Tribely"
           fill
           priority
-          sizes="180px"
+          sizes="160px"
           style={{
             objectFit: "contain",
           }}
         />
       </div>
 
-      {/* Subtle loading dots at the bottom */}
+      {/* Loading dots */}
       <div
         style={{
           position: "absolute",
@@ -76,24 +78,14 @@ export default function SplashScreen() {
               width: 7,
               height: 7,
               borderRadius: "50%",
-              background: "#2563EB",
+              background: "var(--accent, #FF5E00)",
               animation: `splashDot 1.2s ease-in-out ${i * 0.2}s infinite`,
               opacity: 0.5,
             }}
           />
         ))}
       </div>
-
-      <style>{`
-        @keyframes splashPop {
-          0% { opacity: 0; transform: scale(0.8); }
-          100% { opacity: 1; transform: scale(1); }
-        }
-        @keyframes splashDot {
-          0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
-          40% { opacity: 1; transform: scale(1.3); }
-        }
-      `}</style>
     </div>
   );
 }
+

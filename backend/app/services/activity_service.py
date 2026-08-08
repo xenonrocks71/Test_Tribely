@@ -126,38 +126,23 @@ class ActivityService:
         ).first()
 
         if existing_vote:
-            if existing_vote.vote_type == vote_type:
-                # Remove vote if toggling same vote type (Undo)
-                db.delete(existing_vote)
-                if vote_type == "upvote":
-                    submission.upvotes = max(0, submission.upvotes - 1)
-                else:
-                    submission.downvotes = max(0, submission.downvotes - 1)
-            else:
-                # Switch vote type
-                old_vote = existing_vote.vote_type
-                existing_vote.vote_type = vote_type
-                db.add(existing_vote)
-
-                if vote_type == "upvote":
-                    submission.upvotes += 1
-                    submission.downvotes = max(0, submission.downvotes - 1)
-                else:
-                    submission.downvotes += 1
-                    submission.upvotes = max(0, submission.upvotes - 1)
-        else:
-            # Create new vote
-            new_vote = SubmissionVote(
-                submission_id=submission_id,
-                user_id=user_id,
-                vote_type=vote_type
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Your vote transaction on this proof is permanent and irreversible."
             )
 
-            db.add(new_vote)
-            if vote_type == "upvote":
-                submission.upvotes += 1
-            else:
-                submission.downvotes += 1
+        # Create new vote
+        new_vote = SubmissionVote(
+            submission_id=submission_id,
+            user_id=user_id,
+            vote_type=vote_type
+        )
+
+        db.add(new_vote)
+        if vote_type == "upvote":
+            submission.upvotes += 1
+        else:
+            submission.downvotes += 1
 
         # Recalculate Consensus for Automated Absence Flagging
         total_members = db.query(ArenaMembership).filter(

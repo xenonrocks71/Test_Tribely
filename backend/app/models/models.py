@@ -1,6 +1,6 @@
 import datetime
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, Numeric, ForeignKey, Text, UniqueConstraint, MetaData
+    Column, Integer, String, Boolean, DateTime, Numeric, ForeignKey, Text, UniqueConstraint, MetaData, Float
 )
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -28,6 +28,8 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
 
+    profile = relationship("UserProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    wallet = relationship("UserWallet", back_populates="user", uselist=False, cascade="all, delete-orphan")
     memberships = relationship("ArenaMembership", back_populates="user", cascade="all, delete-orphan")
     submissions = relationship("Submission", back_populates="user", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="user", cascade="all, delete-orphan")
@@ -42,7 +44,8 @@ class UserProfile(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, server_default=func.now())
 
-    user = relationship("User")
+    user = relationship("User", back_populates="profile")
+
 
 
 class Arena(Base):
@@ -172,17 +175,84 @@ class OutboxEvent(Base):
 
 class EscrowLedger(Base):
     """
-    Double-Entry Bookkeeping Ledger schema with integer currency values in smallest units (Paise).
-    Provides 100% auditability and zero floating-point arithmetic errors.
+    Double-Entry Bookkeeping Ledger schema enforcing direct INR currency tracking.
+    Columns: id, arena_id, user_id, debit_account, credit_account, amount_inr, entry_type, idempotency_key, created_at.
     """
     __tablename__ = "escrow_ledger"
 
     id = Column(Integer, primary_key=True, index=True)
     arena_id = Column(Integer, ForeignKey("arenas.id", ondelete="CASCADE"), index=True, nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
     debit_account = Column(String, nullable=False)
     credit_account = Column(String, nullable=False)
-    amount_paise = Column(Integer, nullable=False)
+    amount_inr = Column(Float, default=0.0, nullable=False)
+    entry_type = Column(String, nullable=False, default="penalty_accrual")
+    razorpay_payment_id = Column(String, nullable=True, index=True)
     idempotency_key = Column(String, unique=True, index=True, nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+
+
+class ArenaPool(Base):
+    """
+    Accumulated reserve pool, reward pool, and locked Kudos reserve vault for an Arena.
+    Columns: id, arena_id, reserve_pool_inr, reward_pool_inr, total_penalties_count, kudos_reserve_vault, cycle_start_date, cycle_days_count, updated_at.
+    """
+    __tablename__ = "arena_pools"
+
+    id = Column(Integer, primary_key=True, index=True)
+    arena_id = Column(Integer, ForeignKey("arenas.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
+    reserve_pool_inr = Column(Float, default=0.0, nullable=False)
+    reward_pool_inr = Column(Float, default=0.0, nullable=False)
+    total_penalties_count = Column(Integer, default=0, nullable=False)
+    kudos_reserve_vault = Column(Float, default=0.0, nullable=False)
+    cycle_start_date = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    cycle_days_count = Column(Integer, default=21, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, server_default=func.now())
+
+    arena = relationship("Arena")
+
+
+class UserWallet(Base):
+    """
+    User accumulated wallet balance, Kudos digital currency, UPI AutoPay mandate, and RazorpayX payout tracking.
+    Columns: id, user_id, balance_inr, kudos_balance, last_reward_won_at, razorpay_customer_id, mandate_id, mandate_status, upi_vpa, pending_penalty.
+    """
+    __tablename__ = "user_wallets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
+    balance_inr = Column(Float, default=0.0, nullable=False)
+    kudos_balance = Column(Float, default=1000.0, nullable=False)
+    last_reward_won_at = Column(DateTime(timezone=True), nullable=True)
+    razorpay_customer_id = Column(String, nullable=True)
+    mandate_id = Column(String, nullable=True, index=True)
+    mandate_status = Column(String, default="active", nullable=False)
+    upi_vpa = Column(String, nullable=True)
+    pending_penalty = Column(Boolean, default=False, nullable=False)
+
+    user = relationship("User", back_populates="wallet")
+
+
+
+class KudosLedger(Base):
+    """
+    Double-Entry Ledger tracking all Kudos digital currency transactions.
+    Types: WELCOME_BONUS, PENALTY_DEDUCTION, ARENA_VAULT_DEPOSIT, CONSISTENCY_PAYOUT, KUDOS_PURCHASE, KUDOS_WITHDRAWAL.
+    """
+    __tablename__ = "kudos_ledger"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
+    arena_id = Column(Integer, ForeignKey("arenas.id", ondelete="CASCADE"), index=True, nullable=True)
+    transaction_type = Column(String, nullable=False, index=True)
+    amount_kudos = Column(Float, nullable=False)
+    debit_account = Column(String, nullable=False)
+    credit_account = Column(String, nullable=False)
+    razorpay_payment_id = Column(String, nullable=True, index=True)
+    razorpay_payout_id = Column(String, nullable=True, index=True)
+    idempotency_key = Column(String, unique=True, index=True, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+
+

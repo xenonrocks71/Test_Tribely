@@ -89,10 +89,12 @@ class ArenaResponse(ArenaBase):
 
 # --- ARENA MEMBERSHIP SCHEMAS ---
 class MembershipBase(BaseModel):
-    arena_id: int
+    arena_id: Optional[int] = None
 
-class MembershipCreate(MembershipBase):
+class MembershipCreate(BaseModel):
     invite_code: str
+    arena_id: Optional[int] = None
+
 
 class MembershipUpdate(BaseModel):
     status: str = Field(..., description="Must be 'approved' or 'rejected'")

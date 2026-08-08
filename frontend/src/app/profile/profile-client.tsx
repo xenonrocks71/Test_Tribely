@@ -155,7 +155,7 @@ export default function UserProfileClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const currentArenaId = searchParams.get("arena_id");
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, isMounted } = useTheme();
   const isDark = theme === "dark";
   const { toast } = useToast();
 
@@ -273,12 +273,29 @@ export default function UserProfileClient() {
     setDeletingAccount(true);
     try {
       await api.delete("/users/profile");
-      localStorage.clear();
-      router.push("/register");
+      toast.success("Account deleted successfully.");
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("token");
+        localStorage.removeItem("tribely_token");
+        localStorage.removeItem("tribely_user_id");
+        localStorage.clear();
+      }
+      window.location.href = "/register";
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Couldn't delete the account.");
-    } finally { setDeletingAccount(false); }
+      const errorMsg =
+        typeof err?.response?.data?.detail === "string"
+          ? err.response.data.detail
+          : err?.response?.data?.detail?.message ||
+            err?.response?.data?.message ||
+            err?.message ||
+            "Couldn't delete the account.";
+      toast.error(errorMsg);
+    } finally {
+
+      setDeletingAccount(false);
+    }
   };
+
 
   if (loading) {
     return (

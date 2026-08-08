@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
+import datetime
 from app.core.database import get_db
 from app.api.deps import get_current_user
-from app.models.models import Arena, ArenaMembership, User, Message, Submission
+from app.models.models import Arena, ArenaMembership, User, Message, Submission, UserWallet, ArenaPool, EscrowLedger
 
 from typing import List, Dict, Any
 from pydantic import BaseModel
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from app.schemas.schemas import ApiSuccessResponse, ArenaCreate, ArenaResponse, MembershipCreate, MembershipResponse
 from app.services.arena_service import arena_service
 from app.repositories.arena_repository import arena_repository
+from app.services.ledger_service import ledger_service
 
 router = APIRouter(prefix="/api/arenas", tags=["Arenas"])
 
@@ -104,11 +106,32 @@ def request_membership_gatekeeper(
 
         membership = arena_service.join_arena(db, user_id=current_user.id, arena_id=payload.arena_id)
 
+        # Broadcast real-time WebSocket notification so admin sees pending join request instantly
+        from app.core.managers.websocket_manager import websocket_manager
+        import asyncio
+        join_payload = {
+            "event_type": "join_request_created",
+            "arena_id": arena.id,
+            "user_id": current_user.id,
+            "user_name": current_user.full_name or f"Member #{current_user.id}",
+            "status": membership.status,
+            "is_private": arena.is_private,
+        }
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(websocket_manager.broadcast_to_arena(arena.id, join_payload))
+            else:
+                loop.run_until_complete(websocket_manager.broadcast_to_arena(arena.id, join_payload))
+        except Exception:
+            pass
+
         return success_response({
             "room_state": membership.status,
             "is_private": arena.is_private,
             "message": "Access request logged cleanly under rule frameworks.",
         })
+
     except HTTPException:
         raise
     except Exception as e:
@@ -137,13 +160,21 @@ def create_new_arena(arena_in: ArenaCreate, db: Session = Depends(get_db), curre
     return success_response(ArenaResponse.model_validate(created_arena, from_attributes=True).model_dump())
 
 @router.post("/join", response_model=ApiSuccessResponse)
+@router.post("/join-by-code", response_model=ApiSuccessResponse)
 def join_arena_by_invite(payload: MembershipCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
     Joins an existing arena using auto-generated 6-character alphanumeric invite code.
     Delegates to ArenaService.
     """
     membership = arena_service.join_by_invite_code(db, user_id=current_user.id, invite_code=payload.invite_code)
-    return success_response(MembershipResponse.model_validate(membership, from_attributes=True).model_dump())
+    arena = arena_service.get_arena_by_id(db, arena_id=membership.arena_id)
+    return success_response({
+        "membership": MembershipResponse.model_validate(membership, from_attributes=True).model_dump(),
+        "arena": ArenaResponse.model_validate(arena, from_attributes=True).model_dump(),
+        "id": arena.id,
+        "detail": f"Successfully joined {arena.name}!"
+    })
+
 
 @router.get("/", response_model=ApiSuccessResponse)
 def list_my_arenas(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

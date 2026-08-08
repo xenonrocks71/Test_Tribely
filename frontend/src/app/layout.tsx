@@ -55,10 +55,12 @@ export default function RootLayout({
         <link rel="icon" href="/logo.png" type="image/png" />
         <link rel="apple-touch-icon" href="/logo.png" />
         <script
+          id="theme-init"
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var t=localStorage.getItem("tribely_theme")||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");if(t==="dark"){document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark";}else{document.documentElement.classList.remove("dark");document.documentElement.style.colorScheme="light";}}catch(e){}})()`,
           }}
         />
+
       </head>
       <body className="antialiased selection:bg-[#FF5E00]/20 selection:text-[#FF5E00]">
         <ThemeProvider>

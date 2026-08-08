@@ -3,14 +3,18 @@
 import React, { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import api from "../utils/api";
+import api, { formatErrorMessage } from "../utils/api";
+
 import dataCache from "../utils/dataCache";
 import FastLink from "@/components/FastLink";
 import { useTheme } from "../context/ThemeContext";
 import {
   Flame, Key, Camera, PenLine, Link2, Clock, Globe, User, Shield, LogOut,
-  Plus, Search, Lock, Unlock, CheckCircle2, Sun, Moon, Copy, X
+  Plus, Search, Lock, Unlock, CheckCircle2, Sun, Moon, Copy, X, Coins, ChevronDown, Check
 } from "lucide-react";
+
+import KudosWalletModal from "@/components/KudosWalletModal";
+
 import Image from "next/image";
 
 interface Arena {
@@ -65,7 +69,81 @@ function getGreeting() {
   return "Good evening";
 }
 
+function CustomTimeDropdown({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (val: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const selectedLabel = options.find((o) => o.value === value)?.label || value;
+
+  return (
+    <div ref={containerRef} className="relative flex-1">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border text-xs font-extrabold transition-all cursor-pointer shadow-xs active:scale-98"
+        style={{
+          background: "var(--bg-raised)",
+          borderColor: open ? "var(--accent)" : "var(--border)",
+          color: "var(--fg)",
+        }}
+      >
+        <span>{selectedLabel}</span>
+        <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? "rotate-180 text-[var(--accent)]" : "text-[var(--fg-muted)]"}`} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute left-0 right-0 top-full mt-1.5 z-50 max-h-48 overflow-y-auto rounded-2xl border p-1.5 shadow-2xl space-y-0.5 animate-in fade-in zoom-in-95 duration-150 styled-scroll"
+          style={{
+            background: "var(--bg-card)",
+            borderColor: "var(--border)",
+            boxShadow: "0 12px 36px rgba(0, 0, 0, 0.4)",
+          }}
+        >
+          {options.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => {
+                onChange(opt.value);
+                setOpen(false);
+              }}
+              className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer ${
+                value === opt.value
+                  ? "bg-[var(--accent)] text-white shadow-sm font-black"
+                  : "text-[var(--fg)] hover:bg-[var(--accent-light)] hover:text-[var(--accent)]"
+              }`}
+            >
+              <span>{opt.label}</span>
+              {value === opt.value && <Check className="w-3.5 h-3.5 text-white" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Sun/Moon icons now imported from lucide-react
+
 
 const proofBadgeConfig: Record<string, { icon: React.ReactNode; label: string; bg: string; color: string }> = {
   image: { icon: <Camera className="w-3 h-3" />, label: "Photo Proof", bg: "rgba(255, 94, 0, 0.14)", color: "#FF5E00" },
@@ -94,33 +172,54 @@ export default function DashboardPage() {
 function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { theme, toggleTheme } = useTheme();
+  const { theme, toggleTheme, isMounted } = useTheme();
   const isDark = theme === "dark";
 
   const [userName, setUserName] = useState("");
   const [profileImageUrl, setProfileImageUrl] = useState("");
-  const [arenas, setArenas] = useState<Arena[]>(() => {
-    if (typeof window !== "undefined") {
-      const cached = dataCache.get<Arena[]>("/api/arenas/");
-      if (cached && Array.isArray(cached)) return cached;
-    }
-    return [];
-  });
+  const [arenas, setArenas] = useState<Arena[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"all" | "active" | "pending">("all");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  const [loading, setLoading] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      const cached = dataCache.get<Arena[]>("/api/arenas/");
-      return !cached || !Array.isArray(cached) || cached.length === 0;
-    }
-    return true;
-  });
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
+  const [showKudosModal, setShowKudosModal] = useState(false);
+  const [userKudosBalance, setUserKudosBalance] = useState<number | null>(null);
   const isProcessingJoin = useRef(false);
+
+  // Fetch User Kudos Balance for Account Wallet
+  const fetchKudosBalance = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) return;
+      const res = await fetch("http://localhost:8000/api/kudos/wallet", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        setUserKudosBalance(data.data.kudos_balance);
+      }
+    } catch (e) {
+      console.error("Error fetching Kudos balance:", e);
+    }
+  };
+
+  useEffect(() => {
+    fetchKudosBalance();
+  }, []);
+
+
+  // Zero-delay instant cache pre-hydration on mount
+  useEffect(() => {
+    const cached = dataCache.get<Arena[]>("/api/arenas/");
+    if (cached && Array.isArray(cached) && cached.length > 0) {
+      setArenas(cached);
+      setLoading(false);
+    }
+  }, []);
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -135,6 +234,13 @@ function DashboardContent() {
 
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
+
+  const [autoPayModal, setAutoPayModal] = useState<{
+    isOpen: boolean;
+    arenaId: number;
+    arenaName?: string;
+    penaltyAmount?: number;
+  } | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem("tribely_token");
@@ -153,7 +259,15 @@ function DashboardContent() {
       await checkAndProcessDeferredArenaJoin();
     };
     init();
+
+    // Real-time background sync so newly joined or approved arenas appear without page refresh
+    const syncInterval = setInterval(() => {
+      fetchArenas();
+    }, 4000);
+
+    return () => clearInterval(syncInterval);
   }, []);
+
 
   useEffect(() => {
     if (searchParams?.get("create") === "1") setShowCreateModal(true);
@@ -214,7 +328,7 @@ function DashboardContent() {
   const handleCreateArena = async (e: React.FormEvent) => {
     e.preventDefault(); setError("");
     try {
-      await api.post("/api/arenas/", {
+      const res = await api.post("/api/arenas/", {
         name: newName, description: newDesc, proof_type: newProofType,
         penalty_amount: Number(newPenalty),
         deadline_time: `${deadlineHour}:${deadlineMinute} ${deadlinePeriod}`,
@@ -223,8 +337,12 @@ function DashboardContent() {
       setShowCreateModal(false); setNewName(""); setNewDesc(""); setIsPrivate(false);
       fetchArenas();
       setSuccessMsg("Arena created successfully!");
+      const createdArena = res.data?.data;
+      if (createdArena?.id) {
+        router.push(`/arena/${createdArena.id}`);
+      }
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Failed to create Arena.");
+      setError(formatErrorMessage(err.response?.data?.detail, "Failed to create Arena."));
     }
   };
 
@@ -232,12 +350,21 @@ function DashboardContent() {
     e.preventDefault(); setError("");
     try {
       const r = await api.post("/api/arenas/join-by-code", { invite_code: inviteCode.trim().toUpperCase() });
-      setSuccessMsg(r.data?.data?.detail || "Join request evaluated successfully.");
-      setShowJoinModal(false); setInviteCode(""); fetchArenas();
+      setSuccessMsg(r.data?.data?.detail || "Joined arena successfully!");
+      setShowJoinModal(false);
+      setInviteCode("");
+      await fetchArenas();
+      const payload = r.data?.data;
+      const joinedId = payload?.id || payload?.arena?.id || payload?.membership?.arena_id;
+      if (joinedId) {
+        router.push(`/arena/${joinedId}`);
+      }
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Failed to join via invite key.");
+      setError(formatErrorMessage(err.response?.data?.detail, "Failed to join via invite code."));
     }
   };
+
+
 
   const copyCode = (e: React.MouseEvent, code: string) => {
     e.stopPropagation();
@@ -267,27 +394,27 @@ function DashboardContent() {
   const initials = (name: string) => name.split(" ").map(p => p[0]).slice(0, 2).join("").toUpperCase();
 
   return (
-    <div className="min-h-screen flex flex-col relative" style={{ background: "var(--bg)", color: "var(--fg)" }}>
+    <div className="min-h-screen max-w-full overflow-x-hidden overflow-y-auto flex flex-col relative" style={{ background: "var(--bg)", color: "var(--fg)" }}>
 
       {/* ── TOP HEADER NAVBAR ── */}
-      <header className="sticky top-0 z-30 shrink-0 flex items-center justify-between px-4 sm:px-8 py-3.5 glass-header">
+      <header className="sticky top-0 z-30 shrink-0 flex items-center justify-between px-3 sm:px-8 py-3.5 glass-header max-w-full overflow-hidden">
         {/* Left: Brand Icon + Title */}
-        <div className="flex items-center gap-3">
-          <Link href="/" className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-md transition transform hover:scale-105 active:scale-95 overflow-hidden border border-[var(--border)] relative" style={{ background: "#FFFFFF" }}>
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <Link href="/" className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-2xl flex items-center justify-center shadow-md transition transform hover:scale-105 active:scale-95 overflow-hidden border border-[var(--border)] relative" style={{ background: "#FFFFFF" }}>
             <Image src="/logo.png" alt="Tribely" fill priority sizes="40px" style={{ objectFit: "contain" }} />
           </Link>
-          <div>
-            <h1 className="font-black text-xl tracking-tight leading-none" style={{ color: "var(--fg)", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}>
+          <div className="min-w-0">
+            <h1 className="font-black text-lg sm:text-xl tracking-tight leading-none truncate" style={{ color: "var(--fg)", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}>
               Tribely
             </h1>
-            <span className="text-[11px] font-bold tracking-wider uppercase bg-clip-text text-transparent bg-gradient-to-r from-orange-500 to-red-500">
+            <span className="text-[9px] sm:text-[11px] font-bold tracking-wider uppercase bg-clip-text text-transparent bg-gradient-to-r from-orange-500 to-red-500 block truncate">
               Habit Workspace
             </span>
           </div>
         </div>
 
         {/* Right: Actions */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
           <button
             onClick={() => setShowJoinModal(true)}
             className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border transition hover:opacity-95 active:scale-95"
@@ -298,7 +425,7 @@ function DashboardContent() {
 
           <button
             onClick={() => setShowCreateModal(true)}
-            className="btn-accent text-xs font-extrabold px-4 py-2 rounded-xl shadow-md transition transform active:scale-95"
+            className="btn-accent text-xs font-extrabold px-3 sm:px-4 py-2 rounded-xl shadow-md transition transform active:scale-95 flex items-center gap-1"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
@@ -306,20 +433,30 @@ function DashboardContent() {
             <span className="hidden sm:inline">New Arena</span>
           </button>
 
-          <div className="w-px h-6 mx-1 bg-[var(--border)]" />
-
-          <button onClick={toggleTheme} className="p-2.5 rounded-xl border transition hover:bg-[var(--bg-raised)] active:scale-95" style={{ color: "var(--fg-muted)", borderColor: "var(--border)" }} aria-label="Toggle theme">
-            {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          {/* User Account Wallet Badge */}
+          <button
+            onClick={() => setShowKudosModal(true)}
+            className="flex items-center justify-center w-8 h-8 sm:w-auto sm:h-auto px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 to-amber-600/20 border border-amber-500/40 text-amber-400 text-xs font-black hover:scale-105 transition shadow-sm"
+            title="Open Account Wallet (Buy & Withdraw)"
+          >
+            <span className="font-black text-sm text-amber-400">₹</span>
+            <span className="hidden sm:inline ml-1">{userKudosBalance !== null ? `${userKudosBalance.toLocaleString()}` : "Wallet"}</span>
           </button>
 
-          <Link href="/profile" className="w-9 h-9 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xs text-white transition ring-2 ring-[var(--accent-glow)] transform hover:scale-105" style={{ background: profileImageUrl ? "transparent" : "var(--accent-gradient)" }}>
+          <div className="hidden sm:block w-px h-6 mx-1 bg-[var(--border)]" />
+
+          <button onClick={toggleTheme} className="hidden sm:flex p-2.5 rounded-xl border transition hover:bg-[var(--bg-raised)] active:scale-95" style={{ color: "var(--fg-muted)", borderColor: "var(--border)" }} aria-label="Toggle theme">
+            {isMounted ? (isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />) : <Moon className="w-4 h-4" />}
+          </button>
+
+          <Link href="/profile" className="hidden sm:flex w-9 h-9 rounded-xl overflow-hidden items-center justify-center font-bold text-xs text-white transition ring-2 ring-[var(--accent-glow)] transform hover:scale-105" style={{ background: profileImageUrl ? "transparent" : "var(--accent-gradient)" }}>
             {profileImageUrl ? <img src={profileImageUrl} alt="Profile" className="h-full w-full object-cover" /> : initials(userName || "TM")}
           </Link>
 
           {/* Mobile Navigation Drawer Trigger */}
           <button
             onClick={() => setShowMobileDrawer(true)}
-            className="sm:hidden p-2.5 rounded-xl border transition hover:bg-[var(--bg-raised)] active:scale-95"
+            className="sm:hidden p-2 rounded-xl border transition hover:bg-[var(--bg-raised)] active:scale-95"
             style={{ color: "var(--fg)", borderColor: "var(--border)" }}
             aria-label="Open Mobile Menu"
           >
@@ -329,6 +466,31 @@ function DashboardContent() {
           </button>
         </div>
       </header>
+
+
+      {/* ── 0 KUDOS WARNING BANNER ── */}
+      {userKudosBalance !== null && userKudosBalance <= 0 && (
+        <div className="bg-gradient-to-r from-rose-950 via-red-900 to-rose-950 border-b border-rose-500/40 px-4 py-3 shadow-lg shrink-0">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-white">
+            <div className="flex items-center space-x-2.5">
+              <span className="text-xl">⚠️</span>
+              <div>
+                <strong className="font-extrabold text-rose-200 text-sm">WARNING: Your Kudos balance is 0!</strong>
+                <p className="text-rose-300/90 text-[11px]">
+                  Arena access is currently blocked. Daily penalties accrue for absent days until you recharge. Top-up to unlock arenas and protect your streak!
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowKudosModal(true)}
+              className="shrink-0 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 text-black font-extrabold shadow-md hover:scale-105 transition"
+            >
+              ⚡ Recharge Wallet Now (₹50 = 5,000 Kudos)
+            </button>
+          </div>
+        </div>
+      )}
+
 
       {/* Notification Banners */}
       {error && (
@@ -559,7 +721,16 @@ function DashboardContent() {
               return (
                 <div
                   key={arena.id}
-                  onClick={() => !isPending && router.push(`/arena/${arena.id}`)}
+                  onClick={() => {
+                    if (isPending) return;
+                    if (userKudosBalance !== null && userKudosBalance <= 0) {
+                      setError("Arena access blocked! Please recharge your wallet (0 Kudos balance).");
+                      setShowKudosModal(true);
+                      return;
+                    }
+                    router.push(`/arena/${arena.id}`);
+                  }}
+
                   onMouseEnter={() => {
                     if (!isPending) {
                       router.prefetch(`/arena/${arena.id}`);
@@ -646,13 +817,13 @@ function DashboardContent() {
                       {/* Bottom Footer: Invite Key & Timestamp */}
                       <div className="pt-2 border-t border-[var(--border)] flex items-center justify-between gap-1 text-[10px]" style={{ color: "var(--fg-subtle)" }}>
                         {!isPending && (
-                          <button
-                            onClick={(e) => copyCode(e, arena.invite_code)}
-                            className="px-2 py-0.5 rounded-lg font-mono font-bold bg-[var(--bg-card)] hover:bg-[var(--accent-light)] hover:text-[var(--accent)] transition flex items-center gap-1 border border-[var(--border-card)]"
-                            title="Copy invite code"
-                          >
-                            {copiedCode === arena.invite_code ? <><CheckCircle2 className="w-3 h-3" /> Copied</> : <><Copy className="w-3 h-3" /> {arena.invite_code}</>}
-                          </button>
+                            <button
+                              onClick={(e) => copyCode(e, arena.invite_code)}
+                              className="px-2 py-0.5 rounded-lg font-mono font-bold bg-[var(--bg-card)] hover:bg-[var(--accent-light)] hover:text-[var(--accent)] transition flex items-center gap-1 border border-[var(--border-card)]"
+                              title="Copy invite code"
+                            >
+                              {copiedCode === arena.invite_code ? <><CheckCircle2 className="w-3 h-3" /> Copied</> : <><Copy className="w-3 h-3" /> {arena.invite_code}</>}
+                            </button>
                         )}
                         <span className="shrink-0">{formatRelativeTime(arena.last_activity_at)}</span>
                       </div>
@@ -765,8 +936,9 @@ function DashboardContent() {
 
       {/* ── CREATE ARENA MODAL ── */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in" style={{ background: "rgba(9, 13, 22, 0.65)", backdropFilter: "blur(20px)" }}>
-          <div className="w-full max-w-lg rounded-3xl p-6 sm:p-7 shadow-2xl animate-scale-in space-y-5" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in" style={{ background: "rgba(9, 13, 22, 0.65)", backdropFilter: "blur(20px)" }}>
+          <div className="w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-6 sm:p-7 shadow-2xl animate-slide-up-bottom sm:animate-scale-in space-y-5 max-h-[90vh] overflow-y-auto" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+            <div className="w-12 h-1.5 rounded-full bg-[var(--fg-subtle)]/30 mx-auto -mt-2 mb-2 sm:hidden" />
             <div className="flex justify-between items-center">
               <div>
                 <h3 className="text-xl font-black" style={{ color: "var(--fg)" }}>Launch Habit Arena</h3>
@@ -786,138 +958,29 @@ function DashboardContent() {
                 <textarea placeholder="What is the daily required proof submission?" rows={2} className="input-base focus-accent resize-none" value={newDesc} onChange={e => setNewDesc(e.target.value)} />
               </div>
 
+              {/* Private / Public Access Mode Toggle */}
+              <div className="flex items-center justify-between p-3.5 rounded-2xl border" style={{ background: "var(--bg-raised)", borderColor: "var(--border)" }}>
+                <div>
+                  <label className="text-xs font-bold block text-[var(--fg)]">Private Arena</label>
+                  <span className="text-[11px] text-[var(--fg-muted)]">Require admin approval for new members</span>
+                </div>
+                <input type="checkbox" checked={isPrivate} onChange={e => setIsPrivate(e.target.checked)} className="w-4 h-4 accent-[var(--accent)] cursor-pointer" />
+              </div>
+
               {/* Proof Type Segmented Cards */}
               <div>
                 <label className="text-xs font-bold block mb-1.5 text-[var(--fg-muted)] uppercase tracking-wider">Required Proof Type</label>
                 <div className="grid grid-cols-3 gap-2">
                   {[
-                    { type: "image", icon: <Camera className="w-5 h-5" />, label: "Image" },
-                    { type: "text", icon: <PenLine className="w-5 h-5" />, label: "Text" },
-                    { type: "link", icon: <Link2 className="w-5 h-5" />, label: "Link" },
-                  ].map(item => (
-                    <button
-                      key={item.type}
-                      type="button"
-                      onClick={() => setNewProofType(item.type)}
-                      className="py-2.5 px-3 rounded-xl text-xs font-bold flex flex-col items-center gap-1 border transition-all"
-                      style={{
-                        background: newProofType === item.type ? "var(--accent-light)" : "var(--bg-raised)",
-                        borderColor: newProofType === item.type ? "var(--accent)" : "transparent",
-                        color: newProofType === item.type ? "var(--accent)" : "var(--fg-muted)",
-                      }}
-                      >
-                      <span className="text-base">{item.icon}</span>
-                      <span>{item.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Visibility & Deadline */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-bold block mb-1.5 text-[var(--fg-muted)] uppercase tracking-wider">Access Mode</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                    { v: false, icon: <Unlock className="w-4 h-4" />, label: "Public" },
-                    { v: true, icon: <Lock className="w-4 h-4" />, label: "Private" }
-                  ].map(o => (
-                      <button key={String(o.v)} type="button" onClick={() => setIsPrivate(o.v)}
-                        className="py-2.5 px-3 text-xs font-bold rounded-xl border text-center transition-all flex flex-col items-center gap-1"
-                        style={{
-                          background: isPrivate === o.v ? "var(--accent-light)" : "var(--bg-raised)",
-                          borderColor: isPrivate === o.v ? "var(--accent)" : "transparent",
-                          color: isPrivate === o.v ? "var(--accent)" : "var(--fg-muted)",
-                        }}>
-                        {o.icon} {o.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold block mb-1 text-[var(--fg-muted)] uppercase tracking-wider">Daily Cutoff Time</label>
-                  <div className="flex gap-1 items-center input-base focus-accent p-0 overflow-hidden">
-                    <select value={deadlineHour} onChange={e => setDeadlineHour(e.target.value)} className="flex-1 h-full bg-transparent text-xs font-bold text-center py-2.5 focus:outline-none" style={{ color: "var(--fg)" }}>
-                      {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0")).map(h => <option key={h} value={h}>{h}</option>)}
-                    </select>
-                    <span style={{ color: "var(--fg-muted)" }}>:</span>
-                    <select value={deadlineMinute} onChange={e => setDeadlineMinute(e.target.value)} className="flex-1 h-full bg-transparent text-xs font-bold text-center py-2.5 focus:outline-none" style={{ color: "var(--fg)" }}>
-                      {["00", "15", "30", "45"].map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                    <select value={deadlinePeriod} onChange={e => setDeadlinePeriod(e.target.value)} className="h-full bg-transparent text-xs font-black px-2 focus:outline-none" style={{ color: "var(--accent)" }}>
-                      <option value="AM">AM</option>
-                      <option value="PM">PM</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Stake Penalty */}
-              <div>
-                <label className="text-xs font-bold block mb-1 text-[var(--fg-muted)] uppercase tracking-wider">Daily Missed Penalty (₹ INR)</label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-sm text-[var(--accent)]">₹</span>
-                  <input type="number" min={0} step={50} required className="input-base focus-accent pl-8 font-mono font-bold text-sm" value={newPenalty} onChange={e => setNewPenalty(Number(e.target.value))} />
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-3">
-                <button type="button" onClick={() => setShowCreateModal(false)} className="btn-ghost flex-1 py-3 rounded-2xl text-xs font-bold">Cancel</button>
-                <button type="submit" className="btn-accent flex-1 py-3 rounded-2xl text-xs font-bold">Launch Arena</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ── CREATE ARENA MODAL (BOTTOM SHEET ON MOBILE) ── */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in" style={{ background: "rgba(9, 13, 22, 0.65)", backdropFilter: "blur(20px)" }}>
-          <div className="w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-6 sm:p-7 shadow-2xl animate-slide-up-bottom sm:animate-scale-in space-y-5 max-h-[90vh] overflow-y-auto" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-            <div className="w-12 h-1.5 rounded-full bg-[var(--fg-subtle)]/30 mx-auto -mt-2 mb-2 sm:hidden" />
-            <div className="flex justify-between items-center">
-              <div>
-                <h3 className="text-xl font-black" style={{ color: "var(--fg)" }}>Launch Habit Arena</h3>
-                <p className="text-xs font-medium text-[var(--fg-muted)]">Architect your social accountability group</p>
-              </div>
-              <button onClick={() => setShowCreateModal(false)} className="w-8 h-8 rounded-full flex items-center justify-center bg-[var(--bg-raised)] text-[var(--fg-muted)] hover:opacity-80"><X className="w-4 h-4" /></button>
-            </div>
-
-            <form onSubmit={handleCreateArena} className="space-y-4">
-              <div>
-                <label className="text-xs font-bold block mb-1 text-[var(--fg-muted)] uppercase tracking-wider">Arena Name</label>
-                <input type="text" required placeholder="e.g. 6AM Lean Dev Squad" className="input-base focus-accent" value={newName} onChange={e => setNewName(e.target.value)} />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold block mb-1 text-[var(--fg-muted)] uppercase tracking-wider">Description</label>
-                <textarea rows={2} placeholder="What is the goal of this tribe?" className="input-base focus-accent resize-none" value={newDesc} onChange={e => setNewDesc(e.target.value)} />
-              </div>
-
-              {/* Private / Public Toggle */}
-              <div className="flex items-center justify-between p-3.5 rounded-2xl border" style={{ background: "var(--bg-raised)", borderColor: "var(--border)" }}>
-                <div>
-                  <label className="text-xs font-bold block text-[var(--fg)]">Private Group</label>
-                  <span className="text-[11px] text-[var(--fg-muted)]">Require admin approval to join</span>
-                </div>
-                <input type="checkbox" checked={isPrivate} onChange={e => setIsPrivate(e.target.checked)} className="w-4 h-4 accent-[var(--accent)] cursor-pointer" />
-              </div>
-
-              {/* Proof Type Selector */}
-              <div>
-                <label className="text-xs font-bold block mb-1.5 text-[var(--fg-muted)] uppercase tracking-wider">Verification Requirement</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
                     { id: "image", icon: <Camera className="w-4 h-4" />, label: "Photo", desc: "Camera/Screenshot" },
-                    { id: "link", icon: <Link2 className="w-4 h-4" />, label: "URL Link", desc: "Github/Live URL" },
                     { id: "text", icon: <PenLine className="w-4 h-4" />, label: "Text Log", desc: "Written Summary" },
+                    { id: "link", icon: <Link2 className="w-4 h-4" />, label: "URL Link", desc: "Github/Live URL" },
                   ].map(t => (
                     <button
                       key={t.id}
                       type="button"
                       onClick={() => setNewProofType(t.id)}
-                      className={`p-3 rounded-2xl text-left border transition ${
+                      className={`p-3 rounded-2xl text-left border transition cursor-pointer ${
                         newProofType === t.id ? "bg-[var(--accent-light)] border-[var(--accent)] text-[var(--accent)] font-bold shadow-xs" : "bg-[var(--bg-raised)] border-[var(--border)] text-[var(--fg-muted)]"
                       }`}
                     >
@@ -928,21 +991,129 @@ function DashboardContent() {
                 </div>
               </div>
 
-              {/* Daily Cutoff Deadline Picker */}
+              {/* Visibility & Cutoff Deadline */}
               <div>
-                <label className="text-xs font-bold block mb-1.5 text-[var(--fg-muted)] uppercase tracking-wider">Daily Cutoff Deadline</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">Daily Cutoff Time</label>
+                  <span className="text-[11px] font-extrabold text-[var(--accent)] bg-[var(--accent-light)] px-2.5 py-0.5 rounded-full border border-[var(--accent-glow)]">
+                    ⏰ {deadlineHour}:{deadlineMinute} {deadlinePeriod}
+                  </span>
+                </div>
+
+                {/* Quick Time Presets */}
+                <div className="grid grid-cols-4 gap-1.5 mb-2">
+                  {[
+                    { h: "06", m: "00", p: "AM", label: "6 AM" },
+                    { h: "09", m: "00", p: "AM", label: "9 AM" },
+                    { h: "06", m: "00", p: "PM", label: "6 PM" },
+                    { h: "10", m: "00", p: "PM", label: "10 PM" },
+                  ].map(preset => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => {
+                        setDeadlineHour(preset.h);
+                        setDeadlineMinute(preset.m);
+                        setDeadlinePeriod(preset.p as "AM" | "PM");
+                      }}
+                      className={`py-1.5 rounded-xl text-[11px] font-bold border transition cursor-pointer ${
+                        deadlineHour === preset.h && deadlineMinute === preset.m && deadlinePeriod === preset.p
+                          ? "bg-[var(--accent)] text-white border-[var(--accent)] shadow-md"
+                          : "bg-[var(--bg-raised)] border-[var(--border)] text-[var(--fg-muted)] hover:text-[var(--fg)]"
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom Time Dropdowns */}
                 <div className="flex items-center gap-2">
-                  <select value={deadlineHour} onChange={e => setDeadlineHour(e.target.value)} className="input-base focus-accent flex-1 text-center font-bold">
-                    {["01","02","03","04","05","06","07","08","09","10","11","12"].map(h => <option key={h} value={h}>{h}</option>)}
-                  </select>
+                  <CustomTimeDropdown
+                    value={deadlineHour}
+                    onChange={setDeadlineHour}
+                    options={Array.from({ length: 12 }, (_, i) => {
+                      const val = String(i + 1).padStart(2, "0");
+                      return { value: val, label: `${val} Hour` };
+                    })}
+                  />
+
                   <span className="font-black text-sm text-[var(--fg-muted)]">:</span>
-                  <select value={deadlineMinute} onChange={e => setDeadlineMinute(e.target.value)} className="input-base focus-accent flex-1 text-center font-bold">
-                    {["00","15","30","45"].map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                  <button type="button" onClick={() => setDeadlinePeriod(deadlinePeriod === "AM" ? "PM" : "AM")} className="px-4 py-2.5 rounded-xl text-xs font-black bg-[var(--bg-raised)] border border-[var(--border)] text-[var(--accent)] active:scale-95">
+
+                  <CustomTimeDropdown
+                    value={deadlineMinute}
+                    onChange={setDeadlineMinute}
+                    options={["00", "15", "30", "45"].map(m => ({ value: m, label: `${m} Min` }))}
+                  />
+
+
+                  <button
+                    type="button"
+                    onClick={() => setDeadlinePeriod(deadlinePeriod === "AM" ? "PM" : "AM")}
+                    className={`px-4 py-2.5 rounded-xl text-xs font-black transition-all border shadow-sm cursor-pointer ${
+                      deadlinePeriod === "PM"
+                        ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white border-orange-400"
+                        : "bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-blue-400"
+                    }`}
+                  >
                     {deadlinePeriod}
                   </button>
                 </div>
+              </div>
+
+
+              {/* Stake Penalty */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-[var(--fg-muted)] uppercase tracking-wider">Daily Missed Penalty (₹ INR)</label>
+                  <span className="text-[11px] font-extrabold text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+                    Stake: ₹{newPenalty.toLocaleString()} / day
+                  </span>
+                </div>
+
+                {/* Stake Presets */}
+                <div className="grid grid-cols-5 gap-1.5 mb-2">
+                  {[0, 50, 100, 250, 500].map(amt => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setNewPenalty(amt)}
+                      className={`py-1.5 rounded-xl text-[11px] font-extrabold border transition cursor-pointer ${
+                        newPenalty === amt
+                          ? "bg-amber-500 text-black border-amber-400 shadow-md"
+                          : "bg-[var(--bg-raised)] border-[var(--border)] text-[var(--fg-muted)] hover:text-[var(--fg)]"
+                      }`}
+                    >
+                      {amt === 0 ? "Free" : `₹${amt}`}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom Any Amount Input */}
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-base text-[var(--accent)] z-10 pointer-events-none">₹</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    required
+                    placeholder="Enter any custom amount..."
+                    className="w-full rounded-2xl border px-4 pl-10 py-3 font-mono font-black text-base focus-accent [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    style={{ background: "var(--bg-raised)", borderColor: "var(--border)", color: "var(--fg)" }}
+                    value={newPenalty === 0 ? "" : newPenalty}
+                    onChange={e => setNewPenalty(e.target.value === "" ? 0 : Math.max(0, Number(e.target.value)))}
+                  />
+                </div>
+                <p className="text-[10px] text-[var(--fg-subtle)] mt-1">
+                  💡 Type any custom amount above or select a preset. This entry stake is locked in the arena vault upon creation.
+                </p>
+              </div>
+
+
+              {/* Submit Buttons Footer */}
+              <div className="flex gap-3 pt-3">
+                <button type="button" onClick={() => setShowCreateModal(false)} className="btn-ghost flex-1 py-3 rounded-2xl text-xs font-bold">Cancel</button>
+                <button type="submit" className="btn-accent flex-1 py-3 rounded-2xl text-xs font-bold shadow-lg cursor-pointer">Launch Arena 🚀</button>
               </div>
             </form>
           </div>
@@ -1037,13 +1208,22 @@ function DashboardContent() {
             <div className="pt-4 border-t border-[var(--border)] flex items-center justify-between">
               <span className="text-xs font-semibold" style={{ color: "var(--fg-muted)" }}>Appearance</span>
               <button onClick={toggleTheme} className="p-2.5 rounded-xl border flex items-center gap-2 text-xs font-bold" style={{ color: "var(--fg)", borderColor: "var(--border)" }}>
-                {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-                <span>{isDark ? "Light Mode" : "Dark Mode"}</span>
+                {isMounted ? (isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />) : <Moon className="w-4 h-4" />}
+                <span>{isMounted ? (isDark ? "Light Mode" : "Dark Mode") : "Dark Mode"}</span>
               </button>
             </div>
           </div>
         </div>
       )}
+      {/* Global Account Kudos Wallet & Cashout Modal */}
+      <KudosWalletModal
+        isOpen={showKudosModal}
+        onClose={() => {
+          setShowKudosModal(false);
+          fetchKudosBalance();
+        }}
+      />
     </div>
   );
 }
+

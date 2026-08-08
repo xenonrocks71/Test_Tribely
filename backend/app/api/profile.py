@@ -5,7 +5,12 @@ from typing import Optional
 from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.core.security import get_password_hash, verify_password
-from app.models.models import User, Arena, UserProfile # Ensure Arena model is imported here
+from app.models.models import (
+    User, UserProfile, UserWallet, Arena, ArenaMembership, ArenaPool,
+    Submission, Message, SubmissionVote, DailyArenaSheet,
+    ArenaLogbook, EscrowLedger, KudosLedger
+)
+
 
 router = APIRouter(prefix="/users", tags=["User Profiles"])
 
@@ -128,7 +133,63 @@ def delete_user_account(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    Permanently deletes user account, cleaning up owned arenas, memberships,
+    profiles, wallets, submissions, messages, daily sheets, and activity logs.
+    """
     user_id = current_user.id
-    db.delete(current_user)
-    db.commit()
-    return success_response({"message": "Account deleted successfully.", "user_id": user_id})
+    try:
+        # 1. Handle arenas created by this user
+        owned_arenas = db.query(Arena).filter(Arena.creator_id == user_id).all()
+        for arena in owned_arenas:
+            # Transfer ownership to next active approved member if available
+            next_successor = db.query(ArenaMembership).filter(
+                ArenaMembership.arena_id == arena.id,
+                ArenaMembership.status == "approved",
+                ArenaMembership.user_id != user_id
+            ).order_by(ArenaMembership.id.asc()).first()
+
+            if next_successor:
+                next_successor.role = "admin"
+                arena.creator_id = next_successor.user_id
+            else:
+                # Clean up arena pools, sheets, logs, ledgers, submissions, messages before deleting room
+                db.query(ArenaPool).filter(ArenaPool.arena_id == arena.id).delete(synchronize_session=False)
+                db.query(DailyArenaSheet).filter(DailyArenaSheet.arena_id == arena.id).delete(synchronize_session=False)
+                db.query(ArenaLogbook).filter(ArenaLogbook.arena_id == arena.id).delete(synchronize_session=False)
+                db.query(EscrowLedger).filter(EscrowLedger.arena_id == arena.id).delete(synchronize_session=False)
+                db.query(KudosLedger).filter(KudosLedger.arena_id == arena.id).delete(synchronize_session=False)
+                db.query(SubmissionVote).filter(SubmissionVote.submission_id.in_(
+                    db.query(Submission.id).filter(Submission.arena_id == arena.id)
+                )).delete(synchronize_session=False)
+                db.query(Submission).filter(Submission.arena_id == arena.id).delete(synchronize_session=False)
+                db.query(Message).filter(Message.arena_id == arena.id).delete(synchronize_session=False)
+                db.query(ArenaMembership).filter(ArenaMembership.arena_id == arena.id).delete(synchronize_session=False)
+                db.delete(arena)
+        db.flush()
+
+        # 2. Delete user's profile and wallet
+        db.query(UserProfile).filter(UserProfile.user_id == user_id).delete(synchronize_session=False)
+        db.query(UserWallet).filter(UserWallet.user_id == user_id).delete(synchronize_session=False)
+
+        # 3. Clean up user's associated logs, votes, submissions, messages, and memberships
+        db.query(SubmissionVote).filter(SubmissionVote.user_id == user_id).delete(synchronize_session=False)
+        db.query(DailyArenaSheet).filter(DailyArenaSheet.user_id == user_id).delete(synchronize_session=False)
+        db.query(ArenaLogbook).filter(ArenaLogbook.user_id == user_id).delete(synchronize_session=False)
+        db.query(EscrowLedger).filter(EscrowLedger.user_id == user_id).delete(synchronize_session=False)
+        db.query(KudosLedger).filter(KudosLedger.user_id == user_id).delete(synchronize_session=False)
+        db.query(Submission).filter(Submission.user_id == user_id).delete(synchronize_session=False)
+        db.query(Message).filter(Message.user_id == user_id).delete(synchronize_session=False)
+        db.query(ArenaMembership).filter(ArenaMembership.user_id == user_id).delete(synchronize_session=False)
+
+        # 4. Delete the User entity via direct bulk query to prevent ORM unit-of-work state mismatch
+        db.query(User).filter(User.id == user_id).delete(synchronize_session=False)
+        db.commit()
+
+        return success_response({"message": "Account deleted successfully.", "user_id": user_id})
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete account: {str(e)}"
+        )

@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { authService } from "@/services/auth.service";
+import { formatErrorMessage } from "@/app/utils/api";
 import { Eye, EyeOff, Trophy, Zap, DollarSign } from "lucide-react";
 import Image from "next/image";
 
@@ -23,11 +24,12 @@ function RegisterPage() {
       await authService.register({ email, password, full_name: fullName });
       router.push("/login?registered=true");
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Could not create account. That email may already be in use.");
+      setError(formatErrorMessage(err.response?.data?.detail, "Could not create account. That email may already be in use."));
     } finally {
       setLoading(false);
     }
   };
+
 
   const features = [
     { icon: <Trophy className="w-4 h-4" />, text: "Earn streak rewards & consistency badges" },

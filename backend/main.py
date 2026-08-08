@@ -17,7 +17,13 @@ from app.api import (
     escrow,
     huddle,
     bot_webhook,
+    ledger,
+    payments,
+    kudos,
 )
+
+
+
 
 import os
 from fastapi.staticfiles import StaticFiles
@@ -73,6 +79,12 @@ app.include_router(streak.router)
 app.include_router(escrow.router)
 app.include_router(huddle.router)
 app.include_router(bot_webhook.router)
+app.include_router(ledger.router)
+app.include_router(payments.router)
+app.include_router(kudos.router)
+
+
+
 
 @app.get("/", tags=["Health"])
 def health_check():

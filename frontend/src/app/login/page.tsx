@@ -4,7 +4,10 @@ import React, { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { authService } from "@/services/auth.service";
+import { dataCache } from "@/app/utils/dataCache";
+import { formatErrorMessage } from "@/app/utils/api";
 import { Eye, EyeOff, BookOpen, MessageCircle, Lock } from "lucide-react";
+
 import Image from "next/image";
 
 function LoginContent() {
@@ -19,22 +22,28 @@ function LoginContent() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // Prefetch dashboard route on login page load
+    router.prefetch("/dashboard");
     if (searchParams?.get("registered") === "true") {
       setSuccess("Account created — you can sign in now.");
     }
-  }, [searchParams]);
+  }, [searchParams, router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(""); setSuccess(""); setLoading(true);
     try {
       await authService.login(email, password);
-      router.push(redirectTo.startsWith("/") ? redirectTo : "/dashboard");
+      // Immediately prefetch Arenas data into memory cache
+      dataCache.prefetch("/api/arenas/").catch(() => {});
+      const target = redirectTo.startsWith("/") ? redirectTo : "/dashboard";
+      router.prefetch(target);
+      router.push(target);
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Incorrect email or password.");
-    } finally {
+      setError(formatErrorMessage(err.response?.data?.detail, "Incorrect email or password."));
       setLoading(false);
     }
+
   };
 
   const features = [

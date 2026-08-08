@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "127.0.0.1"
     REDIS_PORT: int = 6379
 
+    # Razorpay Payment Gateway Configuration
+    RAZORPAY_KEY_ID: str = "rzp_test_mockkeyid123"
+    RAZORPAY_KEY_SECRET: str = "rzp_test_mocksecret123"
+    RAZORPAY_WEBHOOK_SECRET: str = "rzp_test_webhooksecret123"
+
+
     # Computed Property for Asynchronous Asyncpg Database URL
     @computed_field
     @property

@@ -73,6 +73,13 @@ async def arena_websocket_endpoint(
             except json.JSONDecodeError:
                 continue
             
+            event_type = payload.get("event_type")
+
+            # Real-Time Call Event & WebRTC Pub/Sub Broadcast Relay
+            if event_type in ["call_started", "call_ended", "call_join", "call_leave", "webrtc_signal"]:
+                await manager.broadcast_to_arena(arena_id, payload)
+                continue
+            
             content = payload.get("content") or payload.get("text")
             message_type = payload.get("message_type", "text")
             

@@ -154,6 +154,25 @@ def approve_member(action: MembershipAction, db: Session = Depends(get_db), curr
         
     membership.status = "approved"
     db.commit()
+
+    # Broadcast real-time WebSocket notification so admin and joined user see status update instantly
+    from app.core.managers.websocket_manager import websocket_manager
+    import asyncio
+    approval_payload = {
+        "event_type": "join_request_approved",
+        "arena_id": action.arena_id,
+        "user_id": action.user_id,
+        "status": "approved",
+    }
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(websocket_manager.broadcast_to_arena(action.arena_id, approval_payload))
+        else:
+            loop.run_until_complete(websocket_manager.broadcast_to_arena(action.arena_id, approval_payload))
+    except Exception:
+        pass
+
     return success_response({"detail": "Member approved successfully."})
 
 @router.post("/reject")
@@ -170,7 +189,26 @@ def reject_member(action: MembershipAction, db: Session = Depends(get_db), curre
     if membership:
         db.delete(membership)
         db.commit()
+
+        from app.core.managers.websocket_manager import websocket_manager
+        import asyncio
+        reject_payload = {
+            "event_type": "join_request_rejected",
+            "arena_id": action.arena_id,
+            "user_id": action.user_id,
+            "status": "rejected",
+        }
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(websocket_manager.broadcast_to_arena(action.arena_id, reject_payload))
+            else:
+                loop.run_until_complete(websocket_manager.broadcast_to_arena(action.arena_id, reject_payload))
+        except Exception:
+            pass
+
     return success_response({"detail": "Membership request rejected successfully."})
+
 
 @router.post("/remove")
 def remove_existing_member(

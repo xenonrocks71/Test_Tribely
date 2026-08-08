@@ -7,7 +7,9 @@ Designed for high maintainability and system modularity.
 import random
 import string
 from typing import Optional, List
+from sqlalchemy import func
 from sqlalchemy.orm import Session
+
 from app.models.models import Arena, ArenaMembership
 from app.schemas.schemas import ArenaCreate
 from app.repositories.base import BaseRepository
@@ -60,6 +62,10 @@ class ArenaRepository(BaseRepository[Arena, ArenaCreate, ArenaCreate]):
         db.commit()
         db.refresh(db_arena)
 
+        # Deduct entry stake from creator wallet and credit to arena vault
+        from app.services.kudos_service import kudos_service
+        kudos_service.deduct_arena_creation_stake(db, creator_id, db_arena)
+
         creator_membership = ArenaMembership(
             user_id=creator_id,
             arena_id=db_arena.id,
@@ -70,6 +76,7 @@ class ArenaRepository(BaseRepository[Arena, ArenaCreate, ArenaCreate]):
         db.commit()
         return db_arena
 
+
     def get_by_invite_code(self, db: Session, invite_code: str) -> Optional[Arena]:
         """
         Lookup Arena by its unique invite code.
@@ -78,7 +85,11 @@ class ArenaRepository(BaseRepository[Arena, ArenaCreate, ArenaCreate]):
         :param invite_code: 6-character uppercase string code.
         :return: Optional Arena entity.
         """
-        return db.query(Arena).filter(Arena.invite_code == invite_code.upper()).first()
+        if not invite_code or not isinstance(invite_code, str):
+            return None
+        code_clean = invite_code.strip().upper()
+        return db.query(Arena).filter(func.upper(Arena.invite_code) == code_clean).first()
+
 
     def get_membership(self, db: Session, *, user_id: int, arena_id: int) -> Optional[ArenaMembership]:
         """
@@ -107,6 +118,10 @@ class ArenaRepository(BaseRepository[Arena, ArenaCreate, ArenaCreate]):
         """
         existing = self.get_membership(db, user_id=user_id, arena_id=arena_id)
         if existing:
+            if status == "approved" and existing.status != "approved":
+                existing.status = "approved"
+                db.commit()
+                db.refresh(existing)
             return existing
 
         db_membership = ArenaMembership(
@@ -119,6 +134,7 @@ class ArenaRepository(BaseRepository[Arena, ArenaCreate, ArenaCreate]):
         db.commit()
         db.refresh(db_membership)
         return db_membership
+
 
     def get_user_arenas(self, db: Session, user_id: int) -> List[Arena]:
         """

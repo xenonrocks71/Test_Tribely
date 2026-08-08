@@ -41,7 +41,7 @@ export default function LandingPage({ initialTab = "explore" }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
-  const { theme, toggleTheme: toggleGlobalTheme } = useTheme();
+  const { theme, toggleTheme: toggleGlobalTheme, isMounted } = useTheme();
   const isDark = theme === "dark";
 
   useEffect(() => {
@@ -142,7 +142,7 @@ export default function LandingPage({ initialTab = "explore" }) {
               style={{ background: "var(--bg-raised)", border: "1px solid var(--border)", color: "var(--fg-muted)" }}
               aria-label="Toggle theme"
             >
-              {isDark ? <SunIcon /> : <MoonIcon />}
+              {isMounted ? (isDark ? <SunIcon /> : <MoonIcon />) : <MoonIcon />}
             </button>
             {isLoggedIn ? (
               <Link href="/dashboard"
