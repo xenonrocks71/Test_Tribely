@@ -1,6 +1,6 @@
 # Multi-Stage Production Dockerfile for Next.js App Router (Standalone Mode)
 FROM node:20-alpine AS deps
-RUN apk add --no-libc6-compat
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 COPY package.json package-lock.json ./
