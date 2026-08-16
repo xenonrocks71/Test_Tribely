@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.models.models import Arena, ArenaMembership, Submission, DailyArenaSheet, ArenaLogbook, User, OutboxEvent, EscrowLedger, UserWallet
 from app.core.managers.websocket_manager import websocket_manager
 from app.services.ledger_service import ledger_service
-from app.services.razorpay_service import razorpay_service
+from app.services.kudos_service import kudos_service
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class AuditService:
     """
     Idempotent Audit Service executing daily deadline enforcement,
-    Razorpay off-session penalty debits, 60/30/10 financial ledger entries, and real-time notice broadcasts.
+    Tribes balance penalty debits, negative-balance freezing, 60/30/10 financial ledger entries, and real-time notice broadcasts.
     """
 
     def audit_arena_deadline(
@@ -103,30 +103,29 @@ class AuditService:
                     )
                     db.add(sheet)
 
-                    penalty_amount = float(arena.penalty_amount) if arena.penalty_amount else 500.0
+                    penalty_amount = float(arena.penalty_amount) if arena.penalty_amount is not None else 300.0
                     
-                    # Retrieve UserWallet & active mandate ID
-                    wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
-                    mandate_id = wallet.mandate_id if wallet else None
+                    user_wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
+                    has_shield = user_wallet and getattr(user_wallet, 'streak_shields', 0) > 0
 
-                    idempotency_key = f"penalty:{arena_id}:{user_id}:{target_date_str}"
-
-                    # Execute off-session Razorpay recurring penalty debit
-                    success, payment_id, err_msg = razorpay_service.charge_off_session_penalty(
-                        mandate_id=mandate_id,
-                        amount_inr=penalty_amount,
-                        idempotency_key=idempotency_key
-                    )
-
-                    if success and payment_id:
-                        # Record 60/30/10 ledger splits with razorpay_payment_id
+                    if has_shield:
+                        user_wallet.streak_shields -= 1
+                        logbook_entry = ArenaLogbook(
+                            arena_id=arena_id,
+                            user_id=user_id,
+                            entry_type="streak_shield_used",
+                            amount=0.0,
+                            description=f"Cutoff deadline missed — Protected by Streak Freeze Shield! (1 shield consumed for {target_date_str})"
+                        )
+                        db.add(logbook_entry)
+                    else:
+                        # Record 60/30/10 ledger splits
                         ledger_service.record_penalty_accrual(
                             db=db,
                             arena_id=arena_id,
                             user_id=user_id,
                             penalty_amount_inr=penalty_amount,
                             target_date_str=target_date_str,
-                            razorpay_payment_id=payment_id
                         )
 
                         logbook_entry = ArenaLogbook(
@@ -134,15 +133,11 @@ class AuditService:
                             user_id=user_id,
                             entry_type="penalty",
                             amount=penalty_amount,
-                            description=f"Cutoff deadline missed penalty for date {target_date_str} (Razorpay ID: {payment_id})"
+                            description=f"Cutoff deadline missed penalty of {penalty_amount} Tribes for date {target_date_str}"
                         )
                         db.add(logbook_entry)
-                        if wallet:
-                            wallet.pending_penalty = False
 
-                    # Deduct Kudos digital currency penalty into Arena locked vault
-                    try:
-                        from app.services.kudos_service import kudos_service
+                        # Deduct Tribes penalty & trigger negative balance freeze if balance < 0
                         kudos_service.deduct_absent_penalty(
                             db=db,
                             arena_id=arena_id,
@@ -150,14 +145,6 @@ class AuditService:
                             penalty_kudos=penalty_amount,
                             target_date_str=target_date_str
                         )
-                    except Exception as ke:
-                        logger.warning(f"Kudos penalty deduction error: {ke}")
-
-                    else:
-                        # Off-session payment failed: flag pending penalty on wallet
-                        logger.warning(f"Off-session debit failed for user #{user_id}: {err_msg}")
-                        if wallet:
-                            wallet.pending_penalty = True
 
                     # Transactional Outbox Event record
                     broadcast_payload = {
@@ -166,7 +153,6 @@ class AuditService:
                         "user_id": user_id,
                         "penalty_amount": penalty_amount,
                         "date_day": target_date_str,
-                        "razorpay_payment_id": payment_id if success else None,
                         "message": f"Member #{user_id} missed the daily cutoff deadline."
                     }
                     outbox_evt = OutboxEvent(
@@ -179,7 +165,6 @@ class AuditService:
 
                     absent_members.append(user_id)
 
-
                 processed_members.append(user_id)
 
             db.commit()
@@ -191,10 +176,11 @@ class AuditService:
                         "event_type": "member_absent_penalty",
                         "arena_id": arena_id,
                         "user_id": uid,
-                        "penalty_amount": float(arena.penalty_amount) if arena.penalty_amount else 0.0,
+                        "penalty_amount": penalty_amount,
                         "date_day": target_date_str,
                         "message": f"Member #{uid} missed the daily cutoff deadline."
                     }
+
                     try:
                         loop = asyncio.get_event_loop()
                         if loop.is_running():
@@ -222,3 +208,4 @@ class AuditService:
 
 # Global Singleton Service Instance
 audit_service = AuditService()
+

@@ -44,7 +44,12 @@ export const viewport: Viewport = {
 
 import { ThemeProvider } from "./context/ThemeContext";
 import { ToastProvider } from "./context/ToastContext";
+import { CallProvider } from "./context/CallContext";
+import { NotificationProvider } from "./context/NotificationContext";
+import { ArenaCallNotch } from "./components/ArenaCallNotch";
 import SplashScreen from "@/components/SplashScreen";
+
+import Script from "next/script";
 
 export default function RootLayout({
   children,
@@ -54,22 +59,29 @@ export default function RootLayout({
       <head>
         <link rel="icon" href="/logo.png" type="image/png" />
         <link rel="apple-touch-icon" href="/logo.png" />
-        <script
+        <Script
           id="theme-init"
+          strategy="beforeInteractive"
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var t=localStorage.getItem("tribely_theme")||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");if(t==="dark"){document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark";}else{document.documentElement.classList.remove("dark");document.documentElement.style.colorScheme="light";}}catch(e){}})()`,
           }}
         />
-
       </head>
       <body className="antialiased selection:bg-[#FF5E00]/20 selection:text-[#FF5E00]">
         <ThemeProvider>
           <ToastProvider>
-            <SplashScreen />
-            {children}
+            <CallProvider>
+              <NotificationProvider>
+                <SplashScreen />
+                <ArenaCallNotch />
+                {children}
+              </NotificationProvider>
+            </CallProvider>
           </ToastProvider>
         </ThemeProvider>
       </body>
     </html>
   );
 }
+
+

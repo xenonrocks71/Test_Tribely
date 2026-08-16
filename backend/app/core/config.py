@@ -6,9 +6,16 @@ from pydantic import computed_field
 class Settings(BaseSettings):
     # Core App Settings
     PROJECT_NAME: str = "Tribely"
+    ENVIRONMENT: str = "development"
     SECRET_KEY: str = "tribely_super_secret_jwt_key_2026"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    ALLOWED_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+    ]
 
     # PostgreSQL Connection Parameters
     POSTGRES_SERVER: str = "localhost"
@@ -22,10 +29,6 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "127.0.0.1"
     REDIS_PORT: int = 6379
 
-    # Razorpay Payment Gateway Configuration
-    RAZORPAY_KEY_ID: str = "rzp_test_mockkeyid123"
-    RAZORPAY_KEY_SECRET: str = "rzp_test_mocksecret123"
-    RAZORPAY_WEBHOOK_SECRET: str = "rzp_test_webhooksecret123"
 
 
     # Computed Property for Asynchronous Asyncpg Database URL

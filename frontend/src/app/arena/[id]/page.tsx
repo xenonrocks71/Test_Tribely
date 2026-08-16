@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import api, { formatErrorMessage } from "../../utils/api";
 
@@ -13,9 +13,14 @@ import {
   Image as ImageIcon, Video, Mic, FileText, Paperclip, Crown, UserX,
   LogOut, Trash2, CheckCircle2, XCircle, MessageCircle, BookOpen, Users,
   Settings, Copy, QrCode, Share2, ArrowLeft, MoreVertical, ChevronDown,
-  Flame, Key, Target, Shield, X, Check, Plus, Lock, Unlock, Bell, Zap, Coins
+  Flame, Key, Target, Shield, X, Check, CheckCheck, Plus, Lock, Unlock, Bell, Zap, Coins, ExternalLink
 } from "lucide-react";
 import KudosWalletModal from "../../../components/KudosWalletModal";
+import { initPushNotifications } from "../../utils/pushNotification";
+import { useNotifications } from "../../context/NotificationContext";
+import AudioMessagePlayer from "../../../components/AudioMessagePlayer";
+
+
 
 
 
@@ -29,7 +34,13 @@ interface Submission {
   upvotes?: number;
   downvotes?: number;
   is_absent?: boolean;
+  user_vote?: string | null;
+  voters?: { user_id: number; user_name: string; user_avatar_url?: string | null }[];
+  ai_confidence_score?: number;
+  ai_status?: string;
+  ai_audit_notes?: string;
 }
+
 
 interface Message {
   id: number;
@@ -39,6 +50,7 @@ interface Message {
   content: string;
   message_type: string;
   created_at: string;
+  is_read?: boolean;
 }
 
 interface PendingRequest {
@@ -77,6 +89,15 @@ const isImageUrl = (url: string) =>
 const isHttpUrl = (url: string) =>
   typeof url === "string" &&
   (url.startsWith("http://") || url.startsWith("https://"));
+
+const getDomainName = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.replace("www.", "");
+  } catch {
+    return "external-link";
+  }
+};
 
 function formatCallTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -194,10 +215,36 @@ const DEADLINE_TIME_OPTIONS: CustomSelectOption[] = [
   { value: "12:00 PM", label: "12:00 PM (Noon Cutoff)", icon: <Sun className="w-3.5 h-3.5" /> },
   { value: "06:00 PM", label: "06:00 PM", icon: <Sunset className="w-3.5 h-3.5" /> },
   { value: "08:00 PM", label: "08:00 PM", icon: <Clock className="w-3.5 h-3.5" /> },
-  { value: "10:00 PM", label: "10:00 PM (Night Cutoff)", icon: <Moon className="w-3.5 h-3.5" /> },
   { value: "11:00 PM", label: "11:00 PM", icon: <Clock className="w-3.5 h-3.5" /> },
   { value: "11:59 PM", label: "11:59 PM (Midnight End)", icon: <Clock className="w-3.5 h-3.5" /> },
 ];
+
+const isSubmissionVotingExpired = (submittedAtIso: string, deadlineStr: string): boolean => {
+  if (!submittedAtIso) return false;
+  try {
+    const subDate = new Date(submittedAtIso);
+    if (isNaN(subDate.getTime())) return false;
+
+    const match = (deadlineStr || "05:00 AM").match(/(\d+):(\d+)\s*(AM|PM)?/i);
+    let hours = match ? parseInt(match[1], 10) : 5;
+    const minutes = match ? parseInt(match[2], 10) : 0;
+    const ampm = match && match[3] ? match[3].toUpperCase() : null;
+
+    if (ampm === "PM" && hours < 12) hours += 12;
+    if (ampm === "AM" && hours === 12) hours = 0;
+
+    const cutoff = new Date(subDate);
+    cutoff.setHours(hours, minutes, 0, 0);
+
+    if (subDate > cutoff) {
+      cutoff.setDate(cutoff.getDate() + 1);
+    }
+
+    return new Date() > cutoff;
+  } catch (e) {
+    return false;
+  }
+};
 
 function CustomSelect({
   value,
@@ -513,76 +560,67 @@ function Avatar({
   );
 }
 
-function isSameDay(iso1: string, iso2: string): boolean {
+function parseIsoToLocalDate(iso: string | Date | undefined): Date {
+  if (!iso) return new Date();
+  if (iso instanceof Date) return iso;
+  let str = String(iso).trim();
+  if (str.includes(" ") && !str.includes("T")) {
+    str = str.replace(" ", "T");
+  }
+  if (!str.endsWith("Z") && !str.includes("+") && !str.match(/[-+]\d{2}:\d{2}$/)) {
+    str += "Z";
+  }
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+
+
+function isSameDay(iso1: string | Date, iso2: string | Date): boolean {
   if (!iso1 || !iso2) return false;
-  const parse = (s: string) => {
-    let norm = s;
-    if (typeof s === "string" && !s.includes("T") && s.includes(" ")) norm = s.replace(" ", "T");
-    if (typeof norm === "string" && !norm.endsWith("Z") && !norm.includes("+")) norm += "Z";
-    return new Date(norm);
-  };
-  const d1 = parse(iso1);
-  const d2 = parse(iso2);
-  if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return false;
+  const d1 = parseIsoToLocalDate(iso1);
+  const d2 = parseIsoToLocalDate(iso2);
   return (
-    d1.getDate() === d2.getDate() &&
+    d1.getFullYear() === d2.getFullYear() &&
     d1.getMonth() === d2.getMonth() &&
-    d1.getFullYear() === d2.getFullYear()
+    d1.getDate() === d2.getDate()
   );
 }
 
-function formatDateLabel(iso: string): string {
-  if (!iso) return "";
-  let normalizedIso = iso;
-  if (typeof iso === "string" && !iso.includes("T") && iso.includes(" ")) {
-    normalizedIso = iso.replace(" ", "T");
-  }
-  if (typeof normalizedIso === "string" && !normalizedIso.endsWith("Z") && !normalizedIso.includes("+")) {
-    normalizedIso += "Z";
-  }
-  const d = new Date(normalizedIso);
-  const targetDate = isNaN(d.getTime()) ? new Date(iso) : d;
-  if (isNaN(targetDate.getTime())) return iso;
-
+function formatDateHeader(iso: string | Date | undefined): string {
+  const d = parseIsoToLocalDate(iso);
   const now = new Date();
-  const isToday =
-    targetDate.getDate() === now.getDate() &&
-    targetDate.getMonth() === now.getMonth() &&
-    targetDate.getFullYear() === now.getFullYear();
 
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  const isYesterday =
-    targetDate.getDate() === yesterday.getDate() &&
-    targetDate.getMonth() === yesterday.getMonth() &&
-    targetDate.getFullYear() === yesterday.getFullYear();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
 
-  if (isToday) return "Today";
-  if (isYesterday) return "Yesterday";
+  const targetDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
-  return targetDate.toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "2-digit",
+  if (targetDay.getTime() === today.getTime()) {
+    return "Today";
+  }
+  if (targetDay.getTime() === yesterday.getTime()) {
+    return "Yesterday";
+  }
+
+  return d.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
     year: "numeric",
   });
 }
 
+function formatDateLabel(iso: string): string {
+  if (!iso) return "";
+  return formatDateHeader(iso);
+}
+
 function TimeOnlyStr({ iso }: { iso: string }) {
   if (!iso) return null;
-  let normalizedIso = iso;
-  if (typeof iso === "string" && !iso.includes("T") && iso.includes(" ")) {
-    normalizedIso = iso.replace(" ", "T");
-  }
-  if (typeof normalizedIso === "string" && !normalizedIso.endsWith("Z") && !normalizedIso.includes("+")) {
-    normalizedIso += "Z";
-  }
-  const d = new Date(normalizedIso);
-  const targetDate = isNaN(d.getTime()) ? new Date(iso) : d;
-  if (isNaN(targetDate.getTime())) return <span>{iso}</span>;
-
+  const d = parseIsoToLocalDate(iso);
   return (
     <span>
-      {targetDate.toLocaleTimeString("en-US", {
+      {d.toLocaleTimeString("en-US", {
         hour: "2-digit",
         minute: "2-digit",
         hour12: true,
@@ -593,24 +631,13 @@ function TimeOnlyStr({ iso }: { iso: string }) {
 
 function TimeStr({ iso }: { iso: string }) {
   if (!iso) return null;
-  let normalizedIso = iso;
-  if (typeof iso === "string" && !iso.includes("T") && iso.includes(" ")) {
-    normalizedIso = iso.replace(" ", "T");
-  }
-  if (typeof normalizedIso === "string" && !normalizedIso.endsWith("Z") && !normalizedIso.includes("+")) {
-    normalizedIso += "Z";
-  }
-  const d = new Date(normalizedIso);
-  const targetDate = isNaN(d.getTime()) ? new Date(iso) : d;
-  if (isNaN(targetDate.getTime())) return <span>{iso}</span>;
-
-  const dateStr = targetDate.toLocaleDateString("en-GB", {
+  const d = parseIsoToLocalDate(iso);
+  const dateStr = d.toLocaleDateString("en-GB", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
   });
-
-  const timeStr = targetDate.toLocaleTimeString("en-US", {
+  const timeStr = d.toLocaleTimeString("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
@@ -625,10 +652,284 @@ function TimeStr({ iso }: { iso: string }) {
 
 
 
+
+// Dedicated audio element for remote streams — separate ref per stream avoids autoplay block
+function RemoteAudioElement({ stream }: { stream: MediaStream }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el || !stream) return;
+    el.srcObject = stream;
+    // Unmute and play — autoplay policy requires user gesture; we use a try/catch
+    el.muted = false;
+    el.volume = 1.0;
+    const playPromise = el.play();
+    if (playPromise !== undefined) {
+      playPromise.catch(() => {
+        // Autoplay blocked — retry after a short delay (common on mobile)
+        setTimeout(() => el.play().catch(() => {}), 500);
+      });
+    }
+    return () => {
+      el.srcObject = null;
+    };
+  }, [stream]);
+  return <audio ref={audioRef} autoPlay playsInline muted={false} className="hidden" />;
+}
+
+function RemoteMediaElement({ stream, isVideo }: { stream: MediaStream; isVideo: boolean }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || !stream) return;
+    el.srcObject = stream;
+    el.play().catch(() => {});
+    return () => { el.srcObject = null; };
+  }, [stream]);
+
+  if (isVideo) {
+    return (
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted={false}
+        className="w-full h-full object-cover rounded-3xl"
+      />
+    );
+  }
+  // For audio-only calls use the dedicated audio element component
+  return <RemoteAudioElement stream={stream} />;
+}
+
+function AnalogAudioSignalIndicator({
+  isSpeaking,
+  volumeLevel = 0,
+  isMuted,
+}: {
+  isSpeaking: boolean;
+  volumeLevel?: number;
+  isMuted?: boolean;
+}) {
+  if (isMuted) {
+    return (
+      <div className="flex items-center gap-1 text-slate-400 text-[10px] font-mono select-none">
+        <span className="opacity-40">••</span>
+        <span className="text-red-400 text-xs font-bold">🎙️❌</span>
+        <span className="opacity-40">••</span>
+      </div>
+    );
+  }
+
+  if (isSpeaking || volumeLevel > 5) {
+    // Dynamic height calculation based on real volume Level (0 to 100)
+    const vol = Math.max(volumeLevel, isSpeaking ? 30 : 0);
+    const h1 = Math.min(100, Math.max(20, vol * 0.5));
+    const h2 = Math.min(100, Math.max(30, vol * 0.85));
+    const h3 = Math.min(100, Math.max(40, vol * 1.2));
+    const h4 = Math.min(100, Math.max(35, vol * 1.0));
+    const h5 = Math.min(100, Math.max(25, vol * 0.75));
+    const h6 = Math.min(100, Math.max(30, vol * 0.9));
+    const h7 = Math.min(100, Math.max(20, vol * 0.45));
+
+    return (
+      <div className="flex items-end gap-0.5 h-6 px-1 select-none">
+        <span style={{ height: `${h1}%` }} className="w-1 bg-amber-400 rounded-full transition-all duration-75 shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
+        <span style={{ height: `${h2}%` }} className="w-1 bg-amber-400 rounded-full transition-all duration-75 shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
+        <span style={{ height: `${h3}%` }} className="w-1 bg-amber-400 rounded-full transition-all duration-75 shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
+        <span style={{ height: `${h4}%` }} className="w-1 bg-amber-400 rounded-full transition-all duration-75 shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
+        <span style={{ height: `${h5}%` }} className="w-1 bg-amber-400 rounded-full transition-all duration-75 shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
+        <span style={{ height: `${h6}%` }} className="w-1 bg-amber-400 rounded-full transition-all duration-75 shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
+        <span style={{ height: `${h7}%` }} className="w-1 bg-amber-400 rounded-full transition-all duration-75 shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-0.5 text-slate-500/50 text-[10px] tracking-tighter font-mono select-none">
+      ••••••••••
+    </div>
+  );
+}
+
+
+
+
 export default function ArenaRoomPage() {
   const { id } = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { showToast, toast } = useToast();
+
+  // WebRTC Peer-to-Peer Real-Time Stream Engine
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const peerConnectionsRef = useRef<Map<number, RTCPeerConnection>>(new Map());
+  const [remoteStreamsMap, setRemoteStreamsMap] = useState<{ [uid: number]: MediaStream }>({});
+  const [speakingMap, setSpeakingMap] = useState<{ [uid: number]: boolean }>({});
+  const [volumeMap, setVolumeMap] = useState<{ [uid: number]: number }>({});
+  const [muteMap, setMuteMap] = useState<{ [uid: number]: boolean }>({});
+  const [handMap, setHandMap] = useState<{ [uid: number]: boolean }>({});
+
+  // ─── CRITICAL FIX: always read current userId via ref, NOT stale closure state ───
+  const userIdRef = useRef<number | null>(null);
+  const getSelfId = (): number | null => {
+    if (userIdRef.current) return userIdRef.current;
+    const stored = localStorage.getItem("tribely_user_id");
+    return stored ? Number(stored) : null;
+  };
+
+
+
+
+  const getOrCreatePeerConnection = (remoteUserId: number): RTCPeerConnection => {
+    if (peerConnectionsRef.current.has(remoteUserId)) {
+      return peerConnectionsRef.current.get(remoteUserId)!;
+    }
+
+    const selfId = getSelfId();
+
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:global.stun.twilio.com:3478" },
+      ],
+    });
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            event_type: "webrtc_signal",
+            target_user_id: remoteUserId,
+            sender_user_id: selfId,
+            candidate: event.candidate,
+            arena_id: Number(id),
+          })
+        );
+      }
+    };
+
+    pc.ontrack = (event) => {
+      setRemoteStreamsMap((prev) => {
+        const existing = prev[remoteUserId];
+        let stream: MediaStream;
+        if (existing) {
+          existing.addTrack(event.track);
+          stream = new MediaStream(existing.getTracks());
+        } else if (event.streams && event.streams[0]) {
+          stream = event.streams[0];
+        } else {
+          stream = new MediaStream([event.track]);
+        }
+        return { ...prev, [remoteUserId]: stream };
+      });
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (["disconnected", "failed", "closed"].includes(pc.connectionState)) {
+        peerConnectionsRef.current.delete(remoteUserId);
+        setRemoteStreamsMap((prev) => {
+          const next = { ...prev };
+          delete next[remoteUserId];
+          return next;
+        });
+      }
+    };
+
+    // Attach existing local tracks right away
+    if (localStreamRef.current) {
+      const senders = pc.getSenders();
+      localStreamRef.current.getTracks().forEach((track) => {
+        const exists = senders.some((s) => s.track?.kind === track.kind);
+        if (!exists) pc.addTrack(track, localStreamRef.current!);
+      });
+    }
+
+    peerConnectionsRef.current.set(remoteUserId, pc);
+    return pc;
+  };
+
+  // Point-to-point SDP offer to one remote peer
+  const sendWebRTCOffer = async (remoteUserId: number) => {
+    const selfId = getSelfId();
+    if (!localStreamRef.current || !selfId) return;
+    const pc = getOrCreatePeerConnection(remoteUserId);
+    try {
+      const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+      await pc.setLocalDescription(offer);
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            event_type: "webrtc_signal",
+            target_user_id: remoteUserId,
+            sender_user_id: selfId,
+            sdp: offer,
+            arena_id: Number(id),
+          })
+        );
+      }
+    } catch (e) {
+      console.error("sendWebRTCOffer error:", e);
+    }
+  };
+
+  const startLocalMediaStream = async (isVideo: boolean): Promise<void> => {
+    try {
+      // Stop any prior stream to avoid duplicate tracks
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: isVideo ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } : false,
+        audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 },
+      });
+
+      localStreamRef.current = stream;
+
+      if (isVideo && localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.play().catch(() => {});
+      }
+
+      // Re-sync tracks to any existing peer connections
+      peerConnectionsRef.current.forEach((pc) => {
+        const senders = pc.getSenders();
+        stream.getTracks().forEach((track) => {
+          const sender = senders.find((s) => s.track?.kind === track.kind);
+          if (sender) {
+            sender.replaceTrack(track);
+          } else {
+            pc.addTrack(track, stream);
+          }
+        });
+      });
+    } catch (e: any) {
+      console.error("❌ Failed to access local media devices:", e);
+      throw e;
+    }
+  };
+
+  const stopLocalMediaStream = () => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+    }
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    peerConnectionsRef.current.forEach((pc) => pc.close());
+    peerConnectionsRef.current.clear();
+    setRemoteStreamsMap({});
+    setSpeakingMap({});
+    setVolumeMap({});
+    setMuteMap({});
+    setHandMap({});
+    setIsMuted(false);
+    setIsHandRaised(false);
+  };
+
 
   const [confirmModal, setConfirmModal] = useState<{
     title: string;
@@ -665,43 +966,121 @@ export default function ArenaRoomPage() {
   const [showSearchInput, setShowSearchInput] = useState(false);
   const [searchQueryChat, setSearchQueryChat] = useState("");
   const [show3DotsMenu, setShow3DotsMenu] = useState(false);
+  const [showLogBookModal, setShowLogBookModal] = useState(false);
+
+  // Voters Modal States (Anonymous Peer Reviewers)
+  const [showVotersModal, setShowVotersModal] = useState(false);
+  const [votersList, setVotersList] = useState<{ user_id: number; user_name: string; user_avatar_url?: string | null }[]>([]);
+  const [loadingVoters, setLoadingVoters] = useState(false);
+
+  const openVotersModal = async (sub: Submission) => {
+    // 1. Show local voters immediately (0ms delay)
+    setVotersList(sub.voters || []);
+    setShowVotersModal(true);
+
+    // 2. Fetch complete voters list across all accounts from backend
+    try {
+      if (!sub.voters || sub.voters.length === 0) setLoadingVoters(true);
+      const res = await api.get(`/api/activity/submission/${sub.id}/voters`);
+      const backendVoters = res.data?.data?.voters;
+      if (Array.isArray(backendVoters)) {
+        setVotersList(backendVoters);
+        setSubmissions((prev) =>
+          prev.map((s) => (s.id === sub.id ? { ...s, voters: backendVoters } : s))
+        );
+      }
+    } catch (err) {
+      console.error("Voters list fetch warning:", err);
+    } finally {
+      setLoadingVoters(false);
+    }
+  };
+
+
+
+
 
   // Kudos Ecosystem States
   const [showKudosModal, setShowKudosModal] = useState(false);
   const [userKudosBalance, setUserKudosBalance] = useState<number | null>(null);
   const [arenaVaultKudos, setArenaVaultKudos] = useState<number>(0);
   const [kudosDaysRemaining, setKudosDaysRemaining] = useState<number>(21);
+  const [arenaVaultTransactions, setArenaVaultTransactions] = useState<any[]>([]);
+  const [arenaLeaderboard, setArenaLeaderboard] = useState<any[]>([]);
 
   // Fetch Kudos User Balance & Arena Vault Metrics
   const fetchKudosData = async () => {
     try {
-      const token = localStorage.getItem("token");
-      if (!token) return;
       const [walletRes, vaultRes] = await Promise.all([
-        fetch("http://localhost:8000/api/kudos/wallet", { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`http://localhost:8000/api/kudos/arena/${id}/vault`, { headers: { Authorization: `Bearer ${token}` } })
+        api.get("/api/kudos/wallet"),
+        api.get(`/api/kudos/arena/${id}/vault`)
       ]);
 
-      const walletData = await walletRes.json();
-      if (walletData.status === "success") {
-        setUserKudosBalance(walletData.data.kudos_balance);
+      if (walletRes.data?.data?.kudos_balance !== undefined) {
+        setUserKudosBalance(walletRes.data.data.kudos_balance);
       }
 
-      const vaultData = await vaultRes.json();
-      if (vaultData.status === "success") {
-        setArenaVaultKudos(vaultData.data.kudos_reserve_vault);
-        setKudosDaysRemaining(vaultData.data.cycle_days_remaining);
+      if (vaultRes.data?.data) {
+        const d = vaultRes.data.data;
+        setArenaVaultKudos(d.kudos_reserve_vault ?? 0);
+        setKudosDaysRemaining(d.cycle_days_remaining ?? 21);
+        if (d.recent_transactions && Array.isArray(d.recent_transactions)) {
+          setArenaVaultTransactions(d.recent_transactions);
+        }
+        if (d.leaderboard && Array.isArray(d.leaderboard)) {
+          setArenaLeaderboard(d.leaderboard);
+        }
       }
     } catch (e) {
       console.error("Error fetching Kudos data:", e);
     }
   };
 
+  const handleDistributeRewards = async () => {
+    try {
+      const res = await api.post(`/api/kudos/arena/${id}/distribute-21-days`);
+      if (res.data?.status === "success") {
+        toast.success(res.data.data.message || "21-Day Vault Rewards distributed successfully!");
+        fetchKudosData();
+      } else {
+        toast.error(res.data?.detail || "Distribution failed");
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || "Failed distributing vault rewards");
+    }
+  };
+
+  // Consume global real-time WhatsApp notification context
+  const { unreadCounts, markArenaRead } = useNotifications();
+
+  const handleRingMember = (targetMember: ArenaMember) => {
+    const memberName = targetMember.user_name || targetMember.full_name || `Member #${targetMember.user_id}`;
+    const callerName = localStorage.getItem("tribely_user_name") || "A member";
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          event_type: "call_ring_user",
+          target_user_id: targetMember.user_id,
+          caller_name: callerName,
+          call_type: activeCallState?.call_type || "video",
+        })
+      );
+      toast.success(`🔔 Ringing ${memberName}...`);
+    } else {
+      toast.info(`Ringing alert sent to ${memberName}!`);
+    }
+  };
+
+
+
   useEffect(() => {
     if (id) {
       fetchKudosData();
+      markArenaRead(Number(id));
     }
   }, [id]);
+
+
 
 
   // User's Joined Arenas List (for Left Chats Sidebar)
@@ -752,14 +1131,126 @@ export default function ArenaRoomPage() {
   const [callDuration, setCallDuration] = useState(14);
 
   useEffect(() => {
+    // Only manage the call duration timer here.
     let timer: any;
     if (showVoiceCallModal || showVideoCallModal) {
       timer = setInterval(() => setCallDuration((d) => d + 1), 1000);
     } else {
       setCallDuration(0);
     }
-    return () => clearInterval(timer);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
   }, [showVoiceCallModal, showVideoCallModal]);
+
+  // Keep local video element srcObject attached whenever video call modal mounts or camera toggles
+  useEffect(() => {
+    if (showVideoCallModal && localVideoRef.current && localStreamRef.current) {
+      if (localVideoRef.current.srcObject !== localStreamRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+      }
+      localVideoRef.current.play().catch(() => {});
+    }
+  }, [showVideoCallModal, isCamOn]);
+
+
+  // Real-Time Audio Spectrum Analyser for Local Microphone Waveform
+  useEffect(() => {
+
+    let audioCtx: AudioContext | null = null;
+    let analyser: AnalyserNode | null = null;
+    let animId: number;
+
+    if (localStreamRef.current && (showVoiceCallModal || showVideoCallModal)) {
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        audioCtx = new AudioContextClass();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        const source = audioCtx.createMediaStreamSource(localStreamRef.current);
+        source.connect(analyser);
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const checkVolume = () => {
+          if (!analyser) return;
+          analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+          const avg = sum / dataArray.length;
+          const isUserSpeaking = avg > 12 && isMicOn && !isMuted;
+          const volumeLevel = isUserSpeaking ? Math.min(100, Math.round((avg / 120) * 100)) : 0;
+
+          if (userId) {
+            setSpeakingMap((prev) => {
+              if (prev[userId] === isUserSpeaking) return prev;
+              return { ...prev, [userId]: isUserSpeaking };
+            });
+            setVolumeMap((prev) => ({ ...prev, [userId]: volumeLevel }));
+          }
+
+          animId = requestAnimationFrame(checkVolume);
+        };
+        checkVolume();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+
+    return () => {
+      if (animId) cancelAnimationFrame(animId);
+      if (audioCtx) audioCtx.close();
+    };
+  }, [showVoiceCallModal, showVideoCallModal, isMicOn, isMuted, userId]);
+
+  // Real-Time Audio Spectrum Analyser for Remote Streams
+  useEffect(() => {
+    const audioContexts: AudioContext[] = [];
+    const animIds: number[] = [];
+
+    Object.entries(remoteStreamsMap).forEach(([remoteIdStr, stream]) => {
+      const remoteId = Number(remoteIdStr);
+      if (!stream || stream.getAudioTracks().length === 0) return;
+
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const ctx = new AudioContextClass();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 64;
+        const source = ctx.createMediaStreamSource(stream);
+        source.connect(analyser);
+        audioContexts.push(ctx);
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const checkRemoteVol = () => {
+          analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+          const avg = sum / dataArray.length;
+          const isSpeaking = avg > 10;
+          const volumeLevel = isSpeaking ? Math.min(100, Math.round((avg / 120) * 100)) : 0;
+
+          setSpeakingMap((prev) => {
+            if (prev[remoteId] === isSpeaking) return prev;
+            return { ...prev, [remoteId]: isSpeaking };
+          });
+          setVolumeMap((prev) => ({ ...prev, [remoteId]: volumeLevel }));
+
+          const aid = requestAnimationFrame(checkRemoteVol);
+          animIds.push(aid);
+        };
+        checkRemoteVol();
+      } catch (e) {
+        /* ignore */
+      }
+    });
+
+    return () => {
+      animIds.forEach((aid) => cancelAnimationFrame(aid));
+      audioContexts.forEach((ctx) => ctx.close());
+    };
+  }, [remoteStreamsMap]);
+
+
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
@@ -786,101 +1277,187 @@ export default function ArenaRoomPage() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   const [activeCallState, setActiveCallState] = useState<{
-    active: boolean;
+    active?: boolean;
+    status?: string;
     call_type: "audio" | "video";
     caller_name: string;
+    caller_id?: number;
+    host_id?: number;
+    participants?: number[];
+    participants_info?: any[];
   } | null>(null);
 
+  const isCallSessionLive = (callObj: any) => {
+    if (!callObj) return false;
+    return Boolean(callObj.active === true || callObj.status === "IN_CALL" || callObj.status === "RINGING");
+  };
+
   const handleStartVoiceCall = async () => {
-    setShowVoiceCallModal(true);
-    if (activeCallState?.active) {
-      toast.info("📞 Joined ongoing Voice Huddle in progress!");
+    const selfId = getSelfId();
+    if (!selfId) return;
+
+    const callerName = arenaMembers.find((m) => m.user_id === selfId)?.user_name || "A member";
+
+    // Step 1: Capture local microphone FIRST (must be before any WebRTC signaling)
+    try {
+      await startLocalMediaStream(false);
+    } catch {
+      toast.error("❌ Could not access microphone. Please check permissions.");
       return;
     }
 
-    const callerName = arenaMembers.find((m) => m.user_id === userId)?.user_name || "A member";
-    setActiveCallState({
-      active: true,
-      call_type: "audio",
-      caller_name: callerName,
-    });
-    try {
-      await api.post(`/api/activity/arena/${id}/message`, {
-        content: `📞 Voice Huddle started by ${callerName}! Tap Join Call to enter the group call.`,
-        message_type: "call_invite",
-      });
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            event_type: "call_started",
-            call_type: "audio",
-            caller_name: callerName,
-            caller_id: userId,
-            arena_id: Number(id),
-          })
-        );
+    // Step 2: Show call modal UI
+    setShowVoiceCallModal(true);
+    setCallDuration(0);
+
+    // Step 3: Send INITIATE_CALL (if no active call) or JOIN_CALL (if ongoing call)
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const eventType = isCallSessionLive(activeCallState) ? "JOIN_CALL" : "INITIATE_CALL";
+      if (eventType === "JOIN_CALL") {
+        toast.info("📞 Joining ongoing Voice Huddle!");
       }
-    } catch {
-      /* ignore */
+      wsRef.current.send(
+        JSON.stringify({
+          event_type: eventType,
+          call_type: "audio",
+          caller_name: callerName,
+          caller_id: selfId,
+          sender_user_id: selfId,
+          arena_id: Number(id),
+        })
+      );
     }
   };
 
   const handleStartVideoCall = async () => {
-    setShowVideoCallModal(true);
-    if (activeCallState?.active) {
-      toast.info("📹 Joined ongoing HD Video Call in progress!");
+    const selfId = getSelfId();
+    if (!selfId) return;
+
+    const callerName = arenaMembers.find((m) => m.user_id === selfId)?.user_name || "A member";
+
+    try {
+      await startLocalMediaStream(true);
+    } catch {
+      toast.error("❌ Could not access camera/microphone. Please check permissions.");
       return;
     }
 
-    const callerName = arenaMembers.find((m) => m.user_id === userId)?.user_name || "A member";
-    setActiveCallState({
-      active: true,
-      call_type: "video",
-      caller_name: callerName,
-    });
-    try {
-      await api.post(`/api/activity/arena/${id}/message`, {
-        content: `📹 HD Video Call started by ${callerName}! Tap Join Call to enter the stream.`,
-        message_type: "call_invite",
-      });
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            event_type: "call_started",
-            call_type: "video",
-            caller_name: callerName,
-            caller_id: userId,
-            arena_id: Number(id),
-          })
-        );
-      }
-    } catch {
-      /* ignore */
+    setShowVideoCallModal(true);
+    setCallDuration(0);
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const eventType = isCallSessionLive(activeCallState) ? "JOIN_CALL" : "INITIATE_CALL";
+      wsRef.current.send(
+        JSON.stringify({
+          event_type: eventType,
+          call_type: "video",
+          caller_name: callerName,
+          caller_id: selfId,
+          sender_user_id: selfId,
+          arena_id: Number(id),
+        })
+      );
     }
   };
+
+  // Ensure refreshing or loading the page NEVER auto-starts or auto-joins a call
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.search.includes("action=")) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("action");
+      url.searchParams.delete("call_type");
+      const newSearch = url.searchParams.toString();
+      const newUrl = url.pathname + (newSearch ? `?${newSearch}` : "");
+      window.history.replaceState({}, "", newUrl);
+    }
+  }, []);
+
 
   const handleEndCall = async () => {
     setShowVoiceCallModal(false);
     setShowVideoCallModal(false);
-    setActiveCallState(null);
+    stopLocalMediaStream();
 
-    const callerName = arenaMembers.find((m) => m.user_id === userId)?.user_name || "A member";
-    try {
-      await api.post(`/api/activity/arena/${id}/message`, {
-        content: `📞 Voice/Video call session ended by ${callerName}.`,
-        message_type: "call_ended",
+    const selfId = getSelfId();
+    const callerName = arenaMembers.find((m) => m.user_id === selfId)?.user_name || "A member";
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          event_type: "LEAVE_CALL",
+          caller_name: callerName,
+          sender_user_id: selfId,
+          arena_id: Number(id),
+        })
+      );
+    }
+  };
+
+  const handleForceEndCall = async () => {
+    setShowVoiceCallModal(false);
+    setShowVideoCallModal(false);
+    stopLocalMediaStream();
+
+    const selfId = getSelfId();
+    const callerName = arenaMembers.find((m) => m.user_id === selfId)?.user_name || "Host";
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          event_type: "FORCE_END_CALL",
+          caller_name: callerName,
+          sender_user_id: selfId,
+          arena_id: Number(id),
+        })
+      );
+    }
+  };
+
+  const toggleLocalMute = () => {
+    const next = !isMuted;
+    setIsMuted(next);
+
+    // Physically enable/disable local audio media tracks so audio bytes stop/start
+    if (localStreamRef.current) {
+      localStreamRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = !next;
       });
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            event_type: "call_ended",
-            caller_name: callerName,
-            arena_id: Number(id),
-          })
-        );
-      }
-    } catch {
-      /* ignore */
+    }
+
+    const selfId = getSelfId();
+    if (selfId) {
+      setMuteMap((prev) => ({ ...prev, [selfId]: next }));
+    }
+
+    // Broadcast TOGGLE_MUTE via WebSocket to all arena members in real-time
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && selfId) {
+      wsRef.current.send(
+        JSON.stringify({
+          event_type: "TOGGLE_MUTE",
+          is_muted: next,
+          sender_user_id: selfId,
+          arena_id: Number(id),
+        })
+      );
+    }
+  };
+
+  const toggleHandRaise = () => {
+    const next = !isHandRaised;
+    setIsHandRaised(next);
+
+    const selfId = getSelfId();
+    if (selfId) {
+      setHandMap((prev) => ({ ...prev, [selfId]: next }));
+    }
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && selfId) {
+      wsRef.current.send(
+        JSON.stringify({
+          event_type: "TOGGLE_HAND",
+          is_hand_raised: next,
+          sender_user_id: selfId,
+          arena_id: Number(id),
+        })
+      );
     }
   };
 
@@ -946,47 +1523,140 @@ export default function ArenaRoomPage() {
   const proofFileInputRef = useRef<HTMLInputElement | null>(null);
   const dpFileInputRef = useRef<HTMLInputElement | null>(null);
   const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const chatImageInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    let mediaStream: MediaStream | null = null;
-    if (showVideoCallModal) {
-      if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
-        navigator.mediaDevices
-          .getUserMedia({ video: true, audio: true })
-          .then((stream) => {
-            mediaStream = stream;
-            if (localVideoRef.current) {
-              localVideoRef.current.srcObject = stream;
-            }
-          })
-          .catch((err) => {
-            console.warn("Camera/Mic access not granted:", err);
-          });
-      }
-    } else {
-      if (localVideoRef.current && localVideoRef.current.srcObject) {
-        const stream = localVideoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach((track) => track.stop());
-        localVideoRef.current.srcObject = null;
-      }
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+
+  const handleStartVoiceRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.start(100);
+      setIsRecordingAudio(true);
+      setRecordingSeconds(0);
+
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Microphone access error:", err);
+      showToast("Microphone access denied or unavailable.", "error");
     }
-    return () => {
-      if (mediaStream) {
-        mediaStream.getTracks().forEach((track) => track.stop());
+  };
+
+  const handleCancelVoiceRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+    }
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    setIsRecordingAudio(false);
+    setRecordingSeconds(0);
+    audioChunksRef.current = [];
+  };
+
+  const handleSendVoiceRecording = async () => {
+    if (!mediaRecorderRef.current) return;
+    setIsUploadingMedia(true);
+    const recorder = mediaRecorderRef.current;
+
+    recorder.onstop = async () => {
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+      recorder.stream.getTracks().forEach((t) => t.stop());
+
+      try {
+        const formData = new FormData();
+        formData.append("file", audioBlob, `voice_note_${Date.now()}.webm`);
+
+        const uploadRes = await api.post("/upload/file", formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+
+        const audioUrl = uploadRes.data?.url;
+        if (audioUrl) {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(
+              JSON.stringify({ content: audioUrl, message_type: "audio" })
+            );
+          } else {
+            await api.post(`/api/activity/arena/${id}/message`, {
+              content: audioUrl,
+              message_type: "audio",
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Voice note upload error:", err);
+        showToast("Failed to send voice note.", "error");
+      } finally {
+        setIsUploadingMedia(false);
+        setIsRecordingAudio(false);
+        setRecordingSeconds(0);
+        audioChunksRef.current = [];
       }
     };
-  }, [showVideoCallModal]);
+
+    recorder.stop();
+  };
+
+  const handleSelectChatImageFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingMedia(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const uploadRes = await api.post("/upload/file", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      const imageUrl = uploadRes.data?.url;
+      if (imageUrl) {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({ content: imageUrl, message_type: "image" })
+          );
+        } else {
+          await api.post(`/api/activity/arena/${id}/message`, {
+            content: imageUrl,
+            message_type: "image",
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Chat image upload error:", err);
+      showToast("Failed to upload image.", "error");
+    } finally {
+      setIsUploadingMedia(false);
+      if (chatImageInputRef.current) chatImageInputRef.current.value = "";
+    }
+  };
+
 
   const toggleCameraTrack = () => {
-    setIsCamOn((prev) => {
-      const next = !prev;
-      if (localVideoRef.current && localVideoRef.current.srcObject) {
-        const stream = localVideoRef.current.srcObject as MediaStream;
-        stream.getVideoTracks().forEach((t) => (t.enabled = next));
-      }
-      return next;
-    });
+    const next = !isCamOn;
+    setIsCamOn(next);
+    if (localStreamRef.current) {
+      localStreamRef.current.getVideoTracks().forEach((t) => (t.enabled = next));
+    }
   };
 
   const toggleMicTrack = () => {
@@ -1017,7 +1687,14 @@ export default function ArenaRoomPage() {
         if (Array.isArray(payload.submissions))
           setSubmissions(payload.submissions);
         if (Array.isArray(payload.messages)) setMessages(payload.messages);
+        if (payload.active_call && (payload.active_call.active || payload.active_call.status === "IN_CALL" || payload.active_call.status === "RINGING")) {
+          setActiveCallState(payload.active_call);
+        } else {
+          setActiveCallState(null);
+        }
+
       }
+
     } catch (err: any) {
       if (err?.response?.status === 403)
         setError("Membership approval required to access this arena.");
@@ -1054,7 +1731,10 @@ export default function ArenaRoomPage() {
 
   useEffect(() => {
     const localUserId = localStorage.getItem("tribely_user_id");
-    if (localUserId) setUserId(Number(localUserId));
+    if (localUserId) {
+      setUserId(Number(localUserId));
+      userIdRef.current = Number(localUserId); // Keep ref in sync for WS/WebRTC closures
+    }
 
     // Zero-delay instant cache pre-hydration
     const cachedHistory = dataCache.get(`/api/activity/arena/${id}/history`);
@@ -1143,6 +1823,39 @@ export default function ArenaRoomPage() {
           const liveData = JSON.parse(event.data);
           const eventType = liveData?.event_type || liveData?.type;
 
+          // Real-time Chat Message Event Handler
+          if (eventType === "chat_message" || (liveData?.content && liveData?.sender_name)) {
+            const incomingMsg: Message = {
+              id: liveData.id || Date.now(),
+              user_id: Number(liveData.user_id),
+              sender_name: liveData.sender_name || `Member #${liveData.user_id}`,
+              sender_avatar_url: liveData.sender_avatar_url || null,
+              content: String(liveData.content || liveData.text || ""),
+              message_type: String(liveData.message_type || "text"),
+              created_at: liveData.created_at || new Date().toISOString(),
+            };
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === incomingMsg.id)) return prev;
+              return [incomingMsg, ...prev];
+            });
+            return;
+          }
+
+          // Real-time WhatsApp-style Read Receipt Event Handler
+          if (eventType === "READ_RECEIPT" || eventType === "read_receipt") {
+            const readerId = Number(liveData.reader_user_id);
+            const lastReadId = Number(liveData.last_read_msg_id);
+            setMessages((prev) =>
+              prev.map((msg) => {
+                if (readerId !== msg.user_id && (lastReadId ? msg.id <= lastReadId : true)) {
+                  return { ...msg, is_read: true };
+                }
+                return msg;
+              })
+            );
+            return;
+          }
+
           // Real-time Member Removed / Kick Event Handler
           if (eventType === "member_removed" || eventType === "kicked") {
             const kickedUserId = Number(liveData.user_id);
@@ -1183,28 +1896,140 @@ export default function ArenaRoomPage() {
           }
 
 
-          // Real-time Voice / Video Call Started Event Handler
-          if (liveData?.event_type === "call_started") {
-            const callerName = liveData.caller_name || "A member";
-            const callType = liveData.call_type || "audio";
-            toast.info(`📞 ${callerName} started a live ${callType === "video" ? "HD Video" : "Audio"} Call!`);
-            setActiveCallState({
-              active: true,
-              call_type: callType,
-              caller_name: callerName,
-            });
+          // ── INCOMING_CALL: Someone started a new call — notify non-starters ──
+          if (liveData?.event_type === "INCOMING_CALL") {
+            const callerName = liveData.caller_name || liveData.active_call?.caller_name || "A member";
+            const callType = liveData.call_type || liveData.active_call?.call_type || "audio";
+            const selfId = getSelfId();
+            const callerId = Number(liveData.caller_id || liveData.active_call?.caller_id);
+
+            // Set global call state for all arena members
+            if (liveData.active_call) {
+              setActiveCallState(liveData.active_call);
+            } else {
+              setActiveCallState({ active: true, call_type: callType, caller_name: callerName, caller_id: callerId });
+            }
+
+            // If I'm not the starter, show toast to invite me to join
+            if (selfId !== callerId) {
+              const callEmoji = callType === "video" ? "📹" : "📞";
+              const callLabel = callType === "video" ? "Video Call" : "Voice Huddle";
+              toast.info(`${callEmoji} ${callerName} started a ${callLabel}! Tap the ${callEmoji} icon to join.`);
+            }
             return;
           }
 
-          // Real-time Voice / Video Call Ended Event Handler
-          if (liveData?.event_type === "call_ended") {
-            const callerName = liveData.caller_name || "A member";
-            toast.info(`📞 Call session ended by ${callerName}.`);
-            setActiveCallState(null);
+          // ── USER_JOINED: A new member joined the call — existing members each send an offer ──
+          if (liveData?.event_type === "USER_JOINED") {
+            if (liveData.active_call) setActiveCallState(liveData.active_call);
+
+            const selfId = getSelfId();
+            const joinerId = Number(liveData.sender_user_id || liveData.caller_id);
+
+            // Each already-in-call member sends an individual offer to the new joiner
+            if (joinerId && selfId && joinerId !== selfId && localStreamRef.current) {
+              // Small delay so joiner's peer connection is ready to receive offers
+              setTimeout(() => sendWebRTCOffer(joinerId), 300);
+            }
             return;
           }
+
+          // ── USER_LEFT: A member left the call ──
+          if (liveData?.event_type === "USER_LEFT") {
+            if (liveData.active_call) setActiveCallState(liveData.active_call);
+            const leftId = Number(liveData.sender_user_id || liveData.caller_id);
+            if (leftId) {
+              setMuteMap((prev) => {
+                const n = { ...prev };
+                delete n[leftId];
+                return n;
+              });
+            }
+            return;
+          }
+
+          // ── MUTE_UPDATED: Real-Time Mute Synchronization ──
+          if (liveData?.event_type === "MUTE_UPDATED") {
+            const senderId = Number(liveData.sender_user_id || liveData.caller_id);
+            const isMutedVal = Boolean(liveData.is_muted);
+            if (senderId) {
+              setMuteMap((prev) => ({ ...prev, [senderId]: isMutedVal }));
+            }
+            if (liveData.active_call) {
+              setActiveCallState(liveData.active_call);
+            }
+            return;
+          }
+
+          // ── HAND_UPDATED: Real-Time Hand Raise Synchronization ──
+          if (liveData?.event_type === "HAND_UPDATED") {
+            const senderId = Number(liveData.sender_user_id || liveData.caller_id);
+            const isHandVal = Boolean(liveData.is_hand_raised);
+            if (senderId) {
+              setHandMap((prev) => ({ ...prev, [senderId]: isHandVal }));
+            }
+            if (liveData.active_call) {
+              setActiveCallState(liveData.active_call);
+            }
+            return;
+          }
+
+          // ── CALL_ENDED: Call has been fully ended ──
+          if (liveData?.event_type === "CALL_ENDED") {
+            setActiveCallState(null);
+            setShowVoiceCallModal(false);
+            setShowVideoCallModal(false);
+            stopLocalMediaStream();
+            toast.info("📞 The call has ended.");
+            return;
+          }
+
+          // ── webrtc_signal: Point-to-point SDP / ICE relay ──
+          if (liveData?.event_type === "webrtc_signal") {
+            const selfId = getSelfId();
+            const targetId = Number(liveData.target_user_id);
+            const senderId = Number(liveData.sender_user_id);
+
+            if (selfId && targetId === selfId && senderId) {
+              const pc = getOrCreatePeerConnection(senderId);
+
+              if (liveData.sdp) {
+                pc.setRemoteDescription(new RTCSessionDescription(liveData.sdp))
+                  .then(async () => {
+                    if (liveData.sdp.type === "offer") {
+                      const answer = await pc.createAnswer();
+                      await pc.setLocalDescription(answer);
+                      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        wsRef.current.send(
+                          JSON.stringify({
+                            event_type: "webrtc_signal",
+                            target_user_id: senderId,
+                            sender_user_id: selfId,
+                            sdp: answer,
+                            arena_id: Number(id),
+                          })
+                        );
+                      }
+                    }
+                  })
+                  .catch(console.error);
+              } else if (liveData.candidate) {
+                pc.addIceCandidate(new RTCIceCandidate(liveData.candidate)).catch(() => {});
+              }
+            }
+            return;
+          }
+
+
+
+          // Real-time Unread Badge & Counter Handler handled by global NotificationContext
+          if (liveData?.event_type === "unread_update" || liveData?.event_type === "unread_cleared") {
+            return;
+          }
+
 
           // Real-time Arena Settings Update Handler (Deadline Time / Verification Rule)
+
           if (eventType === "arena_settings_updated") {
             if (liveData.deadline_time) {
               setArenaDeadlineTime(liveData.deadline_time);
@@ -1375,29 +2200,88 @@ export default function ArenaRoomPage() {
     submissionId: number,
     voteType: "upvote" | "downvote",
   ) => {
+    const normRequested = voteType === "upvote" ? "up" : "down";
+    
     try {
-      // Optimistic UI update
+      // Optimistic UI update with single vote & toggle-off protection
       setSubmissions((prev) =>
         prev.map((sub) => {
           if (sub.id !== submissionId) return sub;
-          const isUp = voteType === "upvote";
-          const curUp = sub.upvotes || 0;
-          const curDown = sub.downvotes || 0;
+          let curUp = sub.upvotes || 0;
+          let curDown = sub.downvotes || 0;
+          let newVote: string | null = normRequested;
+
+          if (sub.user_vote === normRequested) {
+            // Un-vote / toggle off
+            newVote = null;
+            if (normRequested === "up") curUp = Math.max(0, curUp - 1);
+            else curDown = Math.max(0, curDown - 1);
+          } else if (sub.user_vote) {
+            // Switch vote choice
+            if (normRequested === "up") {
+              curUp += 1;
+              curDown = Math.max(0, curDown - 1);
+            } else {
+              curDown += 1;
+              curUp = Math.max(0, curUp - 1);
+            }
+          } else {
+            // New vote
+            if (normRequested === "up") curUp += 1;
+            else curDown += 1;
+          }
+
+          const myVoterObj = userId ? {
+            user_id: userId,
+            user_name: localStorage.getItem("tribely_user_name") || `Member #${userId}`,
+            user_avatar_url: localStorage.getItem("tribely_user_avatar") || null,
+          } : null;
+
+          let updatedVoters = sub.voters ? [...sub.voters] : [];
+          if (newVote && myVoterObj) {
+            if (!updatedVoters.some(v => v.user_id === userId)) {
+              updatedVoters.push(myVoterObj);
+            }
+          } else if (!newVote && userId) {
+            updatedVoters = updatedVoters.filter(v => v.user_id !== userId);
+          }
+
           return {
             ...sub,
-            upvotes: isUp ? curUp + 1 : Math.max(0, curUp - 1),
-            downvotes: !isUp ? curDown + 1 : Math.max(0, curDown - 1),
+            upvotes: curUp,
+            downvotes: curDown,
+            user_vote: newVote,
+            voters: updatedVoters,
           };
         })
       );
-      await api.post(`/api/activity/submission/${submissionId}/vote`, {
+
+      const res = await api.post(`/api/activity/submission/${submissionId}/vote`, {
         vote_type: voteType,
       });
-      fetchHistory();
+
+      if (res.data?.data) {
+        const d = res.data.data;
+        setSubmissions((prev) =>
+          prev.map((sub) => {
+            if (sub.id !== submissionId) return sub;
+            return {
+              ...sub,
+              upvotes: d.upvotes ?? sub.upvotes,
+              downvotes: d.downvotes ?? sub.downvotes,
+              user_vote: d.user_vote !== undefined ? d.user_vote : sub.user_vote,
+              is_absent: d.is_absent ?? sub.is_absent,
+            };
+          })
+        );
+      }
     } catch (err: any) {
       const detail = err.response?.data?.detail;
-      const msg = typeof detail === "string" ? detail : detail?.message || "Vote operation failed.";
-      toast.error(msg);
+      let msg = typeof detail === "string" ? detail : detail?.message || "Voting window closed for this cycle.";
+      if (msg.includes("offset-naive") || msg.includes("500") || msg.includes("Vote operation failed:")) {
+        msg = "Voting for this submission cycle has expired.";
+      }
+      toast.warning(msg);
       fetchHistory();
     }
   };
@@ -1408,6 +2292,20 @@ export default function ArenaRoomPage() {
     if (!messageText) return;
 
     setChatInput("");
+
+    // Optimistic UI Hydration (0ms Instant Rendering)
+    const tempId = Date.now();
+    const optimisticMsg: Message = {
+      id: tempId,
+      user_id: userId || 0,
+      sender_name: typeof window !== "undefined" ? localStorage.getItem("tribely_user_name") || "You" : "You",
+      sender_avatar_url: typeof window !== "undefined" ? localStorage.getItem("tribely_user_avatar") || null : null,
+      content: messageText,
+      message_type: "text",
+      created_at: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [optimisticMsg, ...prev]);
 
     // 1. Send over active WebSocket connection if available & connected
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -1430,10 +2328,12 @@ export default function ArenaRoomPage() {
       const returnedMsg = res.data?.data;
       if (returnedMsg) {
         setMessages((prev) => {
-          if (returnedMsg.id && prev.some((m) => m.id === returnedMsg.id)) {
-            return prev;
+          // Replace temp message with server message
+          const filtered = prev.filter((m) => m.id !== tempId);
+          if (returnedMsg.id && filtered.some((m) => m.id === returnedMsg.id)) {
+            return filtered;
           }
-          return [returnedMsg, ...prev];
+          return [returnedMsg, ...filtered];
         });
       }
     } catch (err: any) {
@@ -1734,11 +2634,21 @@ export default function ArenaRoomPage() {
 
           {/* Voice Call */}
           <button
-
-            onClick={() => setShowVoiceCallModal(true)}
-            className="p-2 rounded-full transition hover:bg-[var(--bg-raised)] active:scale-95"
-            style={{ color: "var(--fg)" }}
-            title="Voice Call"
+            onClick={() => {
+              if (isCallSessionLive(activeCallState)) {
+                if (activeCallState?.call_type === "video") handleStartVideoCall();
+                else handleStartVoiceCall();
+              } else {
+                handleStartVoiceCall();
+              }
+            }}
+            className={`p-2 rounded-full transition active:scale-95 cursor-pointer ${
+              isCallSessionLive(activeCallState)
+                ? "bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 animate-pulse"
+                : "hover:bg-[var(--bg-raised)]"
+            }`}
+            style={isCallSessionLive(activeCallState) ? {} : { color: "var(--fg)" }}
+            title={isCallSessionLive(activeCallState) ? "Join Ongoing Call" : "Voice Call"}
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
@@ -1746,16 +2656,18 @@ export default function ArenaRoomPage() {
           </button>
 
           {/* Video Call */}
-          <button
-            onClick={() => setShowVideoCallModal(true)}
-            className="p-2 rounded-full transition hover:bg-[var(--bg-raised)] active:scale-95"
-            style={{ color: "var(--fg)" }}
-            title="Video Call"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-          </button>
+          {!isCallSessionLive(activeCallState) && (
+            <button
+              onClick={handleStartVideoCall}
+              className="p-2 rounded-full transition hover:bg-[var(--bg-raised)] active:scale-95 cursor-pointer"
+              style={{ color: "var(--fg)" }}
+              title="Video Call"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            </button>
+          )}
 
           {/* 3-Dots Menu */}
           <button
@@ -1782,72 +2694,55 @@ export default function ArenaRoomPage() {
             <button onClick={() => setShow3DotsMenu(false)} className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold hover:bg-[var(--bg-raised)] text-[var(--fg-subtle)]">✕</button>
           </div>
 
-          <div className="py-1">
-            {/* Live Ledger */}
+          <div className="py-1 space-y-1">
+            {/* Exit to Dashboard */}
             <button
               onClick={() => {
                 setShow3DotsMenu(false);
-                setMobileTab("ledger");
-                setShowMobileLedger(true);
+                router.push("/dashboard");
               }}
-              className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-[var(--bg-raised)] flex items-center gap-3 transition"
+              className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-[var(--bg-raised)] flex items-center gap-3 transition cursor-pointer"
             >
-              <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: "rgba(249,115,22,0.12)" }}>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: "#f97316" }}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 bg-blue-500/10 text-blue-500">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
                 </svg>
               </div>
               <div>
-                <p className="text-xs font-bold" style={{ color: "var(--fg)" }}>Live Ledger</p>
-                <p className="text-[10px]" style={{ color: "var(--fg-muted)" }}>View proof submissions</p>
+                <p className="text-xs font-bold text-[var(--fg)]">Exit to Dashboard</p>
+                <p className="text-[10px] text-[var(--fg-muted)]">Return to main arena dashboard</p>
               </div>
-              {mobileTab === "ledger" && <span className="ml-auto w-2 h-2 rounded-full bg-orange-500 shrink-0" />}
             </button>
 
-            {/* Arena Profile / Group Info */}
+            {/* Monthly Log Book */}
             <button
-              onClick={() => { setShow3DotsMenu(false); setShowGroupInfoModal(true); }}
-              className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-[var(--bg-raised)] flex items-center gap-3 transition"
+              onClick={() => {
+                setShow3DotsMenu(false);
+                setShowLogBookModal(true);
+              }}
+              className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-[var(--bg-raised)] flex items-center gap-3 transition cursor-pointer"
             >
-              <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: "rgba(99,102,241,0.12)" }}>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: "#6366f1" }}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 bg-amber-500/10 text-amber-500">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                 </svg>
               </div>
               <div>
-                <p className="text-xs font-bold" style={{ color: "var(--fg)" }}>Arena Profile</p>
-                <p className="text-[10px]" style={{ color: "var(--fg-muted)" }}>Members, rules & settings</p>
-              </div>
-              {isAdmin && <span className="ml-auto px-1.5 py-0.5 rounded-full text-[8px] font-black bg-amber-500/20 text-amber-500 shrink-0">Admin</span>}
-            </button>
-
-            {/* Rules & Stakes */}
-            <button
-              onClick={() => { setShow3DotsMenu(false); setShowGroupInfoModal(true); }}
-              className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-[var(--bg-raised)] flex items-center gap-3 transition"
-            >
-              <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{ background: "rgba(16,185,129,0.12)" }}>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: "#10b981" }}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-xs font-bold" style={{ color: "var(--fg)" }}>Rules & Stakes</p>
-                <p className="text-[10px]" style={{ color: "var(--fg-muted)" }}>₹{arenaPenaltyAmount || 500} penalty · {arenaProofType} proof</p>
+                <p className="text-xs font-bold text-[var(--fg)]">Log Book</p>
+                <p className="text-[10px] text-[var(--fg-muted)]">Monthly missed, rejected & Kudos logs</p>
               </div>
             </button>
 
             <div className="my-1 border-t border-[var(--border)]" />
 
-            {/* Leave or Delete */}
+            {/* Leave or Delete Group */}
             {isAdmin ? (
               <button
                 onClick={() => { setShow3DotsMenu(false); handleDeleteArena(); }}
-                className="w-full text-left px-3 py-2.5 rounded-xl text-red-500 hover:bg-red-500/10 flex items-center gap-3 transition"
+                className="w-full text-left px-3 py-2.5 rounded-xl text-rose-500 hover:bg-rose-500/10 flex items-center gap-3 transition cursor-pointer"
               >
-                <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-red-500/10 shrink-0">
-                  <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-rose-500/10 shrink-0">
+                  <svg className="w-4 h-4 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                   </svg>
                 </div>
@@ -1856,14 +2751,14 @@ export default function ArenaRoomPage() {
             ) : (
               <button
                 onClick={() => { setShow3DotsMenu(false); handleLeaveArena(); }}
-                className="w-full text-left px-3 py-2.5 rounded-xl text-red-500 hover:bg-red-500/10 flex items-center gap-3 transition"
+                className="w-full text-left px-3 py-2.5 rounded-xl text-rose-500 hover:bg-rose-500/10 flex items-center gap-3 transition cursor-pointer"
               >
-                <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-red-500/10 shrink-0">
-                  <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-rose-500/10 shrink-0">
+                  <svg className="w-4 h-4 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                   </svg>
                 </div>
-                <p className="text-xs font-extrabold">Leave Arena</p>
+                <p className="text-xs font-extrabold">Leave Group</p>
               </button>
             )}
           </div>
@@ -1997,11 +2892,20 @@ export default function ArenaRoomPage() {
                           {formatRelativeTime(item.last_activity_at)}
                         </span>
                       </div>
-                      <p className="text-[10px] truncate text-[var(--fg-subtle)]">
-                        {sanitizeSnippet(item.last_activity_snippet) || `${item.member_count || 1} members`}
-                      </p>
+                      <div className="flex items-center justify-between gap-1 mt-0.5">
+                        <p className="text-[10px] truncate text-[var(--fg-subtle)]">
+                          {sanitizeSnippet(item.last_activity_snippet) || `${item.member_count || 1} members`}
+                        </p>
+                        {unreadCounts[item.id] > 0 && !isActive && (
+                          <span className="shrink-0 px-2 py-0.5 rounded-full text-[9px] font-black bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-xs animate-pulse">
+                            {unreadCounts[item.id] > 99 ? "99+" : unreadCounts[item.id]}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </button>
+
+
                 );
               })}
           </div>
@@ -2079,19 +2983,32 @@ export default function ArenaRoomPage() {
 
             {/* Right: Quick Action Controls */}
             <div className="flex items-center gap-0.5 shrink-0">
-              {/* Voice Call */}
+              {/* Voice/Video Call button — joins ongoing call if live, otherwise starts new */}
               <button
-                onClick={handleStartVoiceCall}
-                className="w-9 h-9 rounded-full flex items-center justify-center transition hover:bg-[var(--bg-raised)] active:scale-90 cursor-pointer"
-                style={{ color: "var(--fg)" }}
-                title="Start Voice Huddle"
+                onClick={() => {
+                  if (isCallSessionLive(activeCallState)) {
+                    // Join the existing ongoing call with its original type
+                    if (activeCallState?.call_type === "video") handleStartVideoCall();
+                    else handleStartVoiceCall();
+                  } else {
+                    handleStartVoiceCall();
+                  }
+                }}
+                className={`w-9 h-9 rounded-full flex items-center justify-center transition active:scale-90 cursor-pointer ${
+                  isCallSessionLive(activeCallState)
+                    ? "bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 animate-pulse"
+                    : "hover:bg-[var(--bg-raised)]"
+                }`}
+                style={isCallSessionLive(activeCallState) ? {} : { color: "var(--fg)" }}
+                title={isCallSessionLive(activeCallState) ? "Join Ongoing Call" : "Start Voice Huddle"}
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.8a19.79 19.79 0 01-3.07-8.68A2 2 0 012 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
                 </svg>
               </button>
 
-              {/* Video Call */}
+              {/* Video Call — only shown when no active call or active call is video */}
+              {!isCallSessionLive(activeCallState) && (
               <button
                 onClick={handleStartVideoCall}
                 className="w-9 h-9 rounded-full flex items-center justify-center transition hover:bg-[var(--bg-raised)] active:scale-90 cursor-pointer"
@@ -2103,33 +3020,16 @@ export default function ArenaRoomPage() {
                   <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
                 </svg>
               </button>
+              )}
 
-              {/* Search */}
+              {/* Arena Locked Kudos Vault Icon */}
               <button
-                onClick={() => setShowSearchInput(!showSearchInput)}
-                className="w-9 h-9 rounded-full flex items-center justify-center transition hover:bg-[var(--bg-raised)] active:scale-90"
+                onClick={() => setShowKudosModal(true)}
+                className="w-9 h-9 rounded-full flex items-center justify-center transition hover:bg-[var(--bg-raised)] active:scale-90 cursor-pointer text-base"
                 style={{ color: "var(--fg)" }}
-                title="Search messages"
+                title="Arena Locked Kudos Vault"
               >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="11" cy="11" r="8" />
-                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg>
-              </button>
-
-              {/* Group Info / Settings */}
-              <button
-                onClick={() => setShowGroupInfoModal(true)}
-                className="w-9 h-9 rounded-full flex items-center justify-center transition hover:bg-[var(--bg-raised)] active:scale-90"
-                style={{ color: "var(--fg)" }}
-                title="Group Info & Settings"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-                  <circle cx="9" cy="7" r="4" />
-                  <path d="M23 21v-2a4 4 0 00-3-3.87" />
-                  <path d="M16 3.13a4 4 0 010 7.75" />
-                </svg>
+                <span>💰</span>
               </button>
 
               {/* More / 3-dots */}
@@ -2241,52 +3141,75 @@ export default function ArenaRoomPage() {
                             </span>
                           )}
 
-                          {/* Call Invite Card or Regular Chat Message */}
-                          {(msg.message_type === "call_invite" || msg.content.includes("Huddle started by") || msg.content.includes("Video Call started")) ? (
-                            <div className={`p-3.5 rounded-2xl flex flex-col gap-2.5 my-1 min-w-[240px] shadow-sm transition-all ${activeCallState?.active
-                                ? "bg-gradient-to-r from-emerald-500/15 via-teal-500/15 to-blue-500/15 border border-emerald-500/40"
-                                : "bg-[var(--bg-raised)] border border-[var(--border)]"
-                              }`}>
-                              <div className="flex items-center gap-2.5">
-                                <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold shrink-0 ${activeCallState?.active ? "bg-emerald-500/20 text-emerald-400 animate-pulse" : "bg-[var(--bg-card)] text-[var(--fg-muted)]"
-                                  }`}>
-                                  {msg.content.includes("Video") ? "📹" : "📞"}
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <h4 className={`text-xs font-black ${activeCallState?.active ? "text-emerald-400" : "text-[var(--fg-muted)]"}`}>
-                                    {activeCallState?.active
-                                      ? (msg.content.includes("Video") ? "Live HD Video Call" : "Live Voice Huddle")
-                                      : "Call Session Ended"}
-                                  </h4>
-                                  <p className="text-[10px] text-[var(--fg-muted)] leading-tight">{msg.content}</p>
-                                </div>
-                              </div>
+                          {/* Instagram Call Message Pill (Matching Reference DM Screenshot) */}
+                          {msg.message_type === "call_invite" || msg.message_type === "call_ended" || msg.content.includes("Voice Huddle started") || msg.content.includes("Video Call started") ? (
+                            (() => {
+                              const isEnded = msg.message_type === "call_ended";
+                              // A call_invite pill is joinable ONLY if a live call is currently active
+                              const callIsLive = !isEnded && isCallSessionLive(activeCallState);
+                              const isVideo = msg.content.toLowerCase().includes("video") ||
+                                (activeCallState?.call_type === "video" && callIsLive);
+                              const callTitle = isVideo
+                                ? isEnded ? "Video call ended" : "Video call"
+                                : isEnded ? "Voice call ended" : "Voice call";
 
-                              {activeCallState?.active ? (
-                                <button
-                                  type="button"
+                              return (
+                                <div
                                   onClick={() => {
-                                    if (msg.content.includes("Video")) setShowVideoCallModal(true);
-                                    else setShowVoiceCallModal(true);
+                                    if (isEnded || !callIsLive) {
+                                      toast.info("📞 This call has already ended.");
+                                      return;
+                                    }
+                                    // Route to correct call type based on the active call
+                                    const liveType = activeCallState?.call_type || (isVideo ? "video" : "audio");
+                                    if (liveType === "video") handleStartVideoCall();
+                                    else handleStartVoiceCall();
                                   }}
-                                  className="w-full py-2 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-xs font-black transition shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                                  className={`px-3.5 py-2 rounded-[20px] flex items-center gap-3 shadow-xs border my-0.5 transition-all duration-200 ${
+                                    callIsLive ? "cursor-pointer hover:scale-[1.02] active:scale-95" : "cursor-default opacity-70"
+                                  } ${
+                                    isMe
+                                      ? "bg-neutral-800 text-white border-neutral-700/40 hover:bg-neutral-700"
+                                      : "bg-neutral-200 text-neutral-900 dark:bg-[#262626] dark:text-[#F5F5F5] border-neutral-300/30 dark:border-neutral-700/30 hover:bg-neutral-300 dark:hover:bg-[#303030]"
+                                  }`}
+                                  title={isEnded ? "Call Ended" : callIsLive ? "Tap to Join Ongoing Call" : "No Active Call"}
                                 >
-                                  <span>{msg.content.includes("Video") ? "📹 Join Video Stream" : "📞 Join Audio Call"}</span>
-                                </button>
-                              ) : (
-                                <div className="w-full py-1.5 px-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border)] text-[10px] font-bold text-[var(--fg-muted)] flex items-center justify-center gap-1.5">
-                                  <span>🔒 Call Ended</span>
+                                  <div className="w-8 h-8 rounded-full bg-neutral-500/30 dark:bg-neutral-700/60 flex items-center justify-center text-xs shrink-0">
+                                    {isVideo ? "📹" : "📞"}
+                                  </div>
+                                  <div className="flex flex-col min-w-0 pr-1">
+                                    <span className="text-xs font-bold leading-tight flex items-center gap-1.5">
+                                      <span>{callTitle}</span>
+                                      {callIsLive && (
+                                        <span className="text-[9px] font-black text-emerald-400 bg-emerald-500/20 px-1.5 py-0.5 rounded-full border border-emerald-500/30 animate-pulse">
+                                          {isVideo ? "Join 📹" : "Join 📞"}
+                                        </span>
+                                      )}
+                                    </span>
+                                    <span className="text-[10px] opacity-60 mt-0.5 font-medium">
+                                      <TimeOnlyStr iso={msg.created_at} />
+                                    </span>
+                                  </div>
                                 </div>
-                              )}
+                              );
+                            })()
+                          ) : msg.message_type === "audio" || (msg.content && (msg.content.endsWith(".webm") || msg.content.endsWith(".mp3") || msg.content.endsWith(".wav") || (msg.content.includes("/static/uploads/") && msg.content.includes("voice")))) ? (
+                            <AudioMessagePlayer src={msg.content} isMe={isMe} />
+                          ) : msg.message_type === "image" || (msg.content && msg.content.startsWith("http") && (msg.content.endsWith(".png") || msg.content.endsWith(".jpg") || msg.content.endsWith(".jpeg") || msg.content.endsWith(".webp") || (msg.content.includes("/static/uploads/") && !msg.content.includes(".webm")))) ? (
+                            <div
+                              onClick={() => setViewerImageUrl(msg.content)}
+                              className="overflow-hidden rounded-2xl border border-neutral-700/40 cursor-pointer max-w-[260px] shadow-sm hover:opacity-95 transition-opacity"
+                            >
+                              <img src={msg.content} alt="Chat Attachment" className="w-full h-auto object-cover max-h-[300px]" />
                             </div>
                           ) : (
                             <div
-                              className="px-4 py-2.5 text-sm leading-relaxed rounded-[20px] break-words whitespace-pre-wrap min-w-0 max-w-full"
+                              className={`px-4 py-2.5 text-sm leading-snug break-words whitespace-pre-wrap min-w-0 max-w-full shadow-xs ${
+                                isMe
+                                  ? "bg-gradient-to-r from-blue-500 via-indigo-600 to-purple-600 text-white rounded-[22px]"
+                                  : "bg-neutral-200 text-neutral-900 dark:bg-[#262626] dark:text-[#F5F5F5] rounded-[22px] border border-neutral-300/30 dark:border-neutral-700/30"
+                              }`}
                               style={{
-                                background: isMe ? "var(--bg-raised)" : "var(--bg-card)",
-                                color: "var(--fg)",
-                                border: "1px solid var(--border)",
-                                boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
                                 wordBreak: "break-word",
                                 overflowWrap: "anywhere",
                               }}
@@ -2297,21 +3220,47 @@ export default function ArenaRoomPage() {
 
                           {(!messages[idx - 1] ||
                             messages[idx - 1].user_id !== msg.user_id) && (
-                              <span
-                                className={`mt-1 text-[9px] font-medium ${isMe ? "mr-1.5" : "ml-1.5"}`}
+                              <div
+                                className={`mt-1 text-[9px] font-medium flex items-center ${isMe ? "mr-1.5 justify-end" : "ml-1.5"}`}
                                 style={{ color: "var(--fg-subtle)" }}
                               >
                                 <TimeOnlyStr iso={msg.created_at} />
-                              </span>
+                                {isMe && (
+                                  <span className="ml-1 inline-flex items-center" title={msg.is_read ? "Read by all members" : "Sent / Delivered"}>
+                                    {msg.is_read ? (
+                                      <CheckCheck className="w-3.5 h-3.5 text-[#0095F6] dark:text-sky-400" />
+                                    ) : (
+                                      <Check className="w-3.5 h-3.5 text-neutral-400" />
+                                    )}
+                                  </span>
+                                )}
+                              </div>
                             )}
                         </div>
 
                         {!isMe && <div className="ml-2" style={{ minWidth: 8 }} />}
                       </div>
+
+                      {/* Centered WhatsApp-Style Floating Date Header */}
+                      {isFirstMsgOfDate && (
+                        <div className="flex justify-center my-3 py-1 shrink-0">
+                          <span
+                            className="px-3.5 py-1 rounded-full text-[11px] font-extrabold tracking-wide border shadow-xs"
+                            style={{
+                              background: "var(--bg-card)",
+                              borderColor: "var(--border)",
+                              color: "var(--fg-muted)",
+                            }}
+                          >
+                            {formatDateHeader(msg.created_at)}
+                          </span>
+                        </div>
+                      )}
                     </React.Fragment>
                   );
                 })
               )}
+
             </div>
 
             {/* ── FLOATING EMOJI PICKER POPOVER ── */}
@@ -2340,128 +3289,168 @@ export default function ArenaRoomPage() {
               </div>
             )}
 
-            {/* ── INSTAGRAM DM INTEGRATED INPUT PILL BAR ── */}
-            <form
-              onSubmit={(e) => {
-                setShowEmojiPicker(false);
-                handleSendChatMessage(e);
-              }}
-              className="shrink-0 z-20 px-3 sm:px-4 py-2.5"
-              style={{
-                background: "var(--bg)",
-                borderTop: "1px solid var(--border)",
-                paddingBottom: "calc(0.625rem + env(safe-area-inset-bottom, 0px))",
-              }}
-            >
-              <div
-                className="flex items-end gap-2 rounded-full px-2 py-1.5 transition-all"
+            {/* Hidden Chat Image File Input */}
+            <input
+              ref={chatImageInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleSelectChatImageFile}
+            />
+
+            {isRecordingAudio ? (
+              <div className="shrink-0 z-20 px-3 sm:px-4 py-2.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between rounded-xl">
+                <div className="flex items-center space-x-3">
+                  <div className="h-3 w-3 rounded-full bg-rose-500 animate-ping" />
+                  <span className="text-sm font-bold text-rose-400">Recording Voice Note...</span>
+                  <span className="font-mono text-xs text-slate-300">
+                    {Math.floor(recordingSeconds / 60)}:{(recordingSeconds % 60).toString().padStart(2, "0")}
+                  </span>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={handleCancelVoiceRecording}
+                    disabled={isUploadingMedia}
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 transition cursor-pointer"
+                    title="Cancel Recording"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSendVoiceRecording}
+                    disabled={isUploadingMedia}
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500 text-slate-950 hover:bg-emerald-400 transition cursor-pointer font-bold shadow-md"
+                    title="Send Voice Note"
+                  >
+                    <Check className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form
+                onSubmit={(e) => {
+                  setShowEmojiPicker(false);
+                  handleSendChatMessage(e);
+                }}
+                className="shrink-0 z-20 px-3 sm:px-4 py-2.5"
                 style={{
-                  background: "var(--bg-raised)",
-                  border: "1px solid var(--border)",
+                  background: "var(--bg)",
+                  borderTop: "1px solid var(--border)",
+                  paddingBottom: "calc(0.625rem + env(safe-area-inset-bottom, 0px))",
                 }}
               >
-                {/* Left: Blue Camera Circle Icon */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowMobileLedger(true);
-                    if (proofFileInputRef.current) {
-                      proofFileInputRef.current.click();
-                    }
-                  }}
-                  className="w-8 h-8 rounded-full bg-[#0095F6] hover:bg-[#0081D6] text-white flex items-center justify-center shrink-0 transition active:scale-90 shadow-xs"
-                  title="Capture Photo or Video"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                    <circle cx="12" cy="13" r="3" strokeWidth={2.2} />
-                  </svg>
-                </button>
-
-                {/* Center: Auto-growing Textarea (WhatsApp style) */}
-                <textarea
-                  ref={chatTextareaRef}
-                  rows={1}
-                  placeholder="Message…"
-                  className="flex-1 bg-transparent text-sm outline-none px-1 resize-none overflow-y-auto styled-scroll"
+                <div
+                  className="flex items-end gap-2 rounded-full px-2 py-1.5 transition-all"
                   style={{
-                    color: "var(--fg)",
-                    wordBreak: "break-word",
-                    lineHeight: "24px",
-                    minHeight: "24px",
-                    maxHeight: "120px", // 5 lines
-                    overflowY: "auto",
-                    paddingTop: "4px",
-                    paddingBottom: "4px",
+                    background: "var(--bg-raised)",
+                    border: "1px solid var(--border)",
                   }}
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onFocus={() => setShowEmojiPicker(false)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      if (chatInput.trim()) {
-                        setShowEmojiPicker(false);
-                        handleSendChatMessage(e as any);
-                      }
-                    }
-                  }}
-                />
-
-                {/* Right Actions inside Pill */}
-                {chatInput.trim() ? (
+                >
+                  {/* Left: Blue Camera Circle Icon */}
                   <button
-                    type="submit"
-                    className="px-3 py-1 rounded-full text-xs font-bold text-[#0095F6] hover:text-[#0081D6] transition active:scale-95 shrink-0"
+                    type="button"
+                    onClick={() => {
+                      if (chatImageInputRef.current) {
+                        chatImageInputRef.current.click();
+                      }
+                    }}
+                    className="w-8 h-8 rounded-full bg-[#0095F6] hover:bg-[#0081D6] text-white flex items-center justify-center shrink-0 transition active:scale-90 shadow-xs"
+                    title="Send Image File"
                   >
-                    Send
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                      <circle cx="12" cy="13" r="3" strokeWidth={2.2} />
+                    </svg>
                   </button>
-                ) : (
-                  <div className="flex items-center gap-1 shrink-0 pr-1" style={{ color: "var(--fg-muted)" }}>
-                    {/* Voice Mic Icon */}
-                    <button
-                      type="button"
-                      onClick={() => showToast("Voice message feature coming soon", "info")}
-                      className="w-8 h-8 rounded-full flex items-center justify-center transition hover:bg-[var(--bg-card)] active:scale-90"
-                      title="Voice Message"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                      </svg>
-                    </button>
 
-                    {/* Gallery / Image Icon */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMobileLedger(true);
-                        if (proofFileInputRef.current) {
-                          proofFileInputRef.current.click();
+                  {/* Center: Auto-growing Textarea (WhatsApp style) */}
+                  <textarea
+                    ref={chatTextareaRef}
+                    rows={1}
+                    placeholder="Message…"
+                    className="flex-1 bg-transparent text-sm outline-none px-1 resize-none overflow-y-auto styled-scroll"
+                    style={{
+                      color: "var(--fg)",
+                      wordBreak: "break-word",
+                      lineHeight: "24px",
+                      minHeight: "24px",
+                      maxHeight: "120px", // 5 lines
+                      overflowY: "auto",
+                      paddingTop: "4px",
+                      paddingBottom: "4px",
+                    }}
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onFocus={() => setShowEmojiPicker(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        if (chatInput.trim()) {
+                          setShowEmojiPicker(false);
+                          handleSendChatMessage(e as any);
                         }
-                      }}
-                      className="w-8 h-8 rounded-full flex items-center justify-center transition hover:bg-[var(--bg-card)] active:scale-90"
-                      title="Gallery"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                    </button>
+                      }
+                    }}
+                  />
 
-                    {/* Sticker / Emoji Icon */}
+                  {/* Right Actions inside Pill */}
+                  {chatInput.trim() ? (
                     <button
-                      type="button"
-                      onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                      className="w-8 h-8 rounded-full flex items-center justify-center transition hover:bg-[var(--bg-card)] active:scale-90"
-                      title="Emoji & Stickers"
+                      type="submit"
+                      className="px-3 py-1 rounded-full text-xs font-bold text-[#0095F6] hover:text-[#0081D6] transition active:scale-95 shrink-0"
                     >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
+                      Send
                     </button>
-                  </div>
-                )}
-              </div>
-            </form>
+                  ) : (
+                    <div className="flex items-center gap-1 shrink-0 pr-1" style={{ color: "var(--fg-muted)" }}>
+                      {/* Voice Mic Icon */}
+                      <button
+                        type="button"
+                        onClick={handleStartVoiceRecording}
+                        className="w-8 h-8 rounded-full flex items-center justify-center transition hover:bg-[var(--bg-card)] active:scale-90 text-rose-400"
+                        title="Record Voice Note"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                        </svg>
+                      </button>
+
+                      {/* Gallery / Image Icon */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (chatImageInputRef.current) {
+                            chatImageInputRef.current.click();
+                          }
+                        }}
+                        className="w-8 h-8 rounded-full flex items-center justify-center transition hover:bg-[var(--bg-card)] active:scale-90"
+                        title="Attach Image"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                      </button>
+
+                      {/* Sticker / Emoji Icon */}
+                      <button
+                        type="button"
+                        onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                        className="w-8 h-8 rounded-full flex items-center justify-center transition hover:bg-[var(--bg-card)] active:scale-90"
+                        title="Emoji & Stickers"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </form>
+            )}
 
 
           </div>
@@ -2511,117 +3500,103 @@ export default function ArenaRoomPage() {
               </div>
             </div>
 
-            {/* ── Proof Submission Composer (shrink-0) ── */}
-            <div
-              className="shrink-0 px-4 py-3"
-              style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-card)" }}
-            >
-              {hasUserSubmittedInActiveWindow() ? (
-                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between gap-3 animate-fade-in">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-                      <CheckCircle2 className="w-5 h-5" />
+            {/* ── Proof Cards Feed (flex-1 scrollable with embedded composer) ── */}
+            <div className="flex-1 min-h-0 overflow-y-auto styled-scroll p-3 sm:p-4 pb-24 lg:pb-6 space-y-4">
+              {/* ── Compact Proof Submission Composer (scrolls upwards with feed) ── */}
+              <div
+                className="rounded-2xl p-3 shadow-sm transition-all"
+                style={{ border: "1px solid var(--border)", background: "var(--bg-card)" }}
+              >
+                {hasUserSubmittedInActiveWindow() ? (
+                  <div className="px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between gap-2 animate-fade-in">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span className="text-xs font-bold text-emerald-400 truncate">Today's Proof Verified! 🎉</span>
+                      <span className="text-[10px] text-emerald-300/80 hidden sm:inline truncate">Habit streak active</span>
                     </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-emerald-400">Today's Proof Verified! 🎉</h4>
-                      <p className="text-[10px] text-emerald-300/80 font-medium">Your habit streak is safe for today.</p>
+                    <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30 shrink-0">✓ Verified</span>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="font-black uppercase tracking-wider text-[var(--fg-muted)] flex items-center gap-1.5">
+                        <span>Submit Today's Proof</span>
+                        {selectedProofPreviewUrl || proofFileName ? (
+                          <span className="text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded">✓ Media Attached</span>
+                        ) : null}
+                      </span>
+                      <span className="font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                        Due {arenaDeadlineTime}
+                      </span>
                     </div>
-                  </div>
-                  <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/20 px-2.5 py-1 rounded-full border border-emerald-500/30">✓ Verified</span>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-black uppercase tracking-wider text-[var(--fg-muted)]">
-                      Submit Today's Proof
-                    </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                      Due {arenaDeadlineTime}
-                    </span>
-                  </div>
 
-                  <input ref={proofFileInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleProofFileSelect} />
+                    <input ref={proofFileInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleProofFileSelect} />
 
-                  {/* 1-Tap Camera Box or Image Selection Preview Box */}
-                  {arenaProofType === "image" && (
-                    <div>
-                      {selectedProofPreviewUrl || proofFileName ? (
-                        <div className="p-3 rounded-2xl bg-[var(--bg-raised)] border border-[var(--accent)]/40 flex items-center justify-between gap-3 animate-fade-in">
-                          <div className="flex items-center gap-3 min-w-0">
-                            {selectedProofPreviewUrl && (
-                              <img
-                                src={selectedProofPreviewUrl}
-                                alt="Selected proof preview"
-                                className="w-12 h-12 rounded-xl object-cover border border-[var(--border)] shrink-0 shadow-sm"
-                              />
-                            )}
-                            <div className="min-w-0">
-                              <p className="text-xs font-bold text-[var(--fg)] truncate">
-                                {proofFileName || "Selected Image"}
-                              </p>
-                              <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1 mt-0.5">
-                                ✓ Ready to submit
+                    <form onSubmit={handleSendProof} className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                      {/* Compact Image File Picker Button / Preview Pill */}
+                      {arenaProofType === "image" && (
+                        <div className="shrink-0">
+                          {selectedProofPreviewUrl || proofFileName ? (
+                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[var(--bg-raised)] border border-[var(--accent)]/40 text-xs font-bold">
+                              {selectedProofPreviewUrl && (
+                                <img
+                                  src={selectedProofPreviewUrl}
+                                  alt="Preview"
+                                  className="w-5 h-5 rounded-md object-cover border border-[var(--border)] shrink-0"
+                                />
+                              )}
+                              <span className="text-[11px] font-bold text-[var(--fg)] max-w-[90px] truncate">
+                                {proofFileName || "Photo"}
                               </span>
+                              <button
+                                type="button"
+                                onClick={() => proofFileInputRef.current?.click()}
+                                className="text-[10px] text-[var(--accent)] hover:underline ml-1 cursor-pointer font-extrabold"
+                              >
+                                Change
+                              </button>
                             </div>
-                          </div>
-
-                          <div className="flex items-center gap-2 shrink-0">
+                          ) : (
                             <button
                               type="button"
                               onClick={() => proofFileInputRef.current?.click()}
-                              className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-[var(--fg-muted)] hover:text-[var(--fg)] bg-[var(--bg-card)] border border-[var(--border)] transition cursor-pointer"
+                              className="px-3 py-1.5 rounded-xl border border-dashed border-[var(--accent)]/50 hover:border-[var(--accent)] bg-[var(--accent)]/10 hover:bg-[var(--accent)]/20 transition flex items-center gap-1.5 text-xs font-bold text-[var(--accent)] cursor-pointer shadow-xs"
                             >
-                              🔄 Change
+                              <Camera className="w-3.5 h-3.5" />
+                              <span>Select Photo/Video 📷</span>
                             </button>
-                          </div>
+                          )}
                         </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => proofFileInputRef.current?.click()}
-                          className="w-full p-4 rounded-2xl border-2 border-dashed border-[var(--accent)]/40 hover:border-[var(--accent)] bg-[var(--accent)]/5 hover:bg-[var(--accent)]/10 transition flex flex-col items-center justify-center gap-2 group cursor-pointer"
-                        >
-                          <div className="w-10 h-10 rounded-2xl bg-[var(--accent)]/20 text-[var(--accent)] flex items-center justify-center group-hover:scale-110 transition shadow-sm">
-                            <Camera className="w-5 h-5" />
-                          </div>
-                          <div className="text-center">
-                            <p className="text-xs font-extrabold text-[var(--fg)]">Tap to Select Photo or Video Proof 📷</p>
-                            <p className="text-[10px] text-[var(--fg-muted)] mt-0.5">Choose file, review preview, and click Submit Proof</p>
-                          </div>
-                        </button>
                       )}
-                    </div>
-                  )}
 
-                  {/* URL or Text Proof Form */}
-                  <form onSubmit={handleSendProof} className="flex items-center gap-2">
-                    <input
-                      type={arenaProofType === "link" ? "url" : "text"}
-                      required={arenaProofType !== "image"}
-                      placeholder={arenaProofType === "image" ? "Or paste image URL link…" : arenaProofType === "link" ? "https://example.com/proof" : "Describe your completed task…"}
-                      className="flex-1 bg-[var(--bg-raised)] border border-[var(--border)] rounded-xl px-3 py-2 text-xs outline-none focus:border-[var(--accent)] transition"
-                      style={{ color: "var(--fg)" }}
-                      value={proofUrl.startsWith("data:") ? "" : proofUrl}
-                      onChange={(e) => setProofUrl(e.target.value)}
-                    />
-                    <button
-                      type="submit"
-                      disabled={!proofUrl.trim()}
-                      className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-[var(--accent)] hover:opacity-90 disabled:opacity-40 transition shadow-sm shrink-0 flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <span>🚀 Submit Proof</span>
-                    </button>
-                  </form>
-                </div>
-              )}
-            </div>
+                      {/* URL or Text Proof Input */}
+                      <input
+                        type={arenaProofType === "link" ? "url" : "text"}
+                        required={arenaProofType !== "image"}
+                        placeholder={arenaProofType === "image" ? "Or paste image URL link…" : arenaProofType === "link" ? "https://example.com/proof" : "Describe your completed task…"}
+                        className="flex-1 min-w-[140px] bg-[var(--bg-raised)] border border-[var(--border)] rounded-xl px-3 py-1.5 text-xs outline-none focus:border-[var(--accent)] transition"
+                        style={{ color: "var(--fg)" }}
+                        value={proofUrl.startsWith("data:") ? "" : proofUrl}
+                        onChange={(e) => setProofUrl(e.target.value)}
+                      />
 
-            {/* ── Proof Cards Feed (flex-1 scrollable) ── */}
-            <div className="flex-1 min-h-0 overflow-y-auto styled-scroll p-3 sm:p-4 pb-24 lg:pb-6 space-y-3">
+                      {/* Submit Button */}
+                      <button
+                        type="submit"
+                        disabled={!proofUrl.trim()}
+                        className="px-3.5 py-1.5 rounded-xl text-xs font-bold text-white bg-[var(--accent)] hover:opacity-90 disabled:opacity-40 transition shadow-sm shrink-0 flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>🚀 Submit</span>
+                      </button>
+                    </form>
+                  </div>
+                )}
+              </div>
+
               {submissions.length === 0 ? (
                 /* Empty State */
                 <div
-                  className="flex flex-col items-center justify-center py-20 text-center px-6 rounded-3xl mt-4 animate-fade-in"
+                  className="flex flex-col items-center justify-center py-20 text-center px-6 rounded-3xl mt-2 animate-fade-in"
                   style={{ border: "2px dashed var(--border)", color: "var(--fg-subtle)" }}
                 >
                   <div
@@ -2636,233 +3611,208 @@ export default function ArenaRoomPage() {
                   <p className="text-xs max-w-xs" style={{ color: "var(--fg-muted)" }}>Be the first to submit your daily proof above and start the accountability chain.</p>
                 </div>
               ) : (
-                /* Two-column grid on desktop, single-column on mobile */
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                /* ── Instagram-Style Feed Cards ── */
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 max-w-4xl mx-auto">
                   {submissions.map((sub) => {
                     const memberCount = arenaMembers.length || 1;
                     const downvotes = sub.downvotes || 0;
                     const upvotes = sub.upvotes || 0;
                     const isRejected = downvotes > Math.floor(memberCount / 2);
                     const isMySubmission = sub.user_id === userId;
+                    const isVotingClosed = isSubmissionVotingExpired(sub.submitted_at, arenaDeadlineTime);
 
                     return (
                       <div
                         key={sub.id}
-                        className="rounded-2xl flex flex-col animate-fade-in transition-all duration-200 hover:translate-y-[-2px]"
+                        className="rounded-2xl flex flex-col animate-fade-in transition-all duration-300 hover:shadow-lg group max-w-md w-full mx-auto"
                         style={{
                           background: "var(--bg-card)",
                           border: isRejected
-                            ? "1.5px solid rgba(239,68,68,0.35)"
-                            : "1.5px solid var(--border)",
-                          boxShadow: isRejected
-                            ? "0 4px 24px rgba(239,68,68,0.08), 0 1px 4px rgba(0,0,0,0.08)"
-                            : "0 4px 24px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04)",
+                            ? "1.5px solid rgba(239,68,68,0.4)"
+                            : "1px solid var(--border)",
+                          boxShadow: "0 4px 20px rgba(0,0,0,0.05)",
                           overflow: "hidden",
                         }}
                       >
-                        {/* ── Card Header: Username + Avatar + Time ── */}
-                        <div
-                          className="flex items-center justify-between px-4 py-3"
-                          style={{ borderBottom: "1px solid var(--border)" }}
-                        >
+                        {/* ── Instagram Post Header ── */}
+                        <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[var(--border)]/60 bg-[var(--bg-card)]">
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="relative shrink-0">
-                              <Avatar name={sub.user_name} imageUrl={sub.user_avatar_url} size={8} />
-                              {isMySubmission && (
-                                <span
-                                  className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full flex items-center justify-center"
-                                  style={{ background: "var(--accent)", border: "1.5px solid var(--bg-card)" }}
-                                >
-                                  <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                                  </svg>
-                                </span>
-                              )}
+                            {/* Instagram Story Gradient Ring */}
+                            <div className="p-[2px] rounded-full bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 shrink-0">
+                              <div className="p-0.5 rounded-full bg-[var(--bg-card)]">
+                                <Avatar name={sub.user_name} imageUrl={sub.user_avatar_url} size={7} />
+                              </div>
                             </div>
                             <div className="min-w-0">
-                              <p
-                                className="text-[12px] font-extrabold truncate leading-tight"
-                                style={{ color: "var(--fg)" }}
-                              >
-                                {sub.user_name}
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs font-black truncate text-[var(--fg)] leading-tight">
+                                  {sub.user_name}
+                                </p>
                                 {isMySubmission && (
-                                  <span className="ml-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: "var(--accent-light)", color: "var(--accent)" }}>You</span>
+                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-md bg-[var(--accent-light)] text-[var(--accent)]">
+                                    You
+                                  </span>
                                 )}
-                              </p>
-                              <p className="text-[10px]" style={{ color: "var(--fg-muted)" }}>
-                                <TimeStr iso={sub.submitted_at} />
+                              </div>
+                              <p className="text-[10px] text-[var(--fg-muted)] flex items-center gap-1 mt-0.5">
+                                <span><TimeStr iso={sub.submitted_at} /></span>
+                                <span>•</span>
+                                <span className="capitalize">{arenaProofType} Proof</span>
                               </p>
                             </div>
                           </div>
 
-                          {/* Status Badge — top right of card header */}
-                          <div className="shrink-0 ml-2">
+                          {/* Instagram Header Badges */}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {isVotingClosed ? (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                                🔒 Closed ({arenaDeadlineTime})
+                              </span>
+                            ) : sub.ai_status === "flagged_suspicious" ? (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                                ⚠️ AI Review
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                🤖 AI Verified
+                              </span>
+                            )}
                             {isRejected ? (
-                              <span
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black"
-                                style={{
-                                  background: "rgba(239,68,68,0.12)",
-                                  color: "#ef4444",
-                                  border: "1px solid rgba(239,68,68,0.3)",
-                                }}
-                              >
-                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                </svg>
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-rose-500/15 text-rose-500 border border-rose-500/30">
                                 Rejected
                               </span>
                             ) : (
-                              <span
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black"
-                                style={{
-                                  background: "rgba(16,185,129,0.12)",
-                                  color: "#10b981",
-                                  border: "1px solid rgba(16,185,129,0.3)",
-                                }}
-                              >
-                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                                </svg>
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                                 Approved
                               </span>
                             )}
                           </div>
                         </div>
 
-                        {/* ── Card Body: Actual Proof Content ── */}
-                        <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
-                          {/* Proof type label */}
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <span
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider"
-                              style={{ background: "var(--bg-raised)", color: "var(--fg-muted)", border: "1px solid var(--border)" }}
+                        {/* ── Instagram Full-Bleed Media / Content Display ── */}
+                        <div className="relative bg-[var(--bg-raised)] overflow-hidden min-h-[110px] flex items-center justify-center">
+                          {isImageUrl(sub.proof_url) ? (
+                            <button
+                              type="button"
+                              onClick={() => { setViewerImageUrl(sub.proof_url); setViewerZoom(1); }}
+                              className="block w-full group/img relative overflow-hidden cursor-pointer"
                             >
-                              {proofIcon(arenaProofType)}
-                              {arenaProofType} proof
-                            </span>
-                          </div>
-
-                          {/* Inner proof panel */}
-                          <div
-                            className="rounded-xl overflow-hidden"
-                            style={{
-                              background: "var(--bg-raised)",
-                              border: "1px solid var(--border)",
-                              minHeight: 64,
-                            }}
-                          >
-                            {isImageUrl(sub.proof_url) ? (
-                              <button
-                                type="button"
-                                onClick={() => { setViewerImageUrl(sub.proof_url); setViewerZoom(1); }}
-                                className="block w-full"
-                              >
-                                <img
-                                  src={sub.proof_url}
-                                  alt={`${sub.user_name}'s proof`}
-                                  className="w-full max-h-64 object-cover transition hover:scale-[1.02] duration-300"
-                                  loading="lazy"
-                                />
-                              </button>
-                            ) : isHttpUrl(sub.proof_url) ? (
-                              <a
-                                href={sub.proof_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="flex items-center gap-3 px-4 py-3 group transition hover:bg-[var(--accent-light)]"
-                              >
-                                <div
-                                  className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-                                  style={{ background: "var(--accent-light)", color: "var(--accent)" }}
-                                >
-                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                                  </svg>
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-[11px] font-bold" style={{ color: "var(--accent)" }}>External Link</p>
-                                  <p className="text-[10px] truncate" style={{ color: "var(--fg-muted)" }}>{sub.proof_url}</p>
-                                </div>
-                                <svg className="w-3.5 h-3.5 shrink-0 opacity-50 group-hover:opacity-100 transition" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} style={{ color: "var(--accent)" }}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                </svg>
-                              </a>
-                            ) : (
-                              <div className="px-4 py-3">
-                                <p
-                                  className="text-sm leading-relaxed"
-                                  style={{ color: "var(--fg)", wordBreak: "break-word", whiteSpace: "pre-wrap" }}
-                                >
+                              <img
+                                src={sub.proof_url}
+                                alt={`${sub.user_name}'s proof`}
+                                className="w-full max-h-[280px] sm:max-h-[320px] object-cover transition-transform duration-500 group-hover/img:scale-[1.02]"
+                                loading="lazy"
+                              />
+                              <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-all flex items-center justify-center">
+                                <span className="opacity-0 group-hover/img:opacity-100 transition-all transform scale-90 group-hover/img:scale-100 px-3 py-1.5 rounded-full bg-black/70 text-white text-xs font-bold backdrop-blur-md shadow-lg flex items-center gap-1.5">
+                                  🔍 Tap to View Full Screen
+                                </span>
+                              </div>
+                            </button>
+                          ) : isHttpUrl(sub.proof_url) ? (
+                            <a
+                              href={sub.proof_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="w-full p-4 sm:p-5 flex flex-col justify-between gap-3 group/link transition-all duration-300 bg-gradient-to-br from-indigo-500/10 via-purple-500/10 to-pink-500/5 hover:from-indigo-500/20 hover:to-pink-500/15 border-y border-[var(--border)]/40 text-left cursor-pointer"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/30 flex items-center gap-1.5 shrink-0">
+                                  🌐 {getDomainName(sub.proof_url)}
+                                </span>
+                                <span className="text-[10px] font-bold text-[var(--fg-muted)] group-hover/link:text-[var(--accent)] transition flex items-center gap-1">
+                                  Open Link <ExternalLink className="w-3 h-3" />
+                                </span>
+                              </div>
+                              <div>
+                                <p className="text-xs font-black text-[var(--fg)] group-hover/link:text-[var(--accent)] transition line-clamp-2 leading-snug">
                                   {sub.proof_url}
                                 </p>
+                                <p className="text-[10px] text-[var(--fg-muted)] mt-1 truncate">
+                                  Tap to view external proof on {getDomainName(sub.proof_url)}
+                                </p>
                               </div>
-                            )}
-                          </div>
+                            </a>
+                          ) : (
+                            <div className="w-full p-4 sm:p-5 relative bg-gradient-to-br from-[var(--bg-card)] via-[var(--bg-raised)] to-[var(--accent)]/5 border-y border-[var(--border)]/40 flex flex-col justify-center min-h-[110px]">
+                              <span className="absolute top-2 right-3 text-4xl select-none opacity-10 font-serif">“</span>
+                              <p className="text-xs sm:text-sm leading-relaxed text-[var(--fg)] font-semibold italic whitespace-pre-wrap relative z-10">
+                                "{sub.proof_url}"
+                              </p>
+                            </div>
+                          )}
                         </div>
 
-                        {/* ── Card Footer: Like / Dislike + Vote Progress ── */}
-                        <div className="px-4 py-2.5 flex items-center justify-between gap-3">
-                          {/* Vote buttons */}
-                          <div className="flex items-center gap-2">
-                            {/* Like button */}
-                            <button
-                              onClick={() => handleVoteSubmission(sub.id, "upvote")}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all duration-150 hover:scale-105 active:scale-95 cursor-pointer"
-                              style={{
-                                background: "rgba(16,185,129,0.10)",
-                                color: "#10b981",
-                                border: "1px solid rgba(16,185,129,0.25)",
-                              }}
-                              title="Approve this proof"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" />
-                              </svg>
-                              <span>{upvotes}</span>
-                            </button>
+                        {/* ── Instagram Action Bar & Votes ── */}
+                        <div className="px-3.5 py-2 space-y-2 bg-[var(--bg-card)] border-t border-[var(--border)]/40">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2.5">
+                              {/* Thumbs Up Button */}
+                              <button
+                                disabled={isVotingClosed}
+                                onClick={() => handleVoteSubmission(sub.id, "upvote")}
+                                className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all duration-200 hover:scale-105 active:scale-95 disabled:opacity-40 disabled:scale-100 disabled:cursor-not-allowed cursor-pointer shadow-xs"
+                                style={{
+                                  background: sub.user_vote === "up" ? "#10b981" : "rgba(16,185,129,0.12)",
+                                  color: sub.user_vote === "up" ? "#ffffff" : "#10b981",
+                                  border: sub.user_vote === "up" ? "1.5px solid #059669" : "1px solid rgba(16,185,129,0.3)",
+                                }}
+                                title={isVotingClosed ? `Voting closed at ${arenaDeadlineTime}` : "Thumbs Up"}
+                              >
+                                <span>👍</span>
+                                <span>{upvotes}</span>
+                              </button>
 
-                            {/* Dislike button */}
+                              {/* Thumbs Down Button */}
+                              <button
+                                disabled={isVotingClosed}
+                                onClick={() => handleVoteSubmission(sub.id, "downvote")}
+                                className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all duration-200 hover:scale-105 active:scale-95 disabled:opacity-40 disabled:scale-100 disabled:cursor-not-allowed cursor-pointer shadow-xs"
+                                style={{
+                                  background: sub.user_vote === "down" ? "#ef4444" : "rgba(239,68,68,0.10)",
+                                  color: sub.user_vote === "down" ? "#ffffff" : "#ef4444",
+                                  border: sub.user_vote === "down" ? "1.5px solid #dc2626" : "1px solid rgba(239,68,68,0.25)",
+                                }}
+                                title={isVotingClosed ? `Voting closed at ${arenaDeadlineTime}` : "Thumbs Down"}
+                              >
+                                <span>👎</span>
+                                <span>{downvotes}</span>
+                              </button>
+                            </div>
+
                             <button
-                              onClick={() => handleVoteSubmission(sub.id, "downvote")}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all duration-150 hover:scale-105 active:scale-95 cursor-pointer"
-                              style={{
-                                background: "rgba(239,68,68,0.08)",
-                                color: "#ef4444",
-                                border: "1px solid rgba(239,68,68,0.22)",
-                              }}
-                              title="Reject this proof"
+                              type="button"
+                              onClick={() => openVotersModal(sub)}
+                              className="text-[10px] font-bold text-[var(--fg-muted)] hover:text-[var(--accent)] hover:underline cursor-pointer transition flex items-center gap-1"
+                              title="View peer voters (anonymous)"
                             >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.096c.5 0 .905-.405.905-.904 0-.715.211-1.413.608-2.008L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5" />
-                              </svg>
-                              <span>{downvotes}</span>
+                              <span>👥 {upvotes + downvotes} peer votes</span>
                             </button>
                           </div>
 
-                          {/* Vote progress bar + rejection threshold info */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-[9px] font-medium" style={{ color: "var(--fg-subtle)" }}>
-                                {upvotes + downvotes} votes
+                          {/* Instagram Caption & Consensus Bar */}
+                          <div className="text-xs pt-1 border-t border-[var(--border)]/30">
+                            <p className="text-[11px] text-[var(--fg-subtle)] leading-snug truncate">
+                              <span className="font-black text-[var(--fg)] mr-1.5">{sub.user_name}</span>
+                              {isImageUrl(sub.proof_url)
+                                ? "submitted daily accountability proof."
+                                : isHttpUrl(sub.proof_url)
+                                  ? `shared external proof link (${getDomainName(sub.proof_url)}).`
+                                  : `submitted proof: "${sub.proof_url}"`}
+                            </p>
+
+                            {/* Consensus status footer indicator */}
+                            <button
+                              type="button"
+                              onClick={() => openVotersModal(sub)}
+                              className="mt-1.5 flex items-center justify-between text-[10px] font-semibold text-[var(--fg-muted)] hover:text-[var(--fg)] cursor-pointer transition w-full text-left"
+                            >
+                              <span>
+                                {isRejected
+                                  ? `❌ Rejected by tribe consensus (>${Math.floor(memberCount / 2)} dislikes)`
+                                  : `✓ Verified by Tribe Consensus • View Voters`}
                               </span>
-                              <span className="text-[9px] font-medium" style={{ color: isRejected ? "#ef4444" : "var(--fg-subtle)" }}>
-                                {isRejected ? `Rejected (needs ≤${Math.floor(memberCount / 2)} dislikes)` : `Threshold: >${Math.floor(memberCount / 2)}`}
-                              </span>
-                            </div>
-                            {/* Progress bar showing downvote ratio */}
-                            {(upvotes + downvotes) > 0 && (
-                              <div className="h-1 rounded-full overflow-hidden" style={{ background: "var(--bg-raised)" }}>
-                                <div
-                                  className="h-full rounded-full transition-all duration-500"
-                                  style={{
-                                    width: `${Math.round((downvotes / (upvotes + downvotes)) * 100)}%`,
-                                    background: isRejected
-                                      ? "linear-gradient(90deg, #ef4444, #f87171)"
-                                      : "linear-gradient(90deg, #10b981, #34d399)",
-                                  }}
-                                />
-                              </div>
-                            )}
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -3099,74 +4049,24 @@ export default function ArenaRoomPage() {
                 </div>
 
                 {/* Quick Actions Row */}
-                <div className="flex items-center justify-center gap-3 w-full pt-2">
-                  <button
-                    onClick={() => {
-                      setShowGroupInfoModal(false);
-                      setShowMobileLedger(true);
-                    }}
-                    className="flex-1 py-2.5 px-3 rounded-2xl flex items-center justify-center gap-2 text-xs font-bold transition hover:opacity-80 active:scale-95"
-                    style={{
-                      background: "var(--accent-light)",
-                      color: "var(--accent)",
-                      border: "1px solid rgba(0,122,204,0.20)",
-                    }}
-                  >
-                    📋 Live Ledger
-                  </button>
-
-                  {arenaInviteCode && (
+                {arenaInviteCode && (
+                  <div className="flex items-center justify-center gap-3 w-full pt-2">
                     <button
                       onClick={() => {
                         navigator.clipboard.writeText(arenaInviteCode);
                         toast.success(`Invite code copied: ${arenaInviteCode}`);
                       }}
-                      className="flex-1 py-2.5 px-3 rounded-2xl flex items-center justify-center gap-2 text-xs font-bold transition hover:opacity-80 active:scale-95"
+                      className="w-full py-2.5 px-4 rounded-2xl flex items-center justify-center gap-2 text-xs font-bold transition hover:opacity-80 active:scale-95 cursor-pointer"
                       style={{
                         background: "var(--bg-raised)",
                         color: "var(--fg)",
                         border: "1px solid var(--border)",
                       }}
                     >
-                      🔗 Copy Code
+                      🔗 Copy Code ({arenaInviteCode})
                     </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Locked Arena Kudos Vault Card */}
-              <div
-                className="rounded-2xl p-4 border border-amber-500/30 bg-gradient-to-r from-amber-950/40 via-slate-900 to-black space-y-3"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400">
-                      <Coins className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-black uppercase tracking-wider text-amber-400">Arena Locked Kudos Vault</h4>
-                      <p className="text-[10px] text-slate-400">Distributed to consistent members every 21 days</p>
-                    </div>
                   </div>
-                  <span className="px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-[10px] font-bold text-amber-300">
-                    🔒 Locked
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
-                  <div className="p-2.5 rounded-xl border border-amber-500/20 bg-slate-900/60">
-                    <span className="text-[10px] block font-semibold text-slate-400">Accumulated Vault</span>
-                    <span className="font-mono font-black text-amber-400 text-sm">{arenaVaultKudos.toLocaleString()} Kudos</span>
-                  </div>
-                  <div className="p-2.5 rounded-xl border border-amber-500/20 bg-slate-900/60">
-                    <span className="text-[10px] block font-semibold text-slate-400">21-Day Cycle Remaining</span>
-                    <span className="font-mono font-black text-emerald-400 text-sm">{kudosDaysRemaining} Days</span>
-                  </div>
-                </div>
-
-                <p className="text-[10px] text-slate-400 italic">
-                  🛡️ <strong>ACID Vault Lock:</strong> Missed daily cutoff penalties automatically transfer into this vault. Neither users nor admins can manually withdraw or transfer funds.
-                </p>
+                )}
               </div>
 
               {/* Group Details Card */}
@@ -3424,6 +4324,74 @@ export default function ArenaRoomPage() {
         </div>
       )}
 
+      {/* ── PEER VOTERS LIST MODAL (ANONYMIZED DISLIKES / UPVOTES) ── */}
+      {showVotersModal && (
+        <div
+          onClick={() => setShowVotersModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"
+          style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-3xl p-5 border shadow-2xl flex flex-col space-y-4 animate-scale-up"
+            style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}
+          >
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+              <div>
+                <h3 className="text-sm font-black text-[var(--fg)] flex items-center gap-2">
+                  👥 Peer Review Voters
+                </h3>
+                <p className="text-[10px] text-[var(--fg-muted)] mt-0.5">
+                  Voter choices are anonymous to protect member privacy.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowVotersModal(false)}
+                className="w-7 h-7 rounded-full bg-[var(--bg-raised)] text-[var(--fg-muted)] hover:text-[var(--fg)] flex items-center justify-center cursor-pointer transition font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto styled-scroll space-y-2 py-1">
+              {loadingVoters ? (
+                <div className="py-8 text-center text-xs text-[var(--fg-muted)] animate-pulse">
+                  Loading voter participation list...
+                </div>
+              ) : votersList.length === 0 ? (
+                <div className="py-8 text-center text-xs text-[var(--fg-muted)]">
+                  No votes cast yet on this proof.
+                </div>
+              ) : (
+                votersList.map((voter) => (
+                  <div
+                    key={voter.user_id}
+                    className="flex items-center justify-between p-2.5 rounded-2xl bg-[var(--bg-raised)] border border-[var(--border)]/50"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Avatar name={voter.user_name} imageUrl={voter.user_avatar_url} size={7} />
+                      <span className="text-xs font-bold text-[var(--fg)] truncate">
+                        {voter.user_name}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 shrink-0">
+                      ✓ Voted
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <button
+              onClick={() => setShowVotersModal(false)}
+              className="w-full py-2.5 rounded-2xl text-xs font-bold text-white bg-[var(--accent)] hover:opacity-90 transition cursor-pointer"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
 
 
       {/* ── REAL-TIME VOICE HUDDLE MODAL OVERLAY ── */}
@@ -3440,71 +4408,161 @@ export default function ArenaRoomPage() {
               <p className="text-xs font-mono text-white/60">{formatCallTime(callDuration)}</p>
             </div>
 
-            {/* Participant Avatar Grid with Glowing Audio Pulse Rings */}
-            <div className="grid grid-cols-2 gap-6 my-4 w-full px-4">
-              {arenaMembers.slice(0, 4).map((member, idx) => (
-                <div key={member.user_id || idx} className="flex flex-col items-center space-y-2">
-                  <div className="relative">
-                    <div className={`p-1 rounded-full ${idx === 0 ? "ring-4 ring-emerald-500/60 animate-pulse" : "ring-2 ring-white/10"}`}>
-                      <Avatar name={member.user_name || member.full_name || "User"} imageUrl={member.user_avatar_url || undefined} size={14} />
-                    </div>
-                    {idx === 0 && (
-                      <span className="absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded-full text-[8px] font-black bg-emerald-500 text-black">
-                        Speaking
-                      </span>
-                    )}
+            {/* WhatsApp-Style Call Participant Cards Grid — Shows ONLY Joined Members */}
+            {(() => {
+              const selfId = getSelfId();
+              const activeIds = Array.from(
+                new Set([
+                  ...(activeCallState?.participants || []).map((p: any) => Number(p)),
+                  ...(selfId ? [selfId] : []),
+                  ...Object.keys(remoteStreamsMap).map((id) => Number(id)),
+                ])
+              ).filter((uid) => Boolean(uid));
+
+              const joinedMembers = activeIds.map((uid) => {
+                const memberObj = arenaMembers.find((m) => m.user_id === uid);
+                const infoObj = (activeCallState?.participants_info || []).find((p: any) => Number(p.user_id) === uid);
+                return {
+                  user_id: uid,
+                  user_name: memberObj?.user_name || memberObj?.full_name || infoObj?.user_name || (uid === selfId ? "You" : `Member #${uid}`),
+                  user_avatar_url: memberObj?.user_avatar_url || null,
+                };
+              });
+
+              const unjoinedMembers = arenaMembers.filter((m) => !activeIds.includes(m.user_id));
+
+              return (
+                <>
+                  <div className="grid grid-cols-2 gap-3 my-2 w-full px-1 max-h-[260px] overflow-y-auto styled-scroll">
+                    {joinedMembers.map((member, idx) => {
+                      const remoteStream = remoteStreamsMap[member.user_id];
+                      const isMe = member.user_id === selfId;
+                      const isMemberMuted = isMe ? isMuted : Boolean(muteMap[member.user_id]);
+                      const isMemberHand = isMe ? isHandRaised : Boolean(handMap[member.user_id]);
+                      const isMemberSpeaking = Boolean(speakingMap[member.user_id]) && !isMemberMuted;
+                      const nameColors = ["text-emerald-400", "text-amber-400", "text-rose-400", "text-blue-400", "text-purple-400", "text-teal-400"];
+
+                      return (
+                        <div
+                          key={member.user_id || idx}
+                          className={`p-3 rounded-2xl transition-all duration-300 flex flex-col justify-between min-h-[105px] relative overflow-hidden ${
+                            isMemberSpeaking
+                              ? "bg-[#1E232F] border-2 border-amber-500/80 shadow-[0_0_20px_rgba(245,158,11,0.25)] scale-102 z-10"
+                              : "bg-[#16181E] border border-white/10"
+                          }`}
+                        >
+                          {remoteStream && <RemoteMediaElement stream={remoteStream} isVideo={false} />}
+
+                          {/* Member Name on Top + Mute/Hand Badges */}
+                          <div className="flex items-center justify-between w-full">
+                            <h4 className={`text-xs font-black truncate max-w-[95px] ${nameColors[idx % nameColors.length]}`}>
+                              {member.user_name}
+                            </h4>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {isMemberHand && <span className="text-xs">✋</span>}
+                              {isMemberMuted && (
+                                <span className="text-[9px] text-red-400 font-extrabold bg-red-500/10 px-1 py-0.2 rounded border border-red-500/20">
+                                  🎙️❌
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Avatar + Analog Audio Signal Waveform Bar */}
+                          <div className="flex items-center justify-between mt-3">
+                            <div className="relative">
+                              <Avatar name={member.user_name} imageUrl={member.user_avatar_url || undefined} size={8} />
+                            </div>
+                            <AnalogAudioSignalIndicator isSpeaking={isMemberSpeaking} volumeLevel={volumeMap[member.user_id] || 0} isMuted={isMemberMuted} />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <span className="text-xs font-bold text-white/90 truncate max-w-[100px]">
-                    {member.user_name || member.full_name || "Member"}
-                  </span>
-                </div>
-              ))}
-            </div>
+
+                  {/* Ring Unjoined Arena Members Drawer */}
+                  {unjoinedMembers.length > 0 && (
+                    <div className="w-full text-left bg-white/5 rounded-2xl p-2.5 border border-white/5 space-y-1.5">
+                      <p className="text-[10px] font-bold text-white/50 uppercase tracking-wider px-1">Ring Arena Members ({unjoinedMembers.length})</p>
+                      <div className="flex items-center gap-2 overflow-x-auto py-1 px-1 styled-scroll">
+                        {unjoinedMembers.map((m) => (
+                          <button
+                            key={m.user_id}
+                            type="button"
+                            onClick={() => handleRingMember(m)}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 border border-white/10 text-[11px] font-bold text-white shrink-0 active:scale-95 transition cursor-pointer"
+                            title={`Ring ${m.user_name}`}
+                          >
+                            <Avatar name={m.user_name || "Member"} imageUrl={m.user_avatar_url || undefined} size={5} />
+                            <span className="truncate max-w-[70px]">{m.user_name || "Member"}</span>
+                            <span className="text-amber-400 text-xs">🔔</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Voice Control Buttons */}
-            <div className="flex items-center justify-center gap-4 pt-2 w-full">
-              {/* Mute Toggle */}
-              <button
-                type="button"
-                onClick={() => setIsMuted(!isMuted)}
-                className={`w-12 h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isMuted ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-white/10 text-white border border-white/10"
-                  }`}
-                title={isMuted ? "Unmute Mic" : "Mute Mic"}
-              >
-                {isMuted ? "🎙️❌" : "🎙️"}
-              </button>
+            <div className="flex flex-col items-center gap-3 pt-2 w-full">
+              <div className="flex items-center justify-center gap-4 w-full">
+                {/* Mute Toggle */}
+                <button
+                  type="button"
+                  onClick={toggleLocalMute}
+                  className={`w-12 h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isMuted ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-white/10 text-white border border-white/10"
+                    }`}
+                  title={isMuted ? "Unmute Mic" : "Mute Mic"}
+                >
+                  {isMuted ? "🎙️❌" : "🎙️"}
+                </button>
 
-              {/* Speaker Toggle */}
-              <button
-                type="button"
-                onClick={() => setIsSpeakerOn(!isSpeakerOn)}
-                className={`w-12 h-12 rounded-full flex items-center justify-center transition active:scale-90 ${!isSpeakerOn ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-white/10 text-white border border-white/10"
-                  }`}
-                title="Speaker Toggle"
-              >
-                {isSpeakerOn ? "🔊" : "🔇"}
-              </button>
+                {/* Speaker Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setIsSpeakerOn(!isSpeakerOn)}
+                  className={`w-12 h-12 rounded-full flex items-center justify-center transition active:scale-90 ${!isSpeakerOn ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-white/10 text-white border border-white/10"
+                    }`}
+                  title="Speaker Toggle"
+                >
+                  {isSpeakerOn ? "🔊" : "🔇"}
+                </button>
 
-              {/* Hand Raise */}
-              <button
-                type="button"
-                onClick={() => setIsHandRaised(!isHandRaised)}
-                className={`w-12 h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isHandRaised ? "bg-amber-500/20 text-amber-400 border border-amber-500/40" : "bg-white/10 text-white border border-white/10"
-                  }`}
-                title="Raise Hand"
-              >
-                ✋
-              </button>
+                {/* Hand Raise */}
+                <button
+                  type="button"
+                  onClick={toggleHandRaise}
+                  className={`w-12 h-12 rounded-full flex items-center justify-center transition active:scale-90 ${isHandRaised ? "bg-amber-500/20 text-amber-400 border border-amber-500/40" : "bg-white/10 text-white border border-white/10"
+                    }`}
+                  title="Raise Hand"
+                >
+                  ✋
+                </button>
 
-              {/* End Call Button */}
-              <button
-                type="button"
-                onClick={handleEndCall}
-                className="w-14 h-14 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center shadow-lg shadow-red-600/50 active:scale-90 transition font-bold cursor-pointer"
-                title="End Voice Huddle"
-              >
-                📞
-              </button>
+                {/* Leave Call Button */}
+                <button
+                  type="button"
+                  onClick={handleEndCall}
+                  className="w-14 h-14 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center shadow-lg shadow-red-600/50 active:scale-90 transition font-bold cursor-pointer"
+                  title="Leave Voice Huddle"
+                >
+                  📞
+                </button>
+              </div>
+
+              {/* Call Host Force End Call Button — only shows for call starter OR arena admin */}
+              {(isAdmin || (activeCallState?.caller_id && activeCallState.caller_id === getSelfId())) && (
+                <button
+                  type="button"
+                  onClick={handleForceEndCall}
+                  className="w-full py-2 rounded-xl bg-red-950/60 border border-red-500/40 text-red-300 hover:bg-red-900/80 text-[11px] font-black transition active:scale-95 cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+                  title="End Call for Everyone in Arena"
+                >
+                  <span>🔴 End Call for Everyone (Host)</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -3564,86 +4622,263 @@ export default function ArenaRoomPage() {
               </div>
             </div>
 
-            {/* Subscribed Arena Members Video Stream Tiles */}
-            {arenaMembers
-              .filter((m) => m.user_id !== userId)
-              .slice(0, 3)
-              .map((member, idx) => (
-                <div
-                  key={member.user_id || idx}
-                  className="relative rounded-3xl overflow-hidden bg-[#16181E] border border-white/10 shadow-xl flex flex-col items-center justify-center min-h-[220px] group"
-                >
-                  <div className="flex flex-col items-center justify-center space-y-3 p-6 text-center">
-                    <div className="relative p-1 rounded-full ring-2 ring-emerald-400/80">
-                      <Avatar name={member.user_name || member.full_name || "User"} imageUrl={member.user_avatar_url || undefined} size={16} />
-                    </div>
-                    <p className="text-xs font-extrabold text-white">
-                      {member.user_name || member.full_name || "Member"}
-                    </p>
-                    <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                      Stream Connected
-                    </span>
-                  </div>
+            {/* Subscribed Joined Members Video Stream Tiles */}
+            {(() => {
+              const selfId = getSelfId();
+              const activeIds = Array.from(
+                new Set([
+                  ...(activeCallState?.participants || []).map((p: any) => Number(p)),
+                  ...(selfId ? [selfId] : []),
+                  ...Object.keys(remoteStreamsMap).map((id) => Number(id)),
+                ])
+              ).filter((uid) => uid && uid !== selfId);
 
-                  <div className="absolute bottom-3 left-3 px-3 py-1 rounded-full bg-black/70 backdrop-blur-md text-[10px] font-bold text-white flex items-center gap-1.5 border border-white/10">
-                    <span>{member.user_name || member.full_name || "Member"}</span>
+              const remoteJoinedMembers = activeIds.map((uid) => {
+                const memberObj = arenaMembers.find((m) => m.user_id === uid);
+                const infoObj = (activeCallState?.participants_info || []).find((p: any) => Number(p.user_id) === uid);
+                return {
+                  user_id: uid,
+                  user_name: memberObj?.user_name || memberObj?.full_name || infoObj?.user_name || `Member #${uid}`,
+                  user_avatar_url: memberObj?.user_avatar_url || null,
+                };
+              });
+
+              return remoteJoinedMembers.map((member, idx) => {
+                const remoteStream = remoteStreamsMap[member.user_id];
+                const isMemberMuted = Boolean(muteMap[member.user_id]);
+                const isMemberHand = Boolean(handMap[member.user_id]);
+
+                return (
+                  <div
+                    key={member.user_id || idx}
+                    className="relative rounded-3xl overflow-hidden bg-[#16181E] border border-white/10 shadow-xl flex flex-col items-center justify-center min-h-[220px] group"
+                  >
+                    {remoteStream ? (
+                      <RemoteMediaElement stream={remoteStream} isVideo={true} />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center space-y-3 p-6 text-center">
+                        <div className="relative p-1 rounded-full ring-2 ring-emerald-400/80">
+                          <Avatar name={member.user_name} imageUrl={member.user_avatar_url || undefined} size={16} />
+                        </div>
+                        <p className="text-xs font-extrabold text-white">
+                          {member.user_name}
+                        </p>
+                        <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                          <span>Connecting Media Stream...</span>
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md text-[10px] font-bold text-white border border-white/10 z-10">
+                      <span className="truncate">{member.user_name}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {isMemberHand && <span className="text-xs">✋</span>}
+                        {isMemberMuted ? (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-red-500/20 text-red-300 border border-red-500/40 shrink-0">
+                            🎙️❌ Muted
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0">
+                            🟢 In Call
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              });
+            })()}
           </div>
 
+
           {/* Floating WhatsApp/Instagram Style Bottom Action Bar */}
-          <div className="px-6 py-4 bg-[#12141A]/90 border-t border-white/10 backdrop-blur-xl flex items-center justify-center gap-4 shrink-0 shadow-2xl">
-            {/* Mic Button */}
-            <button
-              type="button"
-              onClick={toggleMicTrack}
-              className={`w-13 h-13 rounded-2xl flex items-center justify-center text-lg transition active:scale-95 shadow-md cursor-pointer ${!isMicOn ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-white/10 text-white border border-white/15 hover:bg-white/20"
-                }`}
-              title={isMicOn ? "Mute Microphone" : "Unmute Microphone"}
-            >
-              {isMicOn ? "🎙️" : "🎙️❌"}
-            </button>
+          <div className="px-6 py-4 bg-[#12141A]/90 border-t border-white/10 backdrop-blur-xl flex flex-col items-center gap-3 shrink-0 shadow-2xl">
+            <div className="flex items-center justify-center gap-4 w-full">
+              {/* Mic Button */}
+              <button
+                type="button"
+                onClick={toggleLocalMute}
+                className={`w-13 h-13 rounded-2xl flex items-center justify-center text-lg transition active:scale-95 shadow-md cursor-pointer ${isMuted ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-white/10 text-white border border-white/15 hover:bg-white/20"
+                  }`}
+                title={isMuted ? "Unmute Microphone" : "Mute Microphone"}
+              >
+                {isMuted ? "🎙️❌" : "🎙️"}
+              </button>
 
-            {/* Camera Button */}
-            <button
-              type="button"
-              onClick={toggleCameraTrack}
-              className={`w-13 h-13 rounded-2xl flex items-center justify-center text-lg transition active:scale-95 shadow-md cursor-pointer ${!isCamOn ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-white/10 text-white border border-white/15 hover:bg-white/20"
-                }`}
-              title={isCamOn ? "Turn Off Camera" : "Turn On Camera"}
-            >
-              {isCamOn ? "📹" : "📹❌"}
-            </button>
+              {/* Camera Button */}
+              <button
+                type="button"
+                onClick={toggleCameraTrack}
+                className={`w-13 h-13 rounded-2xl flex items-center justify-center text-lg transition active:scale-95 shadow-md cursor-pointer ${!isCamOn ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-white/10 text-white border border-white/15 hover:bg-white/20"
+                  }`}
+                title={isCamOn ? "Turn Off Camera" : "Turn On Camera"}
+              >
+                {isCamOn ? "📹" : "📹❌"}
+              </button>
 
-            {/* Raise Hand Button */}
-            <button
-              type="button"
-              onClick={() => setIsHandRaised(!isHandRaised)}
-              className={`w-13 h-13 rounded-2xl flex items-center justify-center text-lg transition active:scale-95 shadow-md cursor-pointer ${isHandRaised ? "bg-amber-500/20 text-amber-400 border border-amber-500/40" : "bg-white/10 text-white border border-white/15 hover:bg-white/20"
-                }`}
-              title="Raise Hand"
-            >
-              ✋
-            </button>
+              {/* Speaker Button */}
+              <button
+                type="button"
+                onClick={() => setIsSpeakerOn(!isSpeakerOn)}
+                className={`w-13 h-13 rounded-2xl flex items-center justify-center text-lg transition active:scale-95 shadow-md cursor-pointer ${!isSpeakerOn ? "bg-red-500/20 text-red-400 border border-red-500/40" : "bg-white/10 text-white border border-white/15 hover:bg-white/20"
+                  }`}
+                title="Speaker Toggle"
+              >
+                {isSpeakerOn ? "🔊" : "🔇"}
+              </button>
 
-            {/* Red Pill End Call Button */}
-            <button
-              type="button"
-              onClick={handleEndCall}
-              className="w-16 h-13 rounded-2xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white flex items-center justify-center shadow-lg shadow-red-600/40 active:scale-95 transition font-black cursor-pointer text-xl"
-              title="End Video Call"
-            >
-              📞
-            </button>
+              {/* Raise Hand Button */}
+              <button
+                type="button"
+                onClick={toggleHandRaise}
+                className={`w-13 h-13 rounded-2xl flex items-center justify-center text-lg transition active:scale-95 shadow-md cursor-pointer ${isHandRaised ? "bg-amber-500/20 text-amber-400 border border-amber-500/40" : "bg-white/10 text-white border border-white/15 hover:bg-white/20"
+                  }`}
+                title="Raise Hand"
+              >
+                ✋
+              </button>
+
+              {/* Red Pill Leave Call Button */}
+              <button
+                type="button"
+                onClick={handleEndCall}
+                className="w-16 h-13 rounded-2xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white flex items-center justify-center shadow-lg shadow-red-600/40 active:scale-95 transition font-black cursor-pointer text-xl"
+                title="Leave Video Call"
+              >
+                📞
+              </button>
+            </div>
+
+            {/* Host / Admin Force End Video Call Button */}
+            {(isAdmin || (activeCallState?.caller_id && activeCallState.caller_id === getSelfId())) && (
+              <button
+                type="button"
+                onClick={handleForceEndCall}
+                className="w-full max-w-sm py-2 rounded-xl bg-red-950/60 border border-red-500/40 text-red-300 hover:bg-red-900/80 text-[11px] font-black transition active:scale-95 cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+                title="End Video Call for Everyone in Arena"
+              >
+                <span>🔴 End Video Call for Everyone (Host)</span>
+              </button>
+            )}
           </div>
         </div>
       )}
+      {/* ── MONTHLY LOG BOOK MODAL ── */}
+      {showLogBookModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in">
+          <div
+            className="w-full max-w-lg rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col max-h-[85vh] border overflow-hidden"
+            style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-[var(--border)] shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-amber-500/15 text-amber-500 flex items-center justify-center font-bold text-lg">
+                  📖
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-[var(--fg)]">Monthly Arena Log Book</h3>
+                  <p className="text-[11px] text-[var(--fg-muted)]">Proof history, missed cutoffs & Kudos distribution</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLogBookModal(false)}
+                className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold bg-[var(--bg-raised)] text-[var(--fg-muted)] hover:text-[var(--fg)] transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto styled-scroll py-4 space-y-4">
+              {/* Summary Stats Grid */}
+              <div className="grid grid-cols-3 gap-2.5">
+                <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-center">
+                  <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-wider">Submitted</p>
+                  <p className="text-lg font-black text-emerald-400 mt-0.5">{submissions.length}</p>
+                </div>
+                <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-center">
+                  <p className="text-[10px] font-bold text-rose-500 uppercase tracking-wider">Rejected / Missed</p>
+                  <p className="text-lg font-black text-rose-400 mt-0.5">
+                    {submissions.filter(s => (s.downvotes || 0) > Math.floor((arenaMembers.length || 1) / 2) || s.is_absent).length}
+                  </p>
+                </div>
+                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-center">
+                  <p className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">Vault Kudos</p>
+                  <p className="text-lg font-black text-amber-400 mt-0.5">
+                    {arenaVaultKudos.toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              {/* Member Detailed Monthly Breakdown */}
+              <div className="space-y-2.5">
+                <h4 className="text-xs font-black uppercase tracking-wider text-[var(--fg-muted)]">
+                  Member Accountability Breakdown
+                </h4>
+
+                {arenaMembers.map((m) => {
+                  const memberSubs = submissions.filter(s => s.user_id === m.user_id);
+                  const memberRejected = memberSubs.filter(s => (s.downvotes || 0) > Math.floor((arenaMembers.length || 1) / 2)).length;
+                  const memberAbsent = memberSubs.filter(s => s.is_absent).length;
+                  const memberApproved = memberSubs.length - memberRejected - memberAbsent;
+
+                  return (
+                    <div
+                      key={m.user_id}
+                      className="p-3.5 rounded-2xl bg-[var(--bg-raised)] border border-[var(--border)]/60 flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Avatar name={m.full_name} imageUrl={m.user_avatar_url} size={9} />
+                        <div className="min-w-0">
+                          <p className="text-xs font-black text-[var(--fg)] truncate">{m.full_name}</p>
+                          <p className="text-[10px] text-[var(--fg-muted)] flex items-center gap-2 mt-0.5">
+                            <span className="text-emerald-400 font-bold">✓ {memberApproved} Approved</span>
+                            <span>•</span>
+                            <span className="text-rose-400 font-bold">❌ {memberRejected} Rejected</span>
+                            <span>•</span>
+                            <span className="text-amber-400 font-bold">⚠️ {memberAbsent} Missed</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <span className="text-xs font-black text-amber-400">
+                          🪙 {memberApproved * 100} Kudos
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="pt-3 border-t border-[var(--border)] shrink-0 text-center">
+              <button
+                type="button"
+                onClick={() => setShowLogBookModal(false)}
+                className="w-full py-2.5 rounded-2xl font-black text-xs bg-[var(--accent)] text-white hover:opacity-90 active:scale-95 transition cursor-pointer shadow-md"
+              >
+                Close Log Book
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Kudos Economy Wallet & Cashout Modal */}
       <KudosWalletModal
         isOpen={showKudosModal}
         onClose={() => setShowKudosModal(false)}
+        arenaVaultKudos={arenaVaultKudos}
+        kudosDaysRemaining={kudosDaysRemaining}
+        arenaVaultTransactions={arenaVaultTransactions}
+        arenaLeaderboard={arenaLeaderboard}
+        onDistributeRewards={handleDistributeRewards}
+        isAdmin={isAdmin}
       />
     </div>
   );

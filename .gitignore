@@ -1,0 +1,41 @@
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE & Editor settings
+.vscode/
+.idea/
+
+# Environment files
+.env
+.env.local
+
+# Node / Frontend
+node_modules/
+frontend/.next/
+frontend/node_modules/
+*.tsbuildinfo
+
+# Python / Backend
+__pycache__/
+*.pyc
+backend/venv/
+backend/__pycache__/
+backend/scratch/
+
+# Docker & logs
+*.log
+
+# Internal audit, interview, and handover markdown docs (ignore future local changes)
+ANTIGRAVITY_TASKS.md
+architectural_audit_and_roadmap.md
+CHANGELOG_RESPONSIVE_AND_THEME.md
+INTERVIEW_CROSS_QUESTIONS.md
+INTERVIEW_QA_AND_PITCH.md
+project_audit_and_evaluation.md
+PROJECT_FILE_WISE_SUMMARY.md
+PROJECT_HANDOVER_GUIDE.md
+resources.md
+TRIBELY_COMPLETE_PROJECT_GUIDE.md
+TRIBELY_END_USER_WORKFLOW_GUIDE.md
+

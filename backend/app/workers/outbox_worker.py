@@ -16,13 +16,13 @@ logger = logging.getLogger(__name__)
 
 async def process_outbox_events_job(ctx: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Process unprocessed transactional outbox events.
+    Process unprocessed transactional outbox events using FOR UPDATE SKIP LOCKED.
     """
     processed_count = 0
     with SessionLocal() as db:
         unprocessed_events = db.query(OutboxEvent).filter(
             OutboxEvent.processed == False
-        ).order_by(OutboxEvent.created_at.asc()).limit(50).all()
+        ).order_by(OutboxEvent.created_at.asc()).with_for_update(skip_locked=True).limit(50).all()
 
         for event in unprocessed_events:
             try:
@@ -37,3 +37,4 @@ async def process_outbox_events_job(ctx: Dict[str, Any]) -> Dict[str, Any]:
             db.commit()
 
     return {"status": "completed", "processed_events": processed_count}
+

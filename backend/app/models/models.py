@@ -1,6 +1,6 @@
 import datetime
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, Numeric, ForeignKey, Text, UniqueConstraint, MetaData, Float
+    Column, Integer, String, Boolean, DateTime, Numeric, ForeignKey, Text, UniqueConstraint, MetaData, Float, Index
 )
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -114,8 +114,19 @@ class Submission(Base):
     downvotes = Column(Integer, default=0, nullable=False)
     is_absent = Column(Boolean, default=False, index=True, nullable=False)
 
+    # AI Verification Metrics
+    ai_confidence_score = Column(Float, default=0.95, nullable=True)
+    ai_status = Column(String, default="verified", nullable=True)  # "verified", "flagged_suspicious", "rejected"
+    ai_audit_notes = Column(Text, nullable=True)
+
     arena = relationship("Arena", back_populates="submissions")
     user = relationship("User", back_populates="submissions")
+
+    __table_args__ = (
+        Index('idx_arena_created', 'arena_id', 'submitted_at'),
+        Index('idx_user_submissions', 'user_id', 'submitted_at'),
+    )
+
 
 
 class SubmissionVote(Base):
@@ -172,11 +183,14 @@ class OutboxEvent(Base):
     processed = Column(Boolean, default=False, index=True, nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, index=True, server_default=func.now())
 
+    __table_args__ = (
+        Index('idx_outbox_unprocessed', 'processed', 'created_at'),
+    )
+
 
 class EscrowLedger(Base):
     """
-    Double-Entry Bookkeeping Ledger schema enforcing direct INR currency tracking.
-    Columns: id, arena_id, user_id, debit_account, credit_account, amount_inr, entry_type, idempotency_key, created_at.
+    Double-Entry Bookkeeping Ledger schema enforcing direct Tribes currency tracking.
     """
     __tablename__ = "escrow_ledger"
 
@@ -185,60 +199,103 @@ class EscrowLedger(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
     debit_account = Column(String, nullable=False)
     credit_account = Column(String, nullable=False)
-    amount_inr = Column(Float, default=0.0, nullable=False)
+    amount_tribes = Column(Float, default=0.0, nullable=False)
     entry_type = Column(String, nullable=False, default="penalty_accrual")
-    razorpay_payment_id = Column(String, nullable=True, index=True)
     idempotency_key = Column(String, unique=True, index=True, nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
 
+    @property
+    def amount_inr(self) -> float:
+        return self.amount_tribes
+
+    @amount_inr.setter
+    def amount_inr(self, value: float) -> None:
+        self.amount_tribes = value
+
 
 class ArenaPool(Base):
     """
-    Accumulated reserve pool, reward pool, and locked Kudos reserve vault for an Arena.
-    Columns: id, arena_id, reserve_pool_inr, reward_pool_inr, total_penalties_count, kudos_reserve_vault, cycle_start_date, cycle_days_count, updated_at.
+    Accumulated reserve pool, reward pool, and locked Tribes reserve vault for an Arena.
     """
     __tablename__ = "arena_pools"
 
     id = Column(Integer, primary_key=True, index=True)
     arena_id = Column(Integer, ForeignKey("arenas.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
-    reserve_pool_inr = Column(Float, default=0.0, nullable=False)
-    reward_pool_inr = Column(Float, default=0.0, nullable=False)
+    reserve_pool_tribes = Column(Float, default=0.0, nullable=False)
+    reward_pool_tribes = Column(Float, default=0.0, nullable=False)
+    tribes_reserve_vault = Column(Float, default=0.0, nullable=False)
     total_penalties_count = Column(Integer, default=0, nullable=False)
-    kudos_reserve_vault = Column(Float, default=0.0, nullable=False)
     cycle_start_date = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
     cycle_days_count = Column(Integer, default=21, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, server_default=func.now())
 
     arena = relationship("Arena")
 
+    @property
+    def reserve_pool_inr(self) -> float:
+        return self.reserve_pool_tribes
+
+    @reserve_pool_inr.setter
+    def reserve_pool_inr(self, value: float) -> None:
+        self.reserve_pool_tribes = value
+
+    @property
+    def reward_pool_inr(self) -> float:
+        return self.reward_pool_tribes
+
+    @reward_pool_inr.setter
+    def reward_pool_inr(self, value: float) -> None:
+        self.reward_pool_tribes = value
+
+    @property
+    def kudos_reserve_vault(self) -> float:
+        return self.tribes_reserve_vault
+
+    @kudos_reserve_vault.setter
+    def kudos_reserve_vault(self, value: float) -> None:
+        self.tribes_reserve_vault = value
+
 
 class UserWallet(Base):
     """
-    User accumulated wallet balance, Kudos digital currency, UPI AutoPay mandate, and RazorpayX payout tracking.
-    Columns: id, user_id, balance_inr, kudos_balance, last_reward_won_at, razorpay_customer_id, mandate_id, mandate_status, upi_vpa, pending_penalty.
+    User wallet balance in Tribes currency, freeze state engine, and referral tracking.
     """
     __tablename__ = "user_wallets"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
-    balance_inr = Column(Float, default=0.0, nullable=False)
-    kudos_balance = Column(Float, default=1000.0, nullable=False)
+    tribes_balance = Column(Float, default=1000.0, nullable=False)
+    is_frozen = Column(Boolean, default=False, nullable=False)
+    referral_count = Column(Integer, default=0, nullable=False)
+    streak_shields = Column(Integer, default=1, nullable=False)
     last_reward_won_at = Column(DateTime(timezone=True), nullable=True)
-    razorpay_customer_id = Column(String, nullable=True)
-    mandate_id = Column(String, nullable=True, index=True)
-    mandate_status = Column(String, default="active", nullable=False)
-    upi_vpa = Column(String, nullable=True)
     pending_penalty = Column(Boolean, default=False, nullable=False)
 
     user = relationship("User", back_populates="wallet")
+
+    @property
+    def kudos_balance(self) -> float:
+        return self.tribes_balance
+
+    @kudos_balance.setter
+    def kudos_balance(self, value: float) -> None:
+        self.tribes_balance = value
+
+    @property
+    def balance_inr(self) -> float:
+        return self.tribes_balance
+
+    @balance_inr.setter
+    def balance_inr(self, value: float) -> None:
+        self.tribes_balance = value
 
 
 
 class KudosLedger(Base):
     """
-    Double-Entry Ledger tracking all Kudos digital currency transactions.
-    Types: WELCOME_BONUS, PENALTY_DEDUCTION, ARENA_VAULT_DEPOSIT, CONSISTENCY_PAYOUT, KUDOS_PURCHASE, KUDOS_WITHDRAWAL.
+    Double-Entry Ledger tracking all Tribes digital currency transactions.
+    Types: WELCOME_BONUS, PENALTY_DEDUCTION, ARENA_VAULT_DEPOSIT, CONSISTENCY_PAYOUT, REFERRAL_BONUS.
     """
     __tablename__ = "kudos_ledger"
 
@@ -249,10 +306,13 @@ class KudosLedger(Base):
     amount_kudos = Column(Float, nullable=False)
     debit_account = Column(String, nullable=False)
     credit_account = Column(String, nullable=False)
-    razorpay_payment_id = Column(String, nullable=True, index=True)
-    razorpay_payout_id = Column(String, nullable=True, index=True)
     idempotency_key = Column(String, unique=True, index=True, nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+
+# Export Notification Domain Models
+from app.models.notification_models import Notification, PushSubscription, ArenaUnreadTracker
+
+
 
 

@@ -72,7 +72,7 @@ class SlidingWindowRateLimiter:
             return False, remaining, window_seconds
 
         except Exception as e:
-            logger.error(f"Redis rate limiter error for key {key}: {e}")
+            logger.debug(f"Redis rate limiter bypassed (Redis unavailable): {e}")
             # Fallback to allow request if Redis fails
             return False, max_requests, window_seconds
 

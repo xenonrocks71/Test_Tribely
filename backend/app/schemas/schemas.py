@@ -123,9 +123,13 @@ class SubmissionResponse(BaseModel):
     proof_url: str
     is_verified: bool
     submitted_at: datetime.datetime
+    ai_confidence_score: Optional[float] = 0.95
+    ai_status: Optional[str] = "verified"
+    ai_audit_notes: Optional[str] = None
 
     class Config:
         from_attributes = True
+
 
 
 # --- MESSAGE SCHEMAS ---
@@ -139,6 +143,49 @@ class MessageResponse(BaseModel):
     user_id: int
     content: str
     message_type: str
+    created_at: datetime.datetime
+
+    class Config:
+        from_attributes = True
+
+
+# --- WALLET & TRIBES ECONOMY SCHEMAS ---
+class UserWalletResponse(BaseModel):
+    id: int
+    user_id: int
+    tribes_balance: float = Field(..., description="Current wallet balance in Tribes currency")
+    is_frozen: bool = Field(..., description="Whether wallet is frozen due to negative balance")
+    referral_count: int = Field(..., description="Total completed successful referrals")
+    last_reward_won_at: Optional[datetime.datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ArenaPoolResponse(BaseModel):
+    id: int
+    arena_id: int
+    reserve_pool_tribes: float
+    reward_pool_tribes: float
+    tribes_reserve_vault: float
+    total_penalties_count: int
+    cycle_days_count: int = 21
+    updated_at: datetime.datetime
+
+    class Config:
+        from_attributes = True
+
+
+class EscrowLedgerResponse(BaseModel):
+    id: int
+    arena_id: int
+    user_id: Optional[int] = None
+    debit_account: str
+    credit_account: str
+    amount_tribes: float
+    entry_type: str
+    idempotency_key: str
+    description: Optional[str] = None
     created_at: datetime.datetime
 
     class Config:

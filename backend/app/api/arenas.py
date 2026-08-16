@@ -108,7 +108,6 @@ def request_membership_gatekeeper(
 
         # Broadcast real-time WebSocket notification so admin sees pending join request instantly
         from app.core.managers.websocket_manager import websocket_manager
-        import asyncio
         join_payload = {
             "event_type": "join_request_created",
             "arena_id": arena.id,
@@ -117,14 +116,7 @@ def request_membership_gatekeeper(
             "status": membership.status,
             "is_private": arena.is_private,
         }
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(websocket_manager.broadcast_to_arena(arena.id, join_payload))
-            else:
-                loop.run_until_complete(websocket_manager.broadcast_to_arena(arena.id, join_payload))
-        except Exception:
-            pass
+        websocket_manager.safe_broadcast_to_arena(arena.id, join_payload)
 
         return success_response({
             "room_state": membership.status,
@@ -160,7 +152,6 @@ def create_new_arena(arena_in: ArenaCreate, db: Session = Depends(get_db), curre
     return success_response(ArenaResponse.model_validate(created_arena, from_attributes=True).model_dump())
 
 @router.post("/join", response_model=ApiSuccessResponse)
-@router.post("/join-by-code", response_model=ApiSuccessResponse)
 def join_arena_by_invite(payload: MembershipCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
     Joins an existing arena using auto-generated 6-character alphanumeric invite code.
@@ -181,6 +172,7 @@ def list_my_arenas(db: Session = Depends(get_db), current_user: User = Depends(g
     """
     Retrieves all accountability arenas the authenticated user has joined or created,
     sorted by recent activity (chat messages, proof submissions, join dates) descending (WhatsApp order).
+    Optimized to O(1) query complexity to prevent N+1 query bottlenecks.
     """
     memberships = db.query(ArenaMembership).filter(ArenaMembership.user_id == current_user.id).all()
     membership_map = {m.arena_id: m for m in memberships}
@@ -188,6 +180,33 @@ def list_my_arenas(db: Session = Depends(get_db), current_user: User = Depends(g
     arena_ids = list(membership_map.keys())
     arenas = db.query(Arena).filter(Arena.id.in_(arena_ids)).all() if arena_ids else []
     
+    # Efficient O(1) batch query optimization to eliminate N+1 loop queries
+    latest_messages: Dict[int, Message] = {}
+    latest_submissions: Dict[int, Submission] = {}
+    
+    if arena_ids:
+        all_msgs = (
+            db.query(Message)
+            .filter(Message.arena_id.in_(arena_ids))
+            .options(joinedload(Message.user))
+            .order_by(Message.arena_id, Message.created_at.desc())
+            .all()
+        )
+        for msg in all_msgs:
+            if msg.arena_id not in latest_messages:
+                latest_messages[msg.arena_id] = msg
+
+        all_subs = (
+            db.query(Submission)
+            .filter(Submission.arena_id.in_(arena_ids))
+            .options(joinedload(Submission.user))
+            .order_by(Submission.arena_id, Submission.submitted_at.desc())
+            .all()
+        )
+        for sub in all_subs:
+            if sub.arena_id not in latest_submissions:
+                latest_submissions[sub.arena_id] = sub
+
     arena_payload = []
     for arena in arenas:
         item = ArenaResponse.model_validate(arena, from_attributes=True).model_dump()
@@ -195,17 +214,8 @@ def list_my_arenas(db: Session = Depends(get_db), current_user: User = Depends(g
         item["membership_status"] = mem.status if mem else "approved"
         item["user_role"] = mem.role if mem else ("admin" if arena.creator_id == current_user.id else "member")
 
-        # Query latest chat message
-        latest_msg = db.query(Message)\
-            .filter(Message.arena_id == arena.id)\
-            .order_by(Message.created_at.desc())\
-            .first()
-
-        # Query latest proof submission
-        latest_sub = db.query(Submission)\
-            .filter(Submission.arena_id == arena.id)\
-            .order_by(Submission.submitted_at.desc())\
-            .first()
+        latest_msg = latest_messages.get(arena.id)
+        latest_sub = latest_submissions.get(arena.id)
 
         msg_time = latest_msg.created_at if latest_msg else None
         sub_time = latest_sub.submitted_at if latest_sub else None
@@ -271,27 +281,16 @@ def join_arena_by_code(payload: dict, db: Session = Depends(get_db), current_use
         
     membership = arena_service.join_arena(db, user_id=current_user.id, arena_id=arena.id)
     
-    # Broadcast real-time join_request event
-    try:
-        import asyncio
-        from app.core.managers.websocket_manager import websocket_manager
-        join_payload = {
-            "event_type": "join_request",
-            "arena_id": arena.id,
-            "user_id": current_user.id,
-            "user_name": current_user.full_name,
-            "status": membership.status
-        }
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(websocket_manager.broadcast_to_arena(arena.id, join_payload))
-            else:
-                loop.run_until_complete(websocket_manager.broadcast_to_arena(arena.id, join_payload))
-        except Exception:
-            pass
-    except Exception:
-        pass
+    # Broadcast real-time join_request event safely
+    from app.core.managers.websocket_manager import websocket_manager
+    join_payload = {
+        "event_type": "join_request",
+        "arena_id": arena.id,
+        "user_id": current_user.id,
+        "user_name": current_user.full_name,
+        "status": membership.status
+    }
+    websocket_manager.safe_broadcast_to_arena(arena.id, join_payload)
 
     msg = "Join request submitted successfully. Awaiting admin approval." if membership.status == "pending" else "Joined arena successfully."
     return success_response({"detail": msg, "arena_id": arena.id, "membership_status": membership.status})
@@ -301,6 +300,7 @@ def get_arena_members_list(arena_id: int, db: Session = Depends(get_db)):
     """
     Fetches all approved active members inside an arena room alongside 
     pre-calculated total arena room overlap metrics.
+    Optimized with SQL group-by aggregation to prevent loop queries.
     """
     try:
         memberships = db.query(ArenaMembership)\
@@ -311,14 +311,29 @@ def get_arena_members_list(arena_id: int, db: Session = Depends(get_db)):
         arena_obj = db.query(Arena).filter(Arena.id == arena_id).first()
         creator_id = arena_obj.creator_id if arena_obj else None
 
+        user_ids = [member.user_id for member in memberships if member.user]
+        counts_map = {}
+        if user_ids:
+            counts_query = (
+                db.query(
+                    ArenaMembership.user_id,
+                    func.count(ArenaMembership.id).label("cnt")
+                )
+                .filter(
+                    ArenaMembership.user_id.in_(user_ids),
+                    ArenaMembership.status == "approved"
+                )
+                .group_by(ArenaMembership.user_id)
+                .all()
+            )
+            counts_map = {row.user_id: row.cnt for row in counts_query}
+
         results = []
         for member in memberships:
             if not member.user:
                 continue
                 
-            common_count = db.query(ArenaMembership)\
-                .filter(ArenaMembership.user_id == member.user_id, ArenaMembership.status == "approved")\
-                .count()
+            common_count = counts_map.get(member.user_id, 1)
 
             results.append({
                 "user_id": member.user_id,

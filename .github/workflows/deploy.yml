@@ -1,0 +1,116 @@
+name: Tribely Production CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  backend-audit-and-test:
+    name: Backend Test Suite & Smoke Audit
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tribely_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Backend Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run Backend Unit & Integration Tests
+        env:
+          POSTGRES_SERVER: localhost
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tribely_db
+          POSTGRES_PORT: 5432
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          ENVIRONMENT: testing
+          SECRET_KEY: ci_cd_testing_secret_key_tribely_2026
+        run: |
+          cd backend
+          python run_tests.py
+
+      - name: Run Pre-Deployment Automated Smoke Test
+        env:
+          POSTGRES_SERVER: localhost
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tribely_db
+          POSTGRES_PORT: 5432
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+        run: |
+          python backend/scripts/pre_deploy_smoke_test.py
+
+  frontend-build-check:
+    name: Frontend Next.js Production Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Execute Next.js Production Build
+        run: |
+          cd frontend
+          npm run build
+
+  docker-container-verification:
+    name: Production Docker Containers Build Verification
+    needs: [backend-audit-and-test, frontend-build-check]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Test Build Production Docker Compose Services
+        run: |
+          docker compose -f docker-compose.prod.yml build

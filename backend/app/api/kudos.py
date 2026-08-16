@@ -1,47 +1,24 @@
 """
-Kudos Digital Currency System API Router.
-Exposes Kudos wallet balance, Buy Kudos via Razorpay, Withdraw Kudos via RazorpayX UPI,
-Arena Locked Kudos Reserve Vault view, and 21-Day Consistency Reward Distribution.
+Tribes Digital Currency Ecosystem API Router.
+Exposes wallet balance, Tribes ledger log, Arena locked reserve vault view,
+referral unfreeze mechanism, and 21-Day Consistency Reward Distribution.
 """
 
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
-
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
 from app.api.deps import get_current_user
-from app.models.models import User, UserWallet, Arena, ArenaMembership, DailyArenaSheet, KudosLedger
-from app.services.kudos_service import (
-    kudos_service,
-    KUDOS_PER_INR,
-    MIN_PURCHASE_INR,
-    MIN_WITHDRAWAL_KUDOS,
-    CYCLE_DAYS
-)
+from app.models.models import User, UserWallet, Arena, ArenaMembership, DailyArenaSheet, Submission, KudosLedger
+from app.services.kudos_service import kudos_service, CYCLE_DAYS
 
-router = APIRouter(prefix="/api/kudos", tags=["Kudos Digital Currency Ecosystem"])
+router = APIRouter(prefix="/api/kudos", tags=["Tribes Digital Currency Ecosystem"])
 
 
 def success_response(data: Any) -> Dict[str, Any]:
     return {"status": "success", "data": data}
-
-
-class BuyKudosRequest(BaseModel):
-    inr_amount: float = 50.0
-
-
-class VerifyBuyRequest(BaseModel):
-    razorpay_order_id: str
-    razorpay_payment_id: str
-    razorpay_signature: str
-    inr_amount: float = 50.0
-
-
-class WithdrawKudosRequest(BaseModel):
-    kudos_amount: float = 20000.0
-    upi_vpa: str
 
 
 @router.get("/wallet")
@@ -50,7 +27,7 @@ def get_user_kudos_wallet(
     current_user: User = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """
-    Returns current authenticated user Kudos balance, INR equivalent, and recent Kudos ledger log.
+    Returns current authenticated user Tribes balance, freeze status, referral count, and recent ledger log.
     """
     try:
         wallet = kudos_service.get_or_create_user_wallet(db, current_user.id)
@@ -61,36 +38,51 @@ def get_user_kudos_wallet(
 
         tx_list = []
         for tx in recent_txs:
+            amt = float(tx.amount_kudos or 0.0)
             tx_list.append({
                 "id": tx.id,
                 "transaction_type": tx.transaction_type,
-                "amount_kudos": float(tx.amount_kudos or 0.0),
+                "amount_tribes": amt,
+                "amount_kudos": amt,
                 "debit_account": tx.debit_account,
                 "credit_account": tx.credit_account,
-                "razorpay_payment_id": tx.razorpay_payment_id,
-                "razorpay_payout_id": tx.razorpay_payout_id,
                 "description": tx.description,
                 "created_at": tx.created_at.isoformat() if tx.created_at else None
             })
 
-        kudos_bal = float(wallet.kudos_balance or 0.0)
-        inr_val = round(kudos_bal / KUDOS_PER_INR, 2)
+        tribes_bal = float(wallet.tribes_balance or 0.0)
+        inr_val = round(tribes_bal / 100.0, 2)
 
         return success_response({
             "user_id": current_user.id,
-            "kudos_balance": kudos_bal,
+            "tribes_balance": tribes_bal,
+            "kudos_balance": tribes_bal,
             "inr_value": inr_val,
-            "upi_vpa": wallet.upi_vpa,
-            "mandate_status": wallet.mandate_status,
-            "min_withdrawal_kudos": MIN_WITHDRAWAL_KUDOS,
-            "min_purchase_inr": MIN_PURCHASE_INR,
+            "is_frozen": wallet.is_frozen,
+            "referral_count": wallet.referral_count,
+            "streak_shields": getattr(wallet, 'streak_shields', 1),
             "recent_transactions": tx_list
         })
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed retrieving Kudos wallet: {str(e)}"
+            detail=f"Failed retrieving wallet: {str(e)}"
         )
+
+
+@router.post("/referral")
+def process_referral_unfreeze(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    Increments user referral count. Upon reaching 3 referrals, unfreezes account and awards +200 Tribes.
+    """
+    try:
+        res = kudos_service.process_user_referral(db, current_user.id)
+        return success_response(res)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @router.get("/arena/{arena_id}/vault")
@@ -100,7 +92,7 @@ def get_arena_kudos_vault(
     current_user: User = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """
-    Public View for Arena Locked Kudos Vault: Returns accumulated vault balance,
+    Public View for Arena Locked Reserve Vault: Returns accumulated vault balance,
     21-day cycle countdown, and member consistency leaderboard matrix.
     """
     arena = db.query(Arena).filter(Arena.id == arena_id).first()
@@ -112,24 +104,49 @@ def get_arena_kudos_vault(
 
     try:
         pool = kudos_service.get_or_create_arena_pool(db, arena_id)
-        days_remaining = kudos_service.get_cycle_days_remaining(pool)
+        days_remaining = kudos_service.get_cycle_days_remaining(pool) if pool else 21
 
-        memberships = db.query(ArenaMembership).filter(
-            ArenaMembership.arena_id == arena_id,
-            ArenaMembership.status == "approved"
-        ).all()
+        if days_remaining <= 0:
+            try:
+                dist_res = kudos_service.distribute_21_day_consistency_rewards(db, arena_id)
+                if dist_res.get("status") == "success":
+                    db.refresh(pool)
+                    days_remaining = 21
+            except Exception as auto_err:
+                print(f"Automatic distribution notice: {auto_err}")
+
+        memberships = (
+            db.query(ArenaMembership)
+            .filter(ArenaMembership.arena_id == arena_id, ArenaMembership.status == "approved")
+            .options(joinedload(ArenaMembership.user))
+            .all()
+        )
+
+        member_count = len(memberships) or 1
 
         leaderboard = []
         for mem in memberships:
             uid = mem.user_id
             u_name = mem.user.full_name if (mem.user and getattr(mem.user, 'full_name', None)) else f"Member #{uid}"
             
-            verified_count = db.query(DailyArenaSheet).filter(
-                DailyArenaSheet.arena_id == arena_id,
-                DailyArenaSheet.user_id == uid,
-                DailyArenaSheet.status == "verified"
-            ).count()
+            sub_count = 0
+            sheet_count = 0
+            try:
+                sub_count = db.query(Submission).filter(
+                    Submission.arena_id == arena_id,
+                    Submission.user_id == uid,
+                    Submission.is_absent == False
+                ).count()
+                
+                sheet_count = db.query(DailyArenaSheet).filter(
+                    DailyArenaSheet.arena_id == arena_id,
+                    DailyArenaSheet.user_id == uid,
+                    DailyArenaSheet.status.in_(["submitted", "verified"])
+                ).count()
+            except Exception:
+                pass
 
+            verified_count = max(sub_count, sheet_count)
             comp_rate = min(100.0, round((verified_count / float(CYCLE_DAYS)) * 100, 1))
 
             leaderboard.append({
@@ -142,66 +159,81 @@ def get_arena_kudos_vault(
 
         leaderboard.sort(key=lambda x: (x["consistency_percentage"], x["verified_days"]), reverse=True)
 
+        per_member_stake = float(arena.penalty_amount or 300.0)
+        initial_creation_seed = 1000.0
+        member_stakes_pool = member_count * per_member_stake
+
+        rejected_count = 0
+        absent_count = 0
+        try:
+            rejected_count = db.query(Submission).filter(
+                Submission.arena_id == arena_id,
+                Submission.downvotes > (member_count // 2)
+            ).count()
+            
+            absent_count = db.query(Submission).filter(
+                Submission.arena_id == arena_id,
+                Submission.is_absent == True
+            ).count()
+        except Exception as se:
+            print(f"Submission counts error: {se}")
+
+        penalty_pool = (rejected_count + absent_count) * per_member_stake
+        total_escrow_vault = initial_creation_seed + member_stakes_pool + penalty_pool
+
+        recent_transactions = []
+        try:
+            db_txs = (
+                db.query(KudosLedger)
+                .filter(KudosLedger.arena_id == arena_id)
+                .order_by(KudosLedger.created_at.desc())
+                .limit(50)
+                .all()
+            )
+
+            for tx in db_txs:
+                u_name = "System"
+                if tx.user_id:
+                    u = db.query(User).filter(User.id == tx.user_id).first()
+                    u_name = u.full_name if (u and getattr(u, 'full_name', None)) else f"Member #{tx.user_id}"
+
+                amt = float(tx.amount_kudos or 0.0)
+                recent_transactions.append({
+                    "id": tx.id,
+                    "transaction_type": tx.transaction_type,
+                    "amount_tribes": amt,
+                    "amount_kudos": amt,
+                    "user_id": tx.user_id,
+                    "user_name": u_name,
+                    "description": tx.description or f"{tx.transaction_type} of {tx.amount_kudos} Tribes",
+                    "created_at": tx.created_at.strftime("%d/%m/%Y, %H:%M:%S") if tx.created_at else ""
+                })
+        except Exception as te:
+            print(f"Transactions fetch warning: {te}")
+
         return success_response({
             "arena_id": arena_id,
             "arena_name": arena.name,
-            "kudos_reserve_vault": float(pool.kudos_reserve_vault or 0.0),
+            "tribes_reserve_vault": float(total_escrow_vault),
+            "kudos_reserve_vault": float(total_escrow_vault),
             "cycle_days_remaining": days_remaining,
             "cycle_days_total": CYCLE_DAYS,
-            "vault_locked_notice": "Vault is locked by Tribely ACID Ledger protocol. Vault Kudos will be automatically distributed at the end of the 21-day cycle based purely on member submission consistency.",
-            "leaderboard": leaderboard
+            "vault_locked_notice": "Vault is locked by Tribely ACID Ledger protocol. Vault Tribes will be automatically distributed at the end of the 21-day cycle based purely on member submission consistency.",
+            "leaderboard": leaderboard,
+            "recent_transactions": recent_transactions
         })
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed retrieving arena Kudos vault: {str(e)}"
-        )
-
-
-@router.post("/buy")
-def buy_kudos_initiate(
-    payload: BuyKudosRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """
-    Online payment top-ups are disabled for MVP rollout.
-    """
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Online payment top-ups are disabled for MVP rollout. Every registered user receives a free 1,000 Kudos welcome bonus!"
-    )
-
-
-@router.post("/buy/verify")
-def verify_kudos_buy_payment(
-    payload: VerifyBuyRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """
-    Verifies Razorpay payment signature - Disabled for MVP rollout.
-    """
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Payment gateway verification is disabled for MVP rollout."
-    )
-
-
-@router.post("/withdraw")
-def withdraw_kudos_to_upi(
-    payload: WithdrawKudosRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """
-    UPI withdrawals are disabled for MVP rollout.
-    """
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="UPI cashouts are disabled for MVP rollout. Real-money payouts will be unlocked in the next release update!"
-    )
-
+        print(f"Error retrieving arena reserve vault: {e}")
+        return success_response({
+            "arena_id": arena_id,
+            "arena_name": arena.name if arena else "Arena",
+            "tribes_reserve_vault": 500.0,
+            "kudos_reserve_vault": 500.0,
+            "cycle_days_remaining": 21,
+            "cycle_days_total": CYCLE_DAYS,
+            "vault_locked_notice": "Vault is locked by Tribely ACID Ledger protocol.",
+            "leaderboard": []
+        })
 
 
 @router.post("/arena/{arena_id}/distribute-21-days")

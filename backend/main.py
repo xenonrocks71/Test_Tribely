@@ -4,6 +4,9 @@ from fastapi import FastAPI
 from app.core.database import engine, Base
 from app.models import models
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 from app.core.config import settings
 from app.api import (
     auth,
@@ -18,21 +21,42 @@ from app.api import (
     huddle,
     bot_webhook,
     ledger,
-    payments,
     kudos,
+    notifications,
+    health,
 )
-
-
 
 
 import os
 from fastapi.staticfiles import StaticFiles
 
+is_prod = settings.ENVIRONMENT.lower() == "production"
+
+if is_prod and (not settings.SECRET_KEY or settings.SECRET_KEY == "tribely_super_secret_jwt_key_2026"):
+    raise ValueError("CRITICAL SECURITY ERROR: Non-default high-entropy SECRET_KEY must be set in production mode!")
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="Tribely Backend - Social Accountability Micro-Arena Engine",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url=None if is_prod else "/docs",
+    redoc_url=None if is_prod else "/redoc",
+    openapi_url=None if is_prod else "/openapi.json"
 )
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Enforces standard HTTP security response headers."""
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Ensure static uploads directory exists and mount static files route
 os.makedirs("static/uploads", exist_ok=True)
@@ -44,23 +68,37 @@ Base.metadata.create_all(bind=engine)
 try:
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE arenas ADD COLUMN IF NOT EXISTS icon_url TEXT;"))
+        conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS tribes_balance DOUBLE PRECISION DEFAULT 1000.0;"))
+        conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN DEFAULT FALSE;"))
+        conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS referral_count INT DEFAULT 0;"))
+        conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS streak_shields INT DEFAULT 1;"))
+        conn.execute(text("ALTER TABLE user_wallets ALTER COLUMN balance_inr DROP NOT NULL;"))
+        conn.execute(text("ALTER TABLE user_wallets ALTER COLUMN kudos_balance DROP NOT NULL;"))
+        conn.execute(text("ALTER TABLE user_wallets ALTER COLUMN mandate_status DROP NOT NULL;"))
+        conn.execute(text("ALTER TABLE escrow_ledger ADD COLUMN IF NOT EXISTS amount_tribes DOUBLE PRECISION DEFAULT 0.0;"))
+        conn.execute(text("ALTER TABLE escrow_ledger ALTER COLUMN amount_inr DROP NOT NULL;"))
+        conn.execute(text("ALTER TABLE arena_pools ADD COLUMN IF NOT EXISTS reserve_pool_tribes DOUBLE PRECISION DEFAULT 0.0;"))
+        conn.execute(text("ALTER TABLE arena_pools ADD COLUMN IF NOT EXISTS reward_pool_tribes DOUBLE PRECISION DEFAULT 0.0;"))
+        conn.execute(text("ALTER TABLE arena_pools ADD COLUMN IF NOT EXISTS tribes_reserve_vault DOUBLE PRECISION DEFAULT 0.0;"))
+        conn.execute(text("ALTER TABLE arena_pools ALTER COLUMN reserve_pool_inr DROP NOT NULL;"))
+        conn.execute(text("ALTER TABLE arena_pools ALTER COLUMN reward_pool_inr DROP NOT NULL;"))
+        conn.execute(text("ALTER TABLE arena_pools ALTER COLUMN kudos_reserve_vault DROP NOT NULL;"))
         conn.commit()
 except Exception as _e:
     pass
 
+
 from app.core.rate_limiter import RateLimiterMiddleware
 
-# Configure CORS & Rate Limiting for local IP testing, localhost, and production domains
+# Configure CORS & Rate Limiting for production & development environments
 app.add_middleware(RateLimiterMiddleware, requests_per_minute=200)
+
+allowed_origins = settings.ALLOWED_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-    ],
-    allow_origin_regex=r"https?://.*",
+    allow_origins=allowed_origins,
+    allow_origin_regex=None if is_prod else r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -80,10 +118,9 @@ app.include_router(escrow.router)
 app.include_router(huddle.router)
 app.include_router(bot_webhook.router)
 app.include_router(ledger.router)
-app.include_router(payments.router)
+app.include_router(notifications.router)
 app.include_router(kudos.router)
-
-
+app.include_router(health.router, prefix="/api")
 
 
 @app.get("/", tags=["Health"])
@@ -95,5 +132,4 @@ def health_check():
     }
 
 if __name__ == "__main__":
-    # 0.0.0.0 binds FastAPI to all network interfaces (Localhost + Wi-Fi IP)
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

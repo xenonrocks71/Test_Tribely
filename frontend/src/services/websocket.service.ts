@@ -50,12 +50,13 @@ export class WebSocketService {
       console.warn(`[WebSocket] Disconnected from Arena #${arenaId}`);
       if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
         this.reconnectAttempts += 1;
-        console.log(`[WebSocket] Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
+        const delayMs = Math.min(30000, 1000 * Math.pow(2, this.reconnectAttempts) + Math.random() * 1000);
+        console.log(`[WebSocket] Reconnecting attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${Math.round(delayMs)}ms...`);
         setTimeout(() => {
           if (this.arenaId && this.token) {
             this.connect(this.arenaId, this.token);
           }
-        }, this.reconnectIntervalMs);
+        }, delayMs);
       }
     };
 

@@ -74,6 +74,25 @@ class RoomConnectionPool:
         for stale in stale_connections:
             self.remove(stale)
 
+    async def broadcast_except(self, exclude_ws: Optional[WebSocket], message: Dict[str, Any]) -> None:
+        """
+        Broadcast JSON payload to all room connections EXCEPT the specified sender socket.
+        """
+        payload = json.dumps(message)
+        stale_connections = []
+        connections_snapshot = list(self.active_connections)
+        for connection in connections_snapshot:
+            if exclude_ws and connection == exclude_ws:
+                continue
+            try:
+                await connection.send_text(payload)
+            except Exception:
+                stale_connections.append(connection)
+
+        for stale in stale_connections:
+            self.remove(stale)
+
+
 
 class RedisPubSubManager:
     """
@@ -157,10 +176,39 @@ class WebSocketManager:
     def __init__(self) -> None:
         """Initialize global WebSocket manager with empty room pools map."""
         self._rooms: Dict[int, RoomConnectionPool] = {}
+        self.user_connections: Dict[int, Set[WebSocket]] = {}
         self.pubsub_manager: RedisPubSubManager = RedisPubSubManager()
         self._listener_tasks: Dict[int, asyncio.Task] = {}
 
+    async def connect_user(self, websocket: WebSocket, user_id: int) -> None:
+        """Accept and register user-scoped WebSocket for real-time notifications."""
+        await websocket.accept()
+        if user_id not in self.user_connections:
+            self.user_connections[user_id] = set()
+        self.user_connections[user_id].add(websocket)
+
+    def disconnect_user(self, websocket: WebSocket, user_id: int) -> None:
+        """Remove user-scoped WebSocket."""
+        if user_id in self.user_connections:
+            self.user_connections[user_id].discard(websocket)
+            if not self.user_connections[user_id]:
+                del self.user_connections[user_id]
+
+    async def broadcast_to_user(self, user_id: int, message: Dict[str, Any]) -> None:
+        """Broadcast payload to all active WebSockets owned by target user."""
+        if user_id in self.user_connections:
+            payload = json.dumps(message)
+            stale = []
+            for ws in list(self.user_connections[user_id]):
+                try:
+                    await ws.send_text(payload)
+                except Exception:
+                    stale.append(ws)
+            for ws in stale:
+                self.user_connections[user_id].discard(ws)
+
     def _get_or_create_room(self, arena_id: int) -> RoomConnectionPool:
+
         """Retrieve existing room pool or instantiate new room pool."""
         if arena_id not in self._rooms:
             self._rooms[arena_id] = RoomConnectionPool(room_id=arena_id)
@@ -226,6 +274,27 @@ class WebSocketManager:
             channel = f"arena:{arena_id}"
             await self.pubsub_manager.publish(channel, message)
 
+    async def broadcast_to_arena_except(
+        self,
+        arena_id: int,
+        exclude_ws: Optional[WebSocket],
+        exclude_user_id: Optional[int],
+        message: Dict[str, Any]
+    ) -> None:
+        """
+        Broadcast payload to all connected clients inside arena EXCEPT the initiating sender socket / user ID.
+        """
+        if arena_id in self._rooms:
+            await self._rooms[arena_id].broadcast_except(exclude_ws, message)
+
+        if self.pubsub_manager._is_connected:
+            channel = f"arena:{arena_id}"
+            msg_copy = dict(message)
+            if exclude_user_id:
+                msg_copy["_exclude_user_id"] = exclude_user_id
+            await self.pubsub_manager.publish(channel, msg_copy)
+
+
     def get_active_connection_count(self, arena_id: int) -> int:
         """
         Get count of active connections for a given arena.
@@ -237,6 +306,22 @@ class WebSocketManager:
             return len(self._rooms[arena_id].active_connections)
         return 0
 
+    def safe_broadcast_to_arena(self, arena_id: int, message: Dict[str, Any]) -> None:
+        """
+        Safely broadcast a message payload to an arena from either synchronous or asynchronous thread contexts.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.broadcast_to_arena(arena_id, message))
+        except RuntimeError:
+            try:
+                asyncio.run(self.broadcast_to_arena(arena_id, message))
+            except Exception as err:
+                print(f"[WebSocketManager] safe_broadcast_to_arena sync execution error: {err}")
+        except Exception as err:
+            print(f"[WebSocketManager] safe_broadcast_to_arena task error: {err}")
+
 
 # Global Singleton Instance for WebSocket Manager
 websocket_manager = WebSocketManager()
+

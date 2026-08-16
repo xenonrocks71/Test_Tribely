@@ -14,8 +14,11 @@ import {
 } from "lucide-react";
 
 import KudosWalletModal from "@/components/KudosWalletModal";
-
+import { initPushNotifications } from "../utils/pushNotification";
+import { useNotifications } from "../context/NotificationContext";
 import Image from "next/image";
+
+
 
 interface Arena {
   id: number;
@@ -207,9 +210,14 @@ function DashboardContent() {
     }
   };
 
+  // Consume global real-time WhatsApp notification context
+  const { unreadCounts } = useNotifications();
+
   useEffect(() => {
     fetchKudosBalance();
   }, []);
+
+
 
 
   // Zero-delay instant cache pre-hydration on mount
@@ -748,24 +756,34 @@ function DashboardContent() {
                     style={{ background: isPending ? "var(--warning)" : "var(--accent-gradient)" }}
                   />
 
-                  {/* TOP HEADER: Arena Name */}
+                  {/* TOP HEADER: Arena Name & Unread Counter Badge */}
                   <div className="flex items-center justify-between gap-2 pt-1 mb-3">
-                    <h3
-                      className="font-extrabold text-base sm:text-lg tracking-tight truncate group-hover:text-[var(--accent)] transition"
-                      style={{
-                        color: "var(--fg)",
-                        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", sans-serif',
-                        letterSpacing: "-0.015em"
-                      }}
-                    >
-                      {arena.name}
-                    </h3>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <h3
+                        className="font-extrabold text-base sm:text-lg tracking-tight truncate group-hover:text-[var(--accent)] transition"
+                        style={{
+                          color: "var(--fg)",
+                          fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", sans-serif',
+                          letterSpacing: "-0.015em"
+                        }}
+                      >
+                        {arena.name}
+                      </h3>
+
+                      {unreadCounts[arena.id] > 0 && !isPending && (
+                        <span className="shrink-0 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md animate-pulse">
+                          {unreadCounts[arena.id] > 99 ? "99+" : `${unreadCounts[arena.id]} new`}
+                        </span>
+                      )}
+                    </div>
+
                     {arena.is_private && (
                       <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-slate-900/10 dark:bg-white/10 font-bold shrink-0">
                         <Lock className="w-2.5 h-2.5" /> Private
                       </span>
                     )}
                   </div>
+
 
                   {/* MAIN SPLIT: Left Circular DP Alone (Centered) | Right Details Box */}
                   <div className="flex gap-4 items-center flex-1">

@@ -10,8 +10,10 @@ from app.api.deps import get_current_user
 from app.models.models import Arena, Submission, Message, User, UserProfile, ArenaMembership, SubmissionVote, DailyArenaSheet, UserWallet
 
 from app.api.websocket import manager as websocket_manager
+from app.core.managers.active_calls_registry import active_calls_registry
 from app.schemas.schemas import MessageCreate
 from app.repositories.activity_repository import activity_repository
+
 
 router = APIRouter(prefix="/api/activity", tags=["Activity & History Logs"])
 
@@ -102,11 +104,7 @@ def validate_proof_content(proof_type: str, proof_content: str) -> str:
 
 def broadcast_ledger_event(arena_id: int, payload: Dict[str, Any]) -> None:
     """Broadcasts real-time events to all connected clients in the arena WebSocket channel."""
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(websocket_manager.broadcast_to_arena(arena_id, payload))
-    except Exception:
-        pass
+    websocket_manager.safe_broadcast_to_arena(arena_id, payload)
 
 
 class SubmissionCreate(BaseModel):
@@ -204,6 +202,10 @@ def submit_proof(
                 }
             )
 
+        # Execute Multimodal AI Proof Verification & Anti-Cheat Audit
+        from app.services.ai_verifier import ai_proof_auditor
+        ai_audit = ai_proof_auditor.audit_submission(arena.proof_type, proof_content)
+
         new_submission = Submission(
             arena_id=payload.arena_id,
             proof_url=proof_content,
@@ -211,7 +213,10 @@ def submit_proof(
             submitted_at=submission_time,
             upvotes=0,
             downvotes=0,
-            is_absent=False
+            is_absent=False,
+            ai_confidence_score=ai_audit.get("confidence_score", 0.95),
+            ai_status="verified" if ai_audit.get("anti_cheat_passed", True) else "flagged_suspicious",
+            ai_audit_notes=ai_audit.get("audit_message", "AI proof audit complete.")
         )
         db.add(new_submission)
         db.commit()
@@ -246,10 +251,31 @@ def submit_proof(
                     "submitted_at": str(new_submission.submitted_at),
                     "upvotes": 0,
                     "downvotes": 0,
-                    "is_absent": False
+                    "is_absent": False,
+                    "ai_confidence_score": new_submission.ai_confidence_score,
+                    "ai_status": new_submission.ai_status,
+                    "ai_audit_notes": new_submission.ai_audit_notes
                 }
             },
         )
+
+        # Dispatch Pub/Sub notifications & unread badge counters for proof submission
+        try:
+            from app.services.notification_service import notification_service
+            uploader_name = current_user.full_name or f"Member #{current_user.id}"
+            notification_service.publish_arena_event_notification(
+                db,
+                arena_id=payload.arena_id,
+                sender_id=current_user.id,
+                event_type="proof_submission",
+                title=f"🎉 Daily Proof Posted in {arena.name}",
+                body=f"{uploader_name} submitted daily verification proof!",
+                data_json={"arena_id": payload.arena_id, "url": f"/arena/{payload.arena_id}"}
+            )
+        except Exception:
+            pass
+
+
 
         return success_response({
             "message": "Proof registered successfully",
@@ -269,6 +295,17 @@ def submit_proof(
                 "error_code": "SUBMISSION_FAILED"
             }
         )
+
+
+def get_submission_voting_deadline(submission_time: datetime, deadline_str: str) -> datetime:
+    """Calculates the exact voting window expiration cutoff for a given submission timestamp."""
+    sub_dt = make_naive(submission_time) or datetime.utcnow()
+    deadline_time_obj = parse_arena_deadline(deadline_str)
+    same_day_cutoff = datetime.combine(sub_dt.date(), deadline_time_obj)
+    if sub_dt <= same_day_cutoff:
+        return same_day_cutoff
+    else:
+        return same_day_cutoff + timedelta(days=1)
 
 
 def execute_vote_logic(
@@ -292,34 +329,74 @@ def execute_vote_logic(
                 detail={"status": "error", "message": "Target submission not found.", "error_code": "SUBMISSION_NOT_FOUND"}
             )
 
+        arena = db.query(Arena).filter(Arena.id == submission.arena_id).first()
+        if not arena:
+            raise HTTPException(
+                status_code=404,
+                detail={"status": "error", "message": "Associated arena room not found.", "error_code": "ARENA_NOT_FOUND"}
+            )
+
+        # 1. Enforce voting deadline constraint (voting locked after daily reset)
+        voting_cutoff = get_submission_voting_deadline(submission.submitted_at, arena.deadline_time)
+        now_naive = make_naive(datetime.utcnow())
+        if now_naive > voting_cutoff:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "status": "error",
+                    "message": f"Voting window closed. Proof voting for this cycle ended at {arena.deadline_time}.",
+                    "error_code": "VOTING_WINDOW_CLOSED"
+                }
+            )
+
         voter_id = current_user.id
         if submission.upvotes is None: submission.upvotes = 0
         if submission.downvotes is None: submission.downvotes = 0
 
+        # 2. Check existing vote record for vote toggle / vote switching / single vote enforcement
         existing_vote = db.query(SubmissionVote).filter(
             SubmissionVote.submission_id == submission_id,
             SubmissionVote.user_id == voter_id
         ).first()
 
+        user_vote_res = None
+
         if existing_vote:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "status": "error",
-                    "message": "Your vote transaction on this proof is permanent and irreversible.",
-                    "error_code": "VOTE_IRREVERSIBLE"
-                }
-            )
-
-        new_vote = SubmissionVote(submission_id=submission_id, user_id=voter_id, vote_type=norm_vote)
-        db.add(new_vote)
-        if norm_vote == "up":
-            submission.upvotes += 1
+            if existing_vote.vote_type == norm_vote:
+                # User clicked their current vote choice again -> Toggle off / un-vote!
+                if norm_vote == "up":
+                    submission.upvotes = max(0, submission.upvotes - 1)
+                else:
+                    submission.downvotes = max(0, submission.downvotes - 1)
+                db.delete(existing_vote)
+                msg = "Vote removed."
+                user_vote_res = None
+            else:
+                # Switch vote from previous choice to new choice
+                if existing_vote.vote_type == "up" and norm_vote == "down":
+                    submission.upvotes = max(0, submission.upvotes - 1)
+                    submission.downvotes += 1
+                elif existing_vote.vote_type == "down" and norm_vote == "up":
+                    submission.downvotes = max(0, submission.downvotes - 1)
+                    submission.upvotes += 1
+                
+                existing_vote.vote_type = norm_vote
+                msg = "Vote choice updated."
+                user_vote_res = norm_vote
         else:
-            submission.downvotes += 1
-        db.commit()
-        msg = "Vote recorded permanently"
+            # Create new vote
+            new_vote = SubmissionVote(submission_id=submission_id, user_id=voter_id, vote_type=norm_vote)
+            db.add(new_vote)
+            if norm_vote == "up":
+                submission.upvotes += 1
+            else:
+                submission.downvotes += 1
+            msg = "Vote recorded."
+            user_vote_res = norm_vote
 
+        db.commit()
+
+        # Recalculate Consensus for Automated Absence Flagging
         total_members = db.query(ArenaMembership).filter(
             ArenaMembership.arena_id == submission.arena_id,
             ArenaMembership.status == "approved"
@@ -328,19 +405,9 @@ def execute_vote_logic(
         if total_members > 0 and submission.downvotes > (total_members / 2):
             submission.is_absent = True
             db.commit()
-
-            try:
-                date_str = submission.submitted_at.date().isoformat()
-                sheet_record = db.query(DailyArenaSheet).filter(
-                    DailyArenaSheet.arena_id == submission.arena_id,
-                    DailyArenaSheet.user_id == submission.user_id,
-                    DailyArenaSheet.date_day == date_str
-                ).first()
-                if sheet_record:
-                    sheet_record.status = "absent"
-                    db.commit()
-            except Exception:
-                db.rollback()
+        else:
+            submission.is_absent = False
+            db.commit()
 
         # Real-time WS ledger broadcast for live vote tally sync across all connected users
         broadcast_ledger_event(
@@ -361,6 +428,7 @@ def execute_vote_logic(
             "upvotes": submission.upvotes,
             "downvotes": submission.downvotes,
             "is_absent": submission.is_absent,
+            "user_vote": user_vote_res
         })
     except HTTPException:
         raise
@@ -377,6 +445,51 @@ def vote_submission_by_path(
     current_user: User = Depends(get_current_user),
 ):
     return execute_vote_logic(submission_id=submission_id, vote_type_raw=payload.vote_type, db=db, current_user=current_user)
+
+
+@router.get("/submission/{submission_id}/voters")
+def get_submission_voters(
+    submission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Fetches the complete list of members who voted on a submission (upvote OR downvote).
+    PRIVACY GUARANTEE: Does NOT reveal whether a specific user voted up or down!
+    """
+    try:
+        submission = db.query(Submission).filter(Submission.id == submission_id).first()
+        if not submission:
+            return success_response({"submission_id": submission_id, "total_voters": 0, "voters": []})
+
+        votes = db.query(SubmissionVote).filter(SubmissionVote.submission_id == submission_id).all()
+        voter_user_ids = list({v.user_id for v in votes if v.user_id})
+
+        voters_list = []
+        if voter_user_ids:
+            voter_users = db.query(User).filter(User.id.in_(voter_user_ids)).all()
+            users_dict = {u.id: u.full_name or f"Member #{u.id}" for u in voter_users}
+            profiles = db.query(UserProfile).filter(UserProfile.user_id.in_(voter_user_ids)).all()
+            profiles_dict = {p.user_id: p.profile_image_url for p in profiles if p.profile_image_url}
+
+            seen_user_ids = set()
+            for v in votes:
+                if v.user_id not in seen_user_ids:
+                    seen_user_ids.add(v.user_id)
+                    voters_list.append({
+                        "user_id": v.user_id,
+                        "user_name": users_dict.get(v.user_id, f"Member #{v.user_id}"),
+                        "user_avatar_url": profiles_dict.get(v.user_id)
+                    })
+
+        return success_response({
+            "submission_id": submission_id,
+            "total_voters": len(voters_list),
+            "voters": voters_list
+        })
+    except Exception as e:
+        print(f"Error fetching voters list for submission {submission_id}: {e}")
+        return success_response({"submission_id": submission_id, "total_voters": 0, "voters": []})
 
 
 @router.get("/arena/{arena_id}/history")
@@ -400,19 +513,6 @@ def get_arena_history(
             }
         )
 
-    # 0 Kudos Wallet Protection Check
-    wallet = db.query(UserWallet).filter(UserWallet.user_id == current_user.id).first()
-    if wallet and wallet.kudos_balance <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "status": "error",
-                "message": "Arena access blocked due to 0 Kudos balance. Please recharge your wallet (INR 50 = 5,000 Kudos) to enter arenas and submit proof.",
-                "error_code": "ZERO_KUDOS_BLOCKED"
-            }
-        )
-
-
     try:
         submissions = db.query(Submission)\
             .filter(Submission.arena_id == arena_id)\
@@ -420,11 +520,62 @@ def get_arena_history(
             .order_by(Submission.submitted_at.desc())\
             .all()
             
-        messages = db.query(Message)\
-            .filter(Message.arena_id == arena_id)\
-            .options(joinedload(Message.user))\
-            .order_by(Message.created_at.desc())\
-            .all()
+        from app.services.chat_cache_service import chat_cache_service
+        cached_msgs = chat_cache_service.get_recent_messages(arena_id, limit=50)
+
+        if cached_msgs is not None and len(cached_msgs) > 0:
+            formatted_messages = cached_msgs
+        else:
+            messages = db.query(Message)\
+                .filter(Message.arena_id == arena_id)\
+                .options(joinedload(Message.user))\
+                .order_by(Message.created_at.desc())\
+                .limit(50)\
+                .all()
+
+            formatted_messages = [
+                {
+                    "id": msg.id,
+                    "user_id": msg.user_id,
+                    "content": str(msg.content),
+                    "message_type": str(msg.message_type or "text"),
+                    "created_at": msg.created_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if msg.created_at else "",
+                    "sender_name": msg.user.full_name if (msg.user and getattr(msg.user, 'full_name', None)) else f"Member #{msg.user_id}",
+                    "sender_avatar_url": get_user_avatar_url(db, msg.user_id)
+                } for msg in messages
+            ]
+            for m_item in reversed(formatted_messages):
+                chat_cache_service.push_recent_message(arena_id, m_item)
+
+        submission_ids = [sub.id for sub in submissions]
+        user_votes_dict = {}
+        voters_by_sub = {}
+        if submission_ids:
+            try:
+                all_votes = db.query(SubmissionVote).filter(SubmissionVote.submission_id.in_(submission_ids)).all()
+                voter_user_ids = list({v.user_id for v in all_votes if v.user_id})
+                
+                users_dict = {}
+                profiles_dict = {}
+                if voter_user_ids:
+                    voter_users = db.query(User).filter(User.id.in_(voter_user_ids)).all()
+                    users_dict = {u.id: u.full_name or f"Member #{u.id}" for u in voter_users}
+                    profiles = db.query(UserProfile).filter(UserProfile.user_id.in_(voter_user_ids)).all()
+                    profiles_dict = {p.user_id: p.profile_image_url for p in profiles if p.profile_image_url}
+
+                for v in all_votes:
+                    if v.user_id == current_user.id:
+                        user_votes_dict[v.submission_id] = v.vote_type
+                    if v.submission_id not in voters_by_sub:
+                        voters_by_sub[v.submission_id] = []
+                    if not any(item["user_id"] == v.user_id for item in voters_by_sub[v.submission_id]):
+                        voters_by_sub[v.submission_id].append({
+                            "user_id": v.user_id,
+                            "user_name": users_dict.get(v.user_id, f"Member #{v.user_id}"),
+                            "user_avatar_url": profiles_dict.get(v.user_id)
+                        })
+            except Exception as ve:
+                print(f"Non-critical voters query error: {ve}")
 
         return success_response({
             "submissions": [
@@ -437,23 +588,20 @@ def get_arena_history(
                     "user_avatar_url": get_user_avatar_url(db, sub.user_id),
                     "upvotes": getattr(sub, 'upvotes', 0) or 0,
                     "downvotes": getattr(sub, 'downvotes', 0) or 0,
-                    "is_absent": getattr(sub, 'is_absent', False) or False
+                    "is_absent": getattr(sub, 'is_absent', False) or False,
+                    "user_vote": user_votes_dict.get(sub.id),
+                    "voters": voters_by_sub.get(sub.id, []),
+                    "ai_confidence_score": getattr(sub, 'ai_confidence_score', 0.95) or 0.95,
+                    "ai_status": getattr(sub, 'ai_status', 'verified') or 'verified',
+                    "ai_audit_notes": getattr(sub, 'ai_audit_notes', None)
                 } for sub in submissions
             ],
-            "messages": [
-                {
-                    "id": msg.id,
-                    "user_id": msg.user_id,
-                    "content": str(msg.content),
-                    "message_type": str(msg.message_type or "text"),
-                    "created_at": str(msg.created_at),
-                    "sender_name": msg.user.full_name if (msg.user and getattr(msg.user, 'full_name', None)) else f"Member #{msg.user_id}",
-                    "sender_avatar_url": get_user_avatar_url(db, msg.user_id)
-                } for msg in messages
-            ]
+            "messages": formatted_messages,
+            "active_call": active_calls_registry.get_active_call(arena_id)
         })
     except Exception as e:
-        return success_response({"submissions": [], "messages": [], "error": str(e)})
+        return success_response({"submissions": [], "messages": [], "active_call": None, "error": str(e)})
+
 
 
 class MessageCreatePayload(BaseModel):
@@ -510,12 +658,62 @@ async def send_arena_message(
         "content": content,
         "text": content,
         "message_type": payload.message_type,
-        "created_at": str(db_msg.created_at)
+        "created_at": db_msg.created_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if db_msg.created_at else ""
     }
+
 
     try:
         await websocket_manager.broadcast_to_arena(arena_id, broadcast_payload)
     except Exception as e:
         print(f"Error broadcasting message via websocket: {e}")
 
+    # Dispatch Meta/Instagram scale Pub/Sub notifications & unread badge counters
+    try:
+        from app.services.notification_service import notification_service
+        arena_obj = db.query(Arena).filter(Arena.id == arena_id).first()
+        arena_title = arena_obj.name if arena_obj else f"Arena #{arena_id}"
+        
+        notification_service.publish_arena_event_notification(
+            db,
+            arena_id=arena_id,
+            sender_id=current_user.id,
+            event_type="chat_message",
+            title=f"💬 {sender_name} in {arena_title}",
+            body=content[:120],
+            data_json={"arena_id": arena_id, "url": f"/arena/{arena_id}"}
+        )
+    except Exception as ne:
+        print(f"Notification dispatch warning: {ne}")
+
     return success_response(broadcast_payload)
+
+
+@router.get("/arena/{arena_id}/call/token")
+def get_sfu_call_token(
+    arena_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Generate authenticated SFU access token for joining an Arena multi-party call.
+    """
+    membership = db.query(ArenaMembership).filter(
+        ArenaMembership.arena_id == arena_id,
+        ArenaMembership.user_id == current_user.id
+    ).first()
+
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not a member of this arena."
+        )
+
+    user_name = current_user.user_name or current_user.full_name or f"User #{current_user.id}"
+    from app.services.sfu_token_service import sfu_token_service
+    token_data = sfu_token_service.generate_sfu_room_token(
+        arena_id=arena_id,
+        user_id=current_user.id,
+        user_name=user_name
+    )
+
+    return success_response(token_data)
