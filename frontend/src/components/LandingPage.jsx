@@ -7,6 +7,7 @@ import TribelyLogo from "@/components/TribelyLogo";
 import api from "@/app/utils/api";
 import dataCache from "@/app/utils/dataCache";
 import FastLink from "@/components/FastLink";
+import PwaInstallBanner from "@/components/PwaInstallBanner";
 import { FALLBACK_ARENAS, mapDiscoveryArena, storePendingArenaJoin } from "@/app/utils/arenas";
 import { useTheme } from "@/app/context/ThemeContext";
 
@@ -409,6 +410,9 @@ export default function LandingPage({ initialTab = "explore" }) {
           </div>
         </div>
       </section>
+
+      {/* ── PWA INSTALL BANNER ──────────────────────────────── */}
+      <PwaInstallBanner />
 
       {/* ── FOOTER ─────────────────────────────────────────── */}
       <footer className="border-t py-12 text-xs" style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}>

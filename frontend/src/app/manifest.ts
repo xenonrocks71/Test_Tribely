@@ -2,22 +2,28 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Tribely",
+    name: "Tribely — Social Habit Accountability",
     short_name: "Tribely",
     description:
-      "Habit-tracking groups with daily proof, group chat, and real stakes.",
-    start_url: "/",
+      "Habit-tracking micro-arenas with daily proof verification, group chat, and digital stakes.",
+    start_url: "/dashboard",
     display: "standalone",
-    background_color: "#F3F4F6",
-    theme_color: "#5B4DFF",
+    background_color: "#090D16",
+    theme_color: "#FF5E00",
     orientation: "portrait-primary",
-    categories: ["social", "productivity"],
+    categories: ["social", "productivity", "health"],
     icons: [
       {
-        src: "/icons/tribely-icon.svg",
-        sizes: "any",
-        type: "image/svg+xml",
+        src: "/logo.png",
+        sizes: "192x192",
+        type: "image/png",
         purpose: "any",
+      },
+      {
+        src: "/logo.png",
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "maskable",
       },
     ],
   };
