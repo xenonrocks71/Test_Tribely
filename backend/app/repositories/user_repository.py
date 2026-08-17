@@ -57,11 +57,10 @@ class UserRepository(BaseRepository[User, UserCreate, UserCreate]):
         from app.models.models import UserWallet, KudosLedger
         wallet = UserWallet(
             user_id=db_user.id,
-            balance_inr=0.0,
             tribes_balance=1000.0,
-            kudos_balance=0.0,
             is_frozen=False,
-            referral_count=0
+            referral_count=0,
+            streak_shields=1
         )
         db.add(wallet)
 

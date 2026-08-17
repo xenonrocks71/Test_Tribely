@@ -156,8 +156,19 @@ app.include_router(upload.router)
 app.include_router(streak.router)
 app.include_router(escrow.router)
 app.include_router(huddle.router)
-app.include_router(bot_webhook.router)
 app.include_router(ledger.router)
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+import traceback
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logging.error(f"Global Unhandled Exception: {exc}\n{traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)}
+    )
 app.include_router(notifications.router)
 app.include_router(kudos.router)
 app.include_router(health.router, prefix="/api")
