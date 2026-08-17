@@ -14,7 +14,7 @@ import time
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 @router.get("/diag")
-def auth_diagnostics(db: Session = Depends(get_db)):
+def auth_diagnostics():
     """Fast diagnostic endpoint measuring DB ping and hashing speed."""
     t0 = time.time()
     from app.core.security import get_password_hash
@@ -22,14 +22,24 @@ def auth_diagnostics(db: Session = Depends(get_db)):
     t_hash = round(time.time() - t0, 4)
 
     t1 = time.time()
-    from sqlalchemy import text
-    db.execute(text("SELECT 1")).scalar()
+    db_err = None
+    db_res = None
+    try:
+        from app.core.database import sync_engine
+        from sqlalchemy import text
+        with sync_engine.connect() as conn:
+            db_res = conn.execute(text("SELECT 1")).scalar()
+    except Exception as e:
+        db_err = str(e)
     t_db = round(time.time() - t1, 4)
 
     return {
-        "status": "ok",
+        "status": "ok" if not db_err else "error",
         "hash_time_sec": t_hash,
         "db_ping_sec": t_db,
+        "db_result": db_res,
+        "db_error": db_err,
+        "sync_uri_prefix": str(settings.SYNC_DATABASE_URI).split("@")[-1] if settings.SYNC_DATABASE_URI else None,
         "total_sec": round(time.time() - t0, 4)
     }
 
