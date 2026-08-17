@@ -38,7 +38,15 @@ def get_system_health(db: Session = Depends(get_db)):
 
     # 2. Test Redis connectivity
     try:
-        r = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, socket_timeout=2)
+        is_upstash = "upstash.io" in settings.REDIS_HOST
+        r = redis.Redis(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            socket_timeout=1,
+            socket_connect_timeout=1,
+            ssl=is_upstash,
+            ssl_cert_reqs=None if is_upstash else "required"
+        )
         r.ping()
         health_status["redis"] = "connected"
     except Exception as redis_err:
