@@ -71,6 +71,8 @@ jobs:
           POSTGRES_PORT: 5432
           REDIS_HOST: localhost
           REDIS_PORT: 6379
+          ENVIRONMENT: testing
+          SECRET_KEY: ci_cd_testing_secret_key_tribely_2026
         run: |
           python backend/scripts/pre_deploy_smoke_test.py
 
