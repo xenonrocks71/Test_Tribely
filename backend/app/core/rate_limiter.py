@@ -92,12 +92,19 @@ class RateLimiter:
         identifier = self._get_client_identifier(request)
         route_key = request.url.path.strip("/") or "root"
 
-        is_limited, remaining, reset_ttl = await SlidingWindowRateLimiter.check_rate_limit(
-            identifier=identifier,
-            route_key=route_key,
-            max_requests=self.times,
-            window_seconds=self.seconds
-        )
+        import asyncio
+        try:
+            is_limited, remaining, reset_ttl = await asyncio.wait_for(
+                SlidingWindowRateLimiter.check_rate_limit(
+                    identifier=identifier,
+                    route_key=route_key,
+                    max_requests=self.times,
+                    window_seconds=self.seconds
+                ),
+                timeout=0.3
+            )
+        except Exception:
+            is_limited, remaining, reset_ttl = False, self.times, self.seconds
 
         # Standardize X-RateLimit response headers
         response.headers["X-RateLimit-Limit"] = str(self.times)
@@ -157,15 +164,19 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         identifier = RateLimiter._get_client_identifier(request)
         route_key = "global"
 
+        import asyncio
         try:
-            is_limited, remaining, reset_ttl = await SlidingWindowRateLimiter.check_rate_limit(
-                identifier=identifier,
-                route_key=route_key,
-                max_requests=self.requests_per_minute,
-                window_seconds=60
+            is_limited, remaining, reset_ttl = await asyncio.wait_for(
+                SlidingWindowRateLimiter.check_rate_limit(
+                    identifier=identifier,
+                    route_key=route_key,
+                    max_requests=self.requests_per_minute,
+                    window_seconds=60
+                ),
+                timeout=0.3
             )
         except Exception as e:
-            logger.warning(f"Rate limiter check bypassed due to exception: {e}")
+            logger.warning(f"Rate limiter check bypassed due to exception or timeout: {e}")
             is_limited, remaining, reset_ttl = False, self.requests_per_minute, 60
 
         if is_limited:
