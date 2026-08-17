@@ -12,13 +12,24 @@ from app.services.auth_service import auth_service
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(RateLimiter(times=10, seconds=60))])
+@router.post("/register", status_code=status.HTTP_201_CREATED, dependencies=[Depends(RateLimiter(times=10, seconds=60))])
 def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
     """
-    Registers a new user in the Tribely application database.
-    Delegates validation, password hashing, and user creation to AuthService.
+    Registers a new user in the Tribely application database and returns access token for instant onboarding.
     """
-    return auth_service.register_user(db, user_in=user_in)
+    user = auth_service.register_user(db, user_in=user_in)
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        subject=user.id, expires_delta=access_token_expires
+    )
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_id": user.id
+    }
 
 @router.post("/login", dependencies=[Depends(RateLimiter(times=10, seconds=60))])
 def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):

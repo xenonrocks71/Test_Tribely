@@ -8,6 +8,8 @@ import { formatErrorMessage } from "@/app/utils/api";
 import { Eye, EyeOff, Trophy, Zap, DollarSign } from "lucide-react";
 import Image from "next/image";
 
+import { dataCache } from "@/app/utils/dataCache";
+
 function RegisterPage() {
   const router = useRouter();
   const [fullName, setFullName] = useState("");
@@ -22,11 +24,12 @@ function RegisterPage() {
     setError(""); setLoading(true);
     try {
       await authService.register({ email, password, full_name: fullName });
-      router.push("/login?registered=true");
+      dataCache.prefetch("/api/arenas/").catch(() => {});
+      router.prefetch("/dashboard");
+      router.push("/dashboard");
     } catch (err: any) {
       const msg = err.response?.data?.detail || err.message;
       setError(formatErrorMessage(msg, "Could not create account. That email may already be in use."));
-    } finally {
       setLoading(false);
     }
   };

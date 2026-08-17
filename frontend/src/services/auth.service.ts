@@ -22,7 +22,19 @@ export class AuthService {
    * Register a new user account.
    */
   public async register(payload: UserRegisterPayload): Promise<any> {
-    return apiClient.post('/api/auth/register', payload);
+    const response = await apiClient.post<any>('/api/auth/register', payload);
+    if (response?.access_token && typeof window !== 'undefined') {
+      localStorage.setItem('tribely_token', response.access_token);
+      localStorage.setItem('token', response.access_token);
+      localStorage.setItem('tribely_user_id', String(response.user_id || response.id));
+      localStorage.setItem('tribely_user_name', response.full_name || payload.full_name);
+      localStorage.setItem('user', JSON.stringify({
+        id: response.user_id || response.id,
+        full_name: response.full_name || payload.full_name,
+        email: payload.email
+      }));
+    }
+    return response;
   }
 
   /**
