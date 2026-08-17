@@ -63,8 +63,7 @@ def init_db_schema():
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
-    import threading
-    threading.Thread(target=init_db_schema, daemon=True).start()
+    init_db_schema()
     yield
 
 app = FastAPI(
@@ -84,48 +83,61 @@ class RawASGICORSMiddleware:
     """
     Zero-Latency Raw ASGI CORS Middleware.
     Handles HTTP OPTIONS preflights in <1ms directly at the ASGI layer,
-    and forcibly attaches Access-Control-Allow-Origin headers to all HTTP responses.
+    and forcibly attaches Access-Control-Allow-Origin headers to all HTTP responses and 500 exceptions.
     """
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http":
-            origin = b"*"
-            for name, val in scope.get("headers", []):
-                if name.lower() == b"origin":
-                    origin = val
-                    break
-
-            if scope["method"] == "OPTIONS":
-                headers = [
-                    (b"access-control-allow-origin", origin),
-                    (b"access-control-allow-credentials", b"true"),
-                    (b"access-control-allow-methods", b"GET, POST, PUT, DELETE, OPTIONS, PATCH"),
-                    (b"access-control-allow-headers", b"Authorization, Content-Type, Accept, X-Requested-With, *"),
-                    (b"access-control-max-age", b"86400"),
-                    (b"content-length", b"0"),
-                ]
-                await send({"type": "http.response.start", "status": 200, "headers": headers})
-                await send({"type": "http.response.body", "body": b""})
-                return
-
-            async def send_with_cors(message):
-                if message["type"] == "http.response.start":
-                    headers = list(message.get("headers", []))
-                    has_cors = any(h[0].lower() == b"access-control-allow-origin" for h in headers)
-                    if not has_cors:
-                        headers.append((b"access-control-allow-origin", origin))
-                        headers.append((b"access-control-allow-credentials", b"true"))
-                        headers.append((b"access-control-allow-methods", b"GET, POST, PUT, DELETE, OPTIONS, PATCH"))
-                        headers.append((b"access-control-allow-headers", b"Authorization, Content-Type, Accept, X-Requested-With, *"))
-                    message["headers"] = headers
-                await send(message)
-
-            await self.app(scope, receive, send_with_cors)
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
             return
 
-        await self.app(scope, receive, send)
+        origin = b"*"
+        for name, val in scope.get("headers", []):
+            if name.lower() == b"origin":
+                origin = val
+                break
+
+        if scope["method"] == "OPTIONS":
+            headers = [
+                (b"access-control-allow-origin", origin),
+                (b"access-control-allow-credentials", b"true"),
+                (b"access-control-allow-methods", b"GET, POST, PUT, DELETE, OPTIONS, PATCH"),
+                (b"access-control-allow-headers", b"Authorization, Content-Type, Accept, X-Requested-With, *"),
+                (b"access-control-max-age", b"86400"),
+                (b"content-length", b"0"),
+            ]
+            await send({"type": "http.response.start", "status": 200, "headers": headers})
+            await send({"type": "http.response.body", "body": b""})
+            return
+
+        async def send_with_cors(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                has_cors = any(h[0].lower() == b"access-control-allow-origin" for h in headers)
+                if not has_cors:
+                    headers.append((b"access-control-allow-origin", origin))
+                    headers.append((b"access-control-allow-credentials", b"true"))
+                    headers.append((b"access-control-allow-methods", b"GET, POST, PUT, DELETE, OPTIONS, PATCH"))
+                    headers.append((b"access-control-allow-headers", b"Authorization, Content-Type, Accept, X-Requested-With, *"))
+                message["headers"] = headers
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_cors)
+        except Exception as err:
+            err_payload = json.dumps({"detail": str(err)}).encode("utf-8")
+            headers = [
+                (b"access-control-allow-origin", origin),
+                (b"access-control-allow-credentials", b"true"),
+                (b"access-control-allow-methods", b"GET, POST, PUT, DELETE, OPTIONS, PATCH"),
+                (b"access-control-allow-headers", b"Authorization, Content-Type, Accept, X-Requested-With, *"),
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(err_payload)).encode("utf-8")),
+            ]
+            await send({"type": "http.response.start", "status": 500, "headers": headers})
+            await send({"type": "http.response.body", "body": err_payload})
 
 app.add_middleware(RawASGICORSMiddleware)
 app.add_middleware(RateLimiterMiddleware, requests_per_minute=300)
