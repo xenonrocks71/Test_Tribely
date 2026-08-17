@@ -103,6 +103,13 @@ class RawASGICORSMiddleware:
                 break
 
         if scope["method"] == "OPTIONS":
+            while True:
+                msg = await receive()
+                if msg["type"] == "http.request" and not msg.get("more_body", False):
+                    break
+                if msg["type"] == "http.disconnect":
+                    break
+
             headers = [
                 (b"access-control-allow-origin", origin),
                 (b"access-control-allow-credentials", b"true"),
