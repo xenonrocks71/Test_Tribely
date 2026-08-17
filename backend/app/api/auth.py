@@ -9,18 +9,42 @@ from app.core.config import settings
 from app.schemas.schemas import UserCreate, UserResponse
 from app.services.auth_service import auth_service
 
+import time
+
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+
+@router.get("/diag")
+def auth_diagnostics(db: Session = Depends(get_db)):
+    """Fast diagnostic endpoint measuring DB ping and hashing speed."""
+    t0 = time.time()
+    from app.core.security import get_password_hash
+    hash_sample = get_password_hash("TestPass123!")
+    t_hash = round(time.time() - t0, 4)
+
+    t1 = time.time()
+    from sqlalchemy import text
+    db.execute(text("SELECT 1")).scalar()
+    t_db = round(time.time() - t1, 4)
+
+    return {
+        "status": "ok",
+        "hash_time_sec": t_hash,
+        "db_ping_sec": t_db,
+        "total_sec": round(time.time() - t0, 4)
+    }
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
     """
     Registers a new user in the Tribely application database and returns access token for instant onboarding.
     """
+    t_start = time.time()
     user = auth_service.register_user(db, user_in=user_in)
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         subject=user.id, expires_delta=access_token_expires
     )
+    print(f"[REGISTER] Finished registration for user {user.id} in {round(time.time() - t_start, 3)}s")
     return {
         "id": user.id,
         "email": user.email,
