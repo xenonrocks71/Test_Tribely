@@ -39,17 +39,8 @@ if is_prod and (not settings.SECRET_KEY or settings.SECRET_KEY == "tribely_super
 
 from contextlib import asynccontextmanager
 
-def init_db_schema():
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception as _e:
-        logging.warning(f"Schema auto-creation notice: {_e}")
-
-import asyncio
-
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
-    asyncio.create_task(asyncio.to_thread(init_db_schema))
     yield
 
 app = FastAPI(

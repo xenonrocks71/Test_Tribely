@@ -35,10 +35,6 @@ sync_db_uri = settings.SYNC_DATABASE_URI
 is_sqlite = sync_db_uri.startswith("sqlite")
 sync_connect_args = {"check_same_thread": False} if is_sqlite else {
     "connect_timeout": 5,
-    "keepalives": 1,
-    "keepalives_idle": 30,
-    "keepalives_interval": 10,
-    "keepalives_count": 5
 }
 
 sync_engine = create_engine(
@@ -49,7 +45,7 @@ sync_engine = create_engine(
     **({} if is_sqlite else {
         "pool_size": 5,
         "max_overflow": 10,
-        "pool_recycle": 60,
+        "pool_recycle": 30,
     })
 )
 
