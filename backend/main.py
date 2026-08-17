@@ -61,9 +61,11 @@ def init_db_schema():
     except Exception as _e:
         pass
 
+import asyncio
+
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
-    init_db_schema()
+    asyncio.create_task(asyncio.to_thread(init_db_schema))
     yield
 
 app = FastAPI(
