@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from sqlalchemy.orm import Session
 from app.core.database import sync_engine as engine, SessionLocal
+from app.models import models
 from app.models.models import User, UserWallet, Arena, ArenaMembership, Submission, EscrowLedger
 from app.services.audit_service import audit_service
 from app.services.kudos_service import kudos_service
@@ -24,6 +25,11 @@ def run_pre_deploy_smoke_test():
     print("=" * 60)
     print("[START] TRIBELY PRE-DEPLOYMENT SMOKE TEST SUITE")
     print("=" * 60)
+
+    # Ensure all tables exist in target database before executing test journeys
+    print("[Init] Initializing database schema...")
+    models.Base.metadata.create_all(bind=engine)
+    print("  [OK] Database schema initialized successfully.")
 
     db: Session = SessionLocal()
     unique_suffix = uuid.uuid4().hex[:6]
