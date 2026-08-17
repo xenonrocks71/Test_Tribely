@@ -4,6 +4,8 @@
  * heartbeat handling, and connection lifecycle management.
  */
 
+import { getWsBaseUrl } from "@/app/utils/config";
+
 export type WebSocketEventListener = (data: any) => void;
 
 export class WebSocketService {
@@ -27,7 +29,7 @@ export class WebSocketService {
     this.token = token;
     this.isIntentionallyClosed = false;
 
-    const wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+    const wsBaseUrl = getWsBaseUrl();
     const wsUrl = `${wsBaseUrl}/ws/arena/${arenaId}?token=${encodeURIComponent(token)}`;
 
     this.socket = new WebSocket(wsUrl);

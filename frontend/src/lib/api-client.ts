@@ -9,12 +9,15 @@ const getBaseUrl = (): string => {
   }
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
+    if (hostname.includes('vercel.app')) {
+      return 'https://tribely-backend.onrender.com';
+    }
     if (hostname.includes('trycloudflare.com') || hostname.includes('loca.lt') || hostname.includes('ngrok')) {
       return 'http://localhost:8000';
     }
     return `http://${hostname}:8000`;
   }
-  return 'http://127.0.0.1:8000';
+  return 'https://tribely-backend.onrender.com';
 };
 
 /**
@@ -31,7 +34,7 @@ class ApiClient {
       headers: {
         'Content-Type': 'application/json',
       },
-      timeout: 15000,
+      timeout: 60000,
     });
 
     this.initializeInterceptors();
