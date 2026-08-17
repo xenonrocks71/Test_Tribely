@@ -112,10 +112,16 @@ class RedisPubSubManager:
             return False
 
         try:
+            is_upstash = "upstash.io" in settings.REDIS_HOST
             self.redis_client = aioredis.Redis(
                 host=settings.REDIS_HOST,
                 port=settings.REDIS_PORT,
-                decode_responses=True
+                password=settings.REDIS_PASSWORD,
+                decode_responses=True,
+                ssl=is_upstash,
+                ssl_cert_reqs=None if is_upstash else "required",
+                socket_timeout=5.0,
+                socket_connect_timeout=5.0,
             )
             await self.redis_client.ping()
             self._is_connected = True

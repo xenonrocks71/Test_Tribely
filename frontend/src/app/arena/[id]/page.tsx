@@ -1835,7 +1835,26 @@ export default function ArenaRoomPage() {
               created_at: liveData.created_at || new Date().toISOString(),
             };
             setMessages((prev) => {
-              if (prev.some((m) => m.id === incomingMsg.id)) return prev;
+              const liveTempId = liveData.temp_id || liveData.client_id;
+              const hasExactId = prev.some((m) => m.id === incomingMsg.id);
+              if (hasExactId) return prev;
+
+              const hasTempId = liveTempId ? prev.some((m) => String(m.id) === String(liveTempId)) : false;
+              if (hasTempId) {
+                return prev.map((m) => (String(m.id) === String(liveTempId) ? incomingMsg : m));
+              }
+
+              const isDuplicateSelf = prev.some(
+                (m) => m.user_id === incomingMsg.user_id && m.content === incomingMsg.content && Math.abs(new Date(m.created_at).getTime() - new Date(incomingMsg.created_at).getTime()) < 5000
+              );
+              if (isDuplicateSelf) {
+                return prev.map((m) =>
+                  m.user_id === incomingMsg.user_id && m.content === incomingMsg.content && Math.abs(new Date(m.created_at).getTime() - new Date(incomingMsg.created_at).getTime()) < 5000
+                    ? incomingMsg
+                    : m
+                );
+              }
+
               return [incomingMsg, ...prev];
             });
             return;
@@ -2311,7 +2330,7 @@ export default function ArenaRoomPage() {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       try {
         wsRef.current.send(
-          JSON.stringify({ content: messageText, message_type: "text" }),
+          JSON.stringify({ content: messageText, message_type: "text", temp_id: tempId }),
         );
         return;
       } catch (err) {

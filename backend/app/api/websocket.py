@@ -317,10 +317,12 @@ async def arena_websocket_endpoint(
                             chat_cache_service.cache_user_meta(user_id, sender_name, sender_avatar_url)
                             user_meta = {"full_name": sender_name, "avatar_url": sender_avatar_url}
 
+                    temp_id = payload.get("temp_id") or payload.get("client_id")
                     created_time_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
                     broadcast_payload = {
                         "event_type": "chat_message",
                         "id": int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000),
+                        "temp_id": temp_id,
                         "arena_id": arena_id,
                         "user_id": user_id,
                         "sender_name": user_meta["full_name"],
