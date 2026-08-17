@@ -71,7 +71,6 @@ class UserRepository(BaseRepository[User, UserCreate, UserCreate]):
             arena_id=None,
             transaction_type="WELCOME_BONUS",
             amount_kudos=1000.0,
-            amount_tribes=1000.0,
             debit_account="system:welcome_bonus",
             credit_account=f"user:{db_user.id}:tribes",
             idempotency_key=f"welcome_bonus:user:{db_user.id}",
