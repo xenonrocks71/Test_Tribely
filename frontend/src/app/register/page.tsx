@@ -24,7 +24,8 @@ function RegisterPage() {
       await authService.register({ email, password, full_name: fullName });
       router.push("/login?registered=true");
     } catch (err: any) {
-      setError(formatErrorMessage(err.response?.data?.detail, "Could not create account. That email may already be in use."));
+      const msg = err.response?.data?.detail || err.message;
+      setError(formatErrorMessage(msg, "Could not create account. That email may already be in use."));
     } finally {
       setLoading(false);
     }
