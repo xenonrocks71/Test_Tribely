@@ -33,16 +33,23 @@ AsyncSessionLocal = async_sessionmaker(
 # ------------------------------------------------------------------
 sync_db_uri = settings.SYNC_DATABASE_URI
 is_sqlite = sync_db_uri.startswith("sqlite")
-sync_connect_args = {"check_same_thread": False} if is_sqlite else {}
+sync_connect_args = {"check_same_thread": False} if is_sqlite else {
+    "connect_timeout": 10,
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 5
+}
 
 sync_engine = create_engine(
     sync_db_uri,
     connect_args=sync_connect_args,
     pool_pre_ping=True,
+    pool_timeout=10,
     **({} if is_sqlite else {
-        "pool_size": 20,
-        "max_overflow": 10,
-        "pool_recycle": 1800,
+        "pool_size": 10,
+        "max_overflow": 15,
+        "pool_recycle": 300,
     })
 )
 
