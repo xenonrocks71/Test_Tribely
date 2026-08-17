@@ -1807,6 +1807,7 @@ export default function ArenaRoomPage() {
 
     let isMounted = true;
     let reconnectTimer: NodeJS.Timeout | null = null;
+    let pingInterval: NodeJS.Timeout | null = null;
 
     const connectWebSocket = () => {
       if (!isMounted) return;
@@ -1818,13 +1819,29 @@ export default function ArenaRoomPage() {
       );
       wsRef.current = ws;
 
+      ws.onopen = () => {
+        // Re-sync message history on connect / reconnect
+        fetchHistory();
+      };
+
+      // Heartbeat Keep-Alive (every 25s) to prevent cloud reverse proxy disconnection
+      if (pingInterval) clearInterval(pingInterval);
+      pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ event_type: "ping", timestamp: Date.now() }));
+        }
+      }, 25000);
+
       ws.onmessage = (event) => {
         try {
           const liveData = JSON.parse(event.data);
           const eventType = liveData?.event_type || liveData?.type;
 
+          // Ignore keep-alive pong responses
+          if (eventType === "pong") return;
+
           // Real-time Chat Message Event Handler
-          if (eventType === "chat_message" || (liveData?.content && liveData?.sender_name)) {
+          if (eventType === "chat_message" || (liveData?.content && liveData?.sender_name && !eventType?.includes("call") && !eventType?.includes("request") && !eventType?.includes("member"))) {
             const incomingMsg: Message = {
               id: liveData.id || Date.now(),
               user_id: Number(liveData.user_id),
@@ -1836,25 +1853,35 @@ export default function ArenaRoomPage() {
             };
             setMessages((prev) => {
               const liveTempId = liveData.temp_id || liveData.client_id;
-              const hasExactId = prev.some((m) => m.id === incomingMsg.id);
-              if (hasExactId) return prev;
-
-              const hasTempId = liveTempId ? prev.some((m) => String(m.id) === String(liveTempId)) : false;
-              if (hasTempId) {
-                return prev.map((m) => (String(m.id) === String(liveTempId) ? incomingMsg : m));
+              
+              // 1. Exact ID check: if server ID already exists, skip
+              if (prev.some((m) => m.id === incomingMsg.id)) {
+                return prev;
               }
 
-              const isDuplicateSelf = prev.some(
-                (m) => m.user_id === incomingMsg.user_id && m.content === incomingMsg.content && Math.abs(new Date(m.created_at).getTime() - new Date(incomingMsg.created_at).getTime()) < 5000
+              // 2. Temp ID replacement: replace optimistic item with real server message
+              if (liveTempId) {
+                const tempIndex = prev.findIndex((m) => String(m.id) === String(liveTempId));
+                if (tempIndex !== -1) {
+                  const updated = [...prev];
+                  updated[tempIndex] = incomingMsg;
+                  return updated;
+                }
+              }
+
+              // 3. Optimistic self-message fallback deduplication (same user, same content, temporary item)
+              const selfTempIndex = prev.findIndex((m) => 
+                (String(m.id).startsWith("temp_") || typeof m.id === "string") &&
+                m.user_id === incomingMsg.user_id &&
+                m.content.trim() === incomingMsg.content.trim()
               );
-              if (isDuplicateSelf) {
-                return prev.map((m) =>
-                  m.user_id === incomingMsg.user_id && m.content === incomingMsg.content && Math.abs(new Date(m.created_at).getTime() - new Date(incomingMsg.created_at).getTime()) < 5000
-                    ? incomingMsg
-                    : m
-                );
+              if (selfTempIndex !== -1) {
+                const updated = [...prev];
+                updated[selfTempIndex] = incomingMsg;
+                return updated;
               }
 
+              // 4. Genuine new message from any member -> prepend to newest list
               return [incomingMsg, ...prev];
             });
             return;
@@ -2096,17 +2123,6 @@ export default function ArenaRoomPage() {
             }
             return;
           }
-
-          // Real-time chat message handler
-          const newMessage = liveData?.message || liveData?.data || liveData;
-          if (newMessage && (newMessage.content || newMessage.id)) {
-            setMessages((prev) => {
-              if (newMessage.id && prev.some((m) => m.id === newMessage.id)) {
-                return prev;
-              }
-              return [newMessage, ...prev];
-            });
-          }
         } catch {
           /* ignore malformed payloads */
         }
@@ -2126,6 +2142,7 @@ export default function ArenaRoomPage() {
     return () => {
       isMounted = false;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (pingInterval) clearInterval(pingInterval);
       if (wsRef.current) {
         wsRef.current.close();
       }
@@ -2313,10 +2330,11 @@ export default function ArenaRoomPage() {
     setChatInput("");
 
     // Optimistic UI Hydration (0ms Instant Rendering)
-    const tempId = Date.now();
+    const currentStoredUserId = typeof window !== "undefined" ? Number(localStorage.getItem("tribely_user_id")) : 0;
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const optimisticMsg: Message = {
-      id: tempId,
-      user_id: userId || 0,
+      id: tempId as any,
+      user_id: currentStoredUserId || userId || 0,
       sender_name: typeof window !== "undefined" ? localStorage.getItem("tribely_user_name") || "You" : "You",
       sender_avatar_url: typeof window !== "undefined" ? localStorage.getItem("tribely_user_avatar") || null : null,
       content: messageText,
@@ -2330,7 +2348,7 @@ export default function ArenaRoomPage() {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       try {
         wsRef.current.send(
-          JSON.stringify({ content: messageText, message_type: "text", temp_id: tempId }),
+          JSON.stringify({ content: messageText, message_type: "text", temp_id: tempId, client_id: tempId }),
         );
         return;
       } catch (err) {
@@ -2348,7 +2366,7 @@ export default function ArenaRoomPage() {
       if (returnedMsg) {
         setMessages((prev) => {
           // Replace temp message with server message
-          const filtered = prev.filter((m) => m.id !== tempId);
+          const filtered = prev.filter((m) => String(m.id) !== String(tempId));
           if (returnedMsg.id && filtered.some((m) => m.id === returnedMsg.id)) {
             return filtered;
           }

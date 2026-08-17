@@ -30,8 +30,12 @@ def resolve_websocket_user_id(token: str | None) -> int:
     if not token:
         raise ValueError("Missing websocket token.")
 
+    token_str = token.strip()
+    if token_str.startswith("Bearer "):
+        token_str = token_str[7:].strip()
+
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(token_str, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         subject = payload.get("sub")
         if subject is None:
             raise ValueError("Missing user_id in token subject.")
@@ -76,6 +80,11 @@ async def arena_websocket_endpoint(
                 continue
             
             event_type = payload.get("event_type")
+
+            # Keep-alive heartbeat responder
+            if event_type in ["ping", "heartbeat"]:
+                await websocket.send_text(json.dumps({"event_type": "pong", "timestamp": payload.get("timestamp")}))
+                continue
 
             # Real-Time Call Event & WebRTC Pub/Sub Broadcast Relay
             call_events = [

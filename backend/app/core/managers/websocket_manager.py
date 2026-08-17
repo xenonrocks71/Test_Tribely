@@ -173,6 +173,8 @@ class RedisPubSubManager:
             self._subscribed_channels.discard(channel)
 
 
+import uuid
+
 class WebSocketManager:
     """
     Global Object-Oriented Manager controlling room connection pools across the application.
@@ -185,6 +187,7 @@ class WebSocketManager:
         self.user_connections: Dict[int, Set[WebSocket]] = {}
         self.pubsub_manager: RedisPubSubManager = RedisPubSubManager()
         self._listener_tasks: Dict[int, asyncio.Task] = {}
+        self.instance_id: str = uuid.uuid4().hex
 
     async def connect_user(self, websocket: WebSocket, user_id: int) -> None:
         """Accept and register user-scoped WebSocket for real-time notifications."""
@@ -239,8 +242,12 @@ class WebSocketManager:
             channel = f"arena:{arena_id}"
             
             async def room_callback(data: Dict[str, Any]):
+                # If this message was published by the same server instance, skip it (already broadcasted to local room)
+                if data.get("_origin") == self.instance_id:
+                    return
                 if arena_id in self._rooms:
-                    await self._rooms[arena_id].broadcast(data)
+                    clean_data = {k: v for k, v in data.items() if k != "_origin"}
+                    await self._rooms[arena_id].broadcast(clean_data)
 
             task = asyncio.create_task(
                 self.pubsub_manager.subscribe_and_listen(channel, room_callback)
@@ -275,10 +282,12 @@ class WebSocketManager:
         if arena_id in self._rooms:
             await self._rooms[arena_id].broadcast(message)
 
-        # 2. Redis cluster-wide pub/sub broadcast
+        # 2. Redis cluster-wide pub/sub broadcast (tag with instance_id to avoid echo)
         if self.pubsub_manager._is_connected:
             channel = f"arena:{arena_id}"
-            await self.pubsub_manager.publish(channel, message)
+            pub_payload = dict(message)
+            pub_payload["_origin"] = self.instance_id
+            await self.pubsub_manager.publish(channel, pub_payload)
 
     async def broadcast_to_arena_except(
         self,
