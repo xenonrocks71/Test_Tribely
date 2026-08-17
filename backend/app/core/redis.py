@@ -16,12 +16,15 @@ async def get_redis_client() -> aioredis.Redis:
     """
     global _redis_client
     if _redis_client is None:
+        is_upstash = "upstash.io" in settings.REDIS_HOST
         _redis_client = aioredis.Redis(
             host=settings.REDIS_HOST,
             port=settings.REDIS_PORT,
             decode_responses=True,
-            socket_timeout=5.0,
-            socket_connect_timeout=5.0,
+            ssl=is_upstash,
+            ssl_cert_reqs=None if is_upstash else "required",
+            socket_timeout=2.0,
+            socket_connect_timeout=2.0,
         )
     return _redis_client
 
