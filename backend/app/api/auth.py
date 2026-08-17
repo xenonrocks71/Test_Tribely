@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import create_access_token
 from app.core.config import settings
-from app.core.rate_limiter import RateLimiter
 from app.schemas.schemas import UserCreate, UserResponse
 from app.services.auth_service import auth_service
 

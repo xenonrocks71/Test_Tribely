@@ -47,6 +47,9 @@ jobs:
           pip install -r backend/requirements.txt
           pip install pytest pytest-asyncio httpx
 
+      - name: Create Required Static Directories
+        run: mkdir -p backend/static/uploads
+
       - name: Run Backend Unit & Integration Tests
         env:
           POSTGRES_SERVER: localhost
