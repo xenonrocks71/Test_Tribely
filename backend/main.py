@@ -35,57 +35,47 @@ is_prod = settings.ENVIRONMENT.lower() == "production"
 if is_prod and (not settings.SECRET_KEY or settings.SECRET_KEY == "tribely_super_secret_jwt_key_2026"):
     raise ValueError("CRITICAL SECURITY ERROR: Non-default high-entropy SECRET_KEY must be set in production mode!")
 
+from contextlib import asynccontextmanager
+
+def init_db_schema():
+    try:
+        Base.metadata.create_all(bind=engine)
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE arenas ADD COLUMN IF NOT EXISTS icon_url TEXT;"))
+            conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS tribes_balance DOUBLE PRECISION DEFAULT 1000.0;"))
+            conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN DEFAULT FALSE;"))
+            conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS referral_count INT DEFAULT 0;"))
+            conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS streak_shields INT DEFAULT 1;"))
+            conn.execute(text("ALTER TABLE user_wallets ALTER COLUMN balance_inr DROP NOT NULL;"))
+            conn.execute(text("ALTER TABLE user_wallets ALTER COLUMN kudos_balance DROP NOT NULL;"))
+            conn.execute(text("ALTER TABLE user_wallets ALTER COLUMN mandate_status DROP NOT NULL;"))
+            conn.execute(text("ALTER TABLE escrow_ledger ADD COLUMN IF NOT EXISTS amount_tribes DOUBLE PRECISION DEFAULT 0.0;"))
+            conn.execute(text("ALTER TABLE escrow_ledger ALTER COLUMN amount_inr DROP NOT NULL;"))
+            conn.execute(text("ALTER TABLE arena_pools ADD COLUMN IF NOT EXISTS reserve_pool_tribes DOUBLE PRECISION DEFAULT 0.0;"))
+            conn.execute(text("ALTER TABLE arena_pools ADD COLUMN IF NOT EXISTS reward_pool_tribes DOUBLE PRECISION DEFAULT 0.0;"))
+            conn.execute(text("ALTER TABLE arena_pools ADD COLUMN IF NOT EXISTS tribes_reserve_vault DOUBLE PRECISION DEFAULT 0.0;"))
+            conn.execute(text("ALTER TABLE arena_pools ALTER COLUMN reserve_pool_inr DROP NOT NULL;"))
+            conn.execute(text("ALTER TABLE arena_pools ALTER COLUMN reward_pool_inr DROP NOT NULL;"))
+            conn.execute(text("ALTER TABLE arena_pools ALTER COLUMN kudos_reserve_vault DROP NOT NULL;"))
+            conn.commit()
+    except Exception as _e:
+        pass
+
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    import threading
+    threading.Thread(target=init_db_schema, daemon=True).start()
+    yield
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="Tribely Backend - Social Accountability Micro-Arena Engine",
     version="1.0.0",
     docs_url=None if is_prod else "/docs",
     redoc_url=None if is_prod else "/redoc",
-    openapi_url=None if is_prod else "/openapi.json"
+    openapi_url=None if is_prod else "/openapi.json",
+    lifespan=lifespan
 )
-
-
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Enforces standard HTTP security response headers."""
-    async def dispatch(self, request: Request, call_next):
-        response: Response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        return response
-
-
-app.add_middleware(SecurityHeadersMiddleware)
-
-# Ensure static uploads directory exists and mount static files route
-os.makedirs("static/uploads", exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-Base.metadata.create_all(bind=engine)
-
-# Auto-migrate newly added columns for existing PostgreSQL tables
-try:
-    with engine.connect() as conn:
-        conn.execute(text("ALTER TABLE arenas ADD COLUMN IF NOT EXISTS icon_url TEXT;"))
-        conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS tribes_balance DOUBLE PRECISION DEFAULT 1000.0;"))
-        conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN DEFAULT FALSE;"))
-        conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS referral_count INT DEFAULT 0;"))
-        conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS streak_shields INT DEFAULT 1;"))
-        conn.execute(text("ALTER TABLE user_wallets ALTER COLUMN balance_inr DROP NOT NULL;"))
-        conn.execute(text("ALTER TABLE user_wallets ALTER COLUMN kudos_balance DROP NOT NULL;"))
-        conn.execute(text("ALTER TABLE user_wallets ALTER COLUMN mandate_status DROP NOT NULL;"))
-        conn.execute(text("ALTER TABLE escrow_ledger ADD COLUMN IF NOT EXISTS amount_tribes DOUBLE PRECISION DEFAULT 0.0;"))
-        conn.execute(text("ALTER TABLE escrow_ledger ALTER COLUMN amount_inr DROP NOT NULL;"))
-        conn.execute(text("ALTER TABLE arena_pools ADD COLUMN IF NOT EXISTS reserve_pool_tribes DOUBLE PRECISION DEFAULT 0.0;"))
-        conn.execute(text("ALTER TABLE arena_pools ADD COLUMN IF NOT EXISTS reward_pool_tribes DOUBLE PRECISION DEFAULT 0.0;"))
-        conn.execute(text("ALTER TABLE arena_pools ADD COLUMN IF NOT EXISTS tribes_reserve_vault DOUBLE PRECISION DEFAULT 0.0;"))
-        conn.execute(text("ALTER TABLE arena_pools ALTER COLUMN reserve_pool_inr DROP NOT NULL;"))
-        conn.execute(text("ALTER TABLE arena_pools ALTER COLUMN reward_pool_inr DROP NOT NULL;"))
-        conn.execute(text("ALTER TABLE arena_pools ALTER COLUMN kudos_reserve_vault DROP NOT NULL;"))
-        conn.commit()
-except Exception as _e:
-    pass
 
 
 from app.core.rate_limiter import RateLimiterMiddleware
