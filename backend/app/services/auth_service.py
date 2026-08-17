@@ -43,14 +43,6 @@ class AuthService:
             )
         
         db_user = self.user_repo.create_user(db, user_in=user_in)
-        # Initialize default user profile
-        self.user_repo.get_or_create_profile(db, user_id=db_user.id)
-        # Award 1,000 Kudos welcome bonus upon registration
-        try:
-            from app.services.kudos_service import kudos_service
-            kudos_service.award_welcome_bonus(db, user_id=db_user.id)
-        except Exception as e:
-            pass
         return db_user
 
 
