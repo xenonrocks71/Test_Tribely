@@ -95,8 +95,9 @@ app.add_middleware(RateLimiterMiddleware, requests_per_minute=200)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=[],
+    allow_origin_regex=r".*",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
