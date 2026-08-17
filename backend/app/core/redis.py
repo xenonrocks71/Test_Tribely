@@ -20,6 +20,7 @@ async def get_redis_client() -> aioredis.Redis:
         _redis_client = aioredis.Redis(
             host=settings.REDIS_HOST,
             port=settings.REDIS_PORT,
+            password=settings.REDIS_PASSWORD,
             decode_responses=True,
             ssl=is_upstash,
             ssl_cert_reqs=None if is_upstash else "required",
