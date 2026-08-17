@@ -157,12 +157,16 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         identifier = RateLimiter._get_client_identifier(request)
         route_key = "global"
 
-        is_limited, remaining, reset_ttl = await SlidingWindowRateLimiter.check_rate_limit(
-            identifier=identifier,
-            route_key=route_key,
-            max_requests=self.requests_per_minute,
-            window_seconds=60
-        )
+        try:
+            is_limited, remaining, reset_ttl = await SlidingWindowRateLimiter.check_rate_limit(
+                identifier=identifier,
+                route_key=route_key,
+                max_requests=self.requests_per_minute,
+                window_seconds=60
+            )
+        except Exception as e:
+            logger.warning(f"Rate limiter check bypassed due to exception: {e}")
+            is_limited, remaining, reset_ttl = False, self.requests_per_minute, 60
 
         if is_limited:
             return JSONResponse(

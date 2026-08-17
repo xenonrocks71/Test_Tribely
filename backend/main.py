@@ -90,30 +90,17 @@ except Exception as _e:
 
 from app.core.rate_limiter import RateLimiterMiddleware
 
-@app.middleware("http")
-async def universal_cors_middleware(request: Request, call_next):
-    origin = request.headers.get("origin") or "*"
-    if request.method == "OPTIONS":
-        response = Response(status_code=200)
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, X-Requested-With, *"
-        response.headers["Access-Control-Max-Age"] = "86400"
-        return response
-    
-    try:
-        response = await call_next(request)
-    except Exception as e:
-        response = JSONResponse(status_code=500, content={"detail": str(e)})
+# Configure CORS & Rate Limiting for production & development environments
+app.add_middleware(RateLimiterMiddleware, requests_per_minute=300)
 
-    response.headers["Access-Control-Allow-Origin"] = origin
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-    response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, X-Requested-With, *"
-    return response
-
-app.add_middleware(RateLimiterMiddleware, requests_per_minute=200)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"https?://.*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
 # Connect modular HTTP and persistent WebSocket router stacks
 app.include_router(auth.router)
@@ -140,6 +127,10 @@ def health_check():
         "project": settings.PROJECT_NAME,
         "version": "1.0.0"
     }
+
+@app.get("/ping", tags=["Health"])
+def ping():
+    return {"ping": "pong"}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
