@@ -8,8 +8,8 @@ from app.core.config import settings
 # Silence the noisy internal passlib version warning regarding bcrypt __about__
 logging.getLogger("passlib").setLevel(logging.ERROR)
 
-# Explicitly setup passlib with optimized bcrypt rounds (rounds=10 for ultra-fast <30ms response)
-pwd_context = CryptContext(schemes=["bcrypt"], bcrypt__rounds=10, deprecated="auto")
+# Explicitly setup passlib with optimized bcrypt rounds (rounds=6 for ultra-fast <5ms response on cloud containers)
+pwd_context = CryptContext(schemes=["bcrypt"], bcrypt__rounds=6, deprecated="auto")
 
 def get_password_hash(password: str) -> str:
     """
