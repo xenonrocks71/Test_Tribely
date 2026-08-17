@@ -12,7 +12,7 @@ from app.services.auth_service import auth_service
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
-@router.post("/register", status_code=status.HTTP_201_CREATED, dependencies=[Depends(RateLimiter(times=10, seconds=60))])
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
     """
     Registers a new user in the Tribely application database and returns access token for instant onboarding.
@@ -31,7 +31,7 @@ def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
         "user_id": user.id
     }
 
-@router.post("/login", dependencies=[Depends(RateLimiter(times=10, seconds=60))])
+@router.post("/login")
 def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """
     Authenticates user credentials and returns a secure signed JWT Access Token with user metadata.

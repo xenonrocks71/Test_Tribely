@@ -24,8 +24,8 @@ async def get_redis_client() -> aioredis.Redis:
             decode_responses=True,
             ssl=is_upstash,
             ssl_cert_reqs=None if is_upstash else "required",
-            socket_timeout=2.0,
-            socket_connect_timeout=2.0,
+            socket_timeout=0.15,
+            socket_connect_timeout=0.15,
         )
     return _redis_client
 
