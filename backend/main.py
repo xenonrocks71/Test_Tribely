@@ -84,14 +84,16 @@ app = FastAPI(
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.rate_limiter import RateLimiterMiddleware
 
+# Rate limiter runs inside CORS so CORS headers are ALWAYS appended even on rate limits or errors
+app.add_middleware(RateLimiterMiddleware, requests_per_minute=300)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
-app.add_middleware(RateLimiterMiddleware, requests_per_minute=300)
 
 # Connect modular HTTP and persistent WebSocket router stacks
 app.include_router(auth.router)
