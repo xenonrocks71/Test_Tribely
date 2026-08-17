@@ -39,47 +39,51 @@ class UserRepository(BaseRepository[User, UserCreate, UserCreate]):
         :param user_in: Validated UserCreate Pydantic schema.
         :return: Persisted User model instance.
         """
-        hashed_pass = get_password_hash(user_in.password)
-        db_user = User(
-            email=user_in.email,
-            hashed_password=hashed_pass,
-            full_name=user_in.full_name,
-            is_active=True
-        )
-        db.add(db_user)
-        db.flush()
+        try:
+            hashed_pass = get_password_hash(user_in.password)
+            db_user = User(
+                email=user_in.email,
+                hashed_password=hashed_pass,
+                full_name=user_in.full_name,
+                is_active=True
+            )
+            db.add(db_user)
+            db.flush()
 
-        # Batch UserProfile creation
-        profile = UserProfile(user_id=db_user.id, profile_image_url=None)
-        db.add(profile)
+            # Batch UserProfile creation
+            profile = UserProfile(user_id=db_user.id, profile_image_url=None)
+            db.add(profile)
 
-        # Batch UserWallet creation with 1,000 Tribes welcome bonus
-        from app.models.models import UserWallet, KudosLedger
-        wallet = UserWallet(
-            user_id=db_user.id,
-            tribes_balance=1000.0,
-            is_frozen=False,
-            referral_count=0,
-            streak_shields=1
-        )
-        db.add(wallet)
+            # Batch UserWallet creation with 1,000 Tribes welcome bonus
+            from app.models.models import UserWallet, KudosLedger
+            wallet = UserWallet(
+                user_id=db_user.id,
+                tribes_balance=1000.0,
+                is_frozen=False,
+                referral_count=0,
+                streak_shields=1
+            )
+            db.add(wallet)
 
-        # Record Welcome Bonus in Ledger
-        ledger = KudosLedger(
-            user_id=db_user.id,
-            arena_id=None,
-            transaction_type="WELCOME_BONUS",
-            amount_kudos=1000.0,
-            debit_account="system:welcome_bonus",
-            credit_account=f"user:{db_user.id}:tribes",
-            idempotency_key=f"welcome_bonus:user:{db_user.id}",
-            description="Welcome registration bonus of 1,000 Tribes"
-        )
-        db.add(ledger)
+            # Record Welcome Bonus in Ledger
+            ledger = KudosLedger(
+                user_id=db_user.id,
+                arena_id=None,
+                transaction_type="WELCOME_BONUS",
+                amount_kudos=1000.0,
+                debit_account="system:welcome_bonus",
+                credit_account=f"user:{db_user.id}:tribes",
+                idempotency_key=f"welcome_bonus:user:{db_user.id}",
+                description="Welcome registration bonus of 1,000 Tribes"
+            )
+            db.add(ledger)
 
-        db.commit()
-        db.refresh(db_user)
-        return db_user
+            db.commit()
+            db.refresh(db_user)
+            return db_user
+        except Exception:
+            db.rollback()
+            raise
 
     def get_or_create_profile(self, db: Session, *, user_id: int) -> UserProfile:
         """
