@@ -93,13 +93,10 @@ from app.core.rate_limiter import RateLimiterMiddleware
 # Configure CORS & Rate Limiting for production & development environments
 app.add_middleware(RateLimiterMiddleware, requests_per_minute=200)
 
-allowed_origins = settings.ALLOWED_ORIGINS
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app" if is_prod else r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
