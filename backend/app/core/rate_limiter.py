@@ -19,9 +19,11 @@ from app.core.redis import get_redis_client
 logger = logging.getLogger(__name__)
 
 
+_redis_unavailable_until: float = 0.0
+
 class SlidingWindowRateLimiter:
     """
-    Core Redis Sorted Set (ZSET) Sliding Window Engine.
+    Core Redis Sorted Set (ZSET) Sliding Window Engine with Circuit Breaker.
     """
 
     @staticmethod
@@ -40,13 +42,19 @@ class SlidingWindowRateLimiter:
         :param window_seconds: Time window in seconds.
         :return: Tuple of (is_rate_limited: bool, remaining_requests: int, reset_ttl_seconds: int).
         """
-        redis = await get_redis_client()
-        now_ms = int(time.time() * 1000)
+        global _redis_unavailable_until
+        now = time.time()
+        if now < _redis_unavailable_until:
+            # Circuit breaker OPEN: fast fail-open (0ms)
+            return False, max_requests, window_seconds
+
+        now_ms = int(now * 1000)
         window_ms = window_seconds * 1000
         clear_before_ms = now_ms - window_ms
         key = f"ratelimit:{identifier}:{route_key}"
 
         try:
+            redis = await get_redis_client()
             # Atomic pipeline to prune old entries and count current window elements
             pipe = redis.pipeline()
             pipe.zremrangebyscore(key, 0, clear_before_ms)
@@ -72,8 +80,9 @@ class SlidingWindowRateLimiter:
             return False, remaining, window_seconds
 
         except Exception as e:
-            logger.debug(f"Redis rate limiter bypassed (Redis unavailable): {e}")
-            # Fallback to allow request if Redis fails
+            # Set circuit breaker for 30 seconds
+            _redis_unavailable_until = time.time() + 30.0
+            logger.debug(f"Redis rate limiter circuit opened (bypassed for 30s): {e}")
             return False, max_requests, window_seconds
 
 
@@ -158,7 +167,7 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         self.requests_per_minute = requests_per_minute
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> StarletteResponse:
-        if request.method == "OPTIONS":
+        if request.method == "OPTIONS" or request.url.path in ["/ping", "/", "/docs", "/openapi.json", "/api/health"]:
             return await call_next(request)
 
         identifier = RateLimiter._get_client_identifier(request)

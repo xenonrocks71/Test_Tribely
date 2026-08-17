@@ -42,26 +42,8 @@ from contextlib import asynccontextmanager
 def init_db_schema():
     try:
         Base.metadata.create_all(bind=engine)
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE arenas ADD COLUMN IF NOT EXISTS icon_url TEXT;"))
-            conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS tribes_balance DOUBLE PRECISION DEFAULT 1000.0;"))
-            conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN DEFAULT FALSE;"))
-            conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS referral_count INT DEFAULT 0;"))
-            conn.execute(text("ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS streak_shields INT DEFAULT 1;"))
-            conn.execute(text("ALTER TABLE user_wallets ALTER COLUMN balance_inr DROP NOT NULL;"))
-            conn.execute(text("ALTER TABLE user_wallets ALTER COLUMN kudos_balance DROP NOT NULL;"))
-            conn.execute(text("ALTER TABLE user_wallets ALTER COLUMN mandate_status DROP NOT NULL;"))
-            conn.execute(text("ALTER TABLE escrow_ledger ADD COLUMN IF NOT EXISTS amount_tribes DOUBLE PRECISION DEFAULT 0.0;"))
-            conn.execute(text("ALTER TABLE escrow_ledger ALTER COLUMN amount_inr DROP NOT NULL;"))
-            conn.execute(text("ALTER TABLE arena_pools ADD COLUMN IF NOT EXISTS reserve_pool_tribes DOUBLE PRECISION DEFAULT 0.0;"))
-            conn.execute(text("ALTER TABLE arena_pools ADD COLUMN IF NOT EXISTS reward_pool_tribes DOUBLE PRECISION DEFAULT 0.0;"))
-            conn.execute(text("ALTER TABLE arena_pools ADD COLUMN IF NOT EXISTS tribes_reserve_vault DOUBLE PRECISION DEFAULT 0.0;"))
-            conn.execute(text("ALTER TABLE arena_pools ALTER COLUMN reserve_pool_inr DROP NOT NULL;"))
-            conn.execute(text("ALTER TABLE arena_pools ALTER COLUMN reward_pool_inr DROP NOT NULL;"))
-            conn.execute(text("ALTER TABLE arena_pools ALTER COLUMN kudos_reserve_vault DROP NOT NULL;"))
-            conn.commit()
     except Exception as _e:
-        pass
+        logging.warning(f"Schema auto-creation notice: {_e}")
 
 import asyncio
 
