@@ -55,28 +55,32 @@ class UserRepository(BaseRepository[User, UserCreate, UserCreate]):
             db.add(profile)
 
             # Batch UserWallet creation with 1,000 Tribes welcome bonus
-            from app.models.models import UserWallet, KudosLedger
-            wallet = UserWallet(
-                user_id=db_user.id,
-                tribes_balance=1000.0,
-                is_frozen=False,
-                referral_count=0,
-                streak_shields=1
-            )
-            db.add(wallet)
+            try:
+                from app.models.models import UserWallet, KudosLedger
+                wallet = UserWallet(
+                    user_id=db_user.id,
+                    tribes_balance=1000.0,
+                    is_frozen=False,
+                    referral_count=0,
+                    streak_shields=1
+                )
+                db.add(wallet)
 
-            # Record Welcome Bonus in Ledger
-            ledger = KudosLedger(
-                user_id=db_user.id,
-                arena_id=None,
-                transaction_type="WELCOME_BONUS",
-                amount_kudos=1000.0,
-                debit_account="system:welcome_bonus",
-                credit_account=f"user:{db_user.id}:tribes",
-                idempotency_key=f"welcome_bonus:user:{db_user.id}",
-                description="Welcome registration bonus of 1,000 Tribes"
-            )
-            db.add(ledger)
+                # Record Welcome Bonus in Ledger
+                ledger = KudosLedger(
+                    user_id=db_user.id,
+                    arena_id=None,
+                    transaction_type="WELCOME_BONUS",
+                    amount_kudos=1000.0,
+                    debit_account="system:welcome_bonus",
+                    credit_account=f"user:{db_user.id}:tribes",
+                    idempotency_key=f"welcome_bonus:user:{db_user.id}",
+                    description="Welcome registration bonus of 1,000 Tribes"
+                )
+                db.add(ledger)
+            except Exception as _e:
+                import logging
+                logging.warning(f"Wallet/Ledger batch notice: {_e}")
 
             db.commit()
             return db_user
