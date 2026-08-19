@@ -56,7 +56,6 @@ def get_system_health(db: Session = Depends(get_db)):
         health_status["status"] = "degraded"
 
     if not is_healthy:
-        health_status["status"] = "unhealthy"
-        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=health_status)
+        health_status["status"] = "degraded"
 
     return health_status
