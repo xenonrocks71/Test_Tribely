@@ -28,22 +28,26 @@ class AuthService:
 
     def register_user(self, db: Session, *, user_in: UserCreate) -> User:
         """
-        Register a new user account with duplicate email validation and default profile creation.
+        Register a new user account with duplicate email validation in a single atomic database roundtrip.
 
         :param db: Active database session.
         :param user_in: Validated UserCreate request schema.
         :return: Persisted User model instance.
         :raises HTTPException: 400 Bad Request if email is already registered.
         """
-        existing = self.user_repo.get_by_email(db, email=user_in.email)
-        if existing:
+        from sqlalchemy.exc import IntegrityError
+        try:
+            db_user = self.user_repo.create_user(db, user_in=user_in)
+            return db_user
+        except IntegrityError:
+            db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email address already registered."
             )
-        
-        db_user = self.user_repo.create_user(db, user_in=user_in)
-        return db_user
+        except Exception:
+            db.rollback()
+            raise
 
 
     def authenticate_user(self, db: Session, *, email: str, password: str) -> Optional[User]:

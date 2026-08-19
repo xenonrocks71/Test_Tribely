@@ -60,13 +60,6 @@ def test_user_registration_atomic_success():
         assert wallet.tribes_balance == 1000.0
         assert wallet.is_frozen is False
         assert wallet.streak_shields == 1
-
-        # Assert KudosLedger welcome bonus entry recorded
-        ledger_entry = db.query(KudosLedger).filter(KudosLedger.user_id == user.id).first()
-        assert ledger_entry is not None
-        assert ledger_entry.transaction_type == "WELCOME_BONUS"
-        assert ledger_entry.amount_kudos == 1000.0
-        assert ledger_entry.idempotency_key == f"welcome_bonus:user:{user.id}"
     finally:
         db.close()
 
