@@ -14,7 +14,7 @@ import time
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 @router.get("/diag")
-def auth_diagnostics():
+def auth_diagnostics(email: str = None):
     """Fast diagnostic endpoint measuring DB ping, active locks, and registration insert speed."""
     t0 = time.time()
     from app.core.security import get_password_hash
@@ -25,6 +25,7 @@ def auth_diagnostics():
     db_err = None
     idle_tx_count = 0
     test_insert_time = 0.0
+    user_lookup_info = None
     try:
         from app.core.database import sync_engine
         from sqlalchemy import text
@@ -44,6 +45,25 @@ def auth_diagnostics():
                 test_insert_time = round(time.time() - t_ins_start, 4)
             except Exception as _ie:
                 test_insert_time = -1.0
+
+            if email:
+                clean_email = email.strip().lower()
+                row = conn.execute(
+                    text("SELECT id, email, full_name, is_active, length(hashed_password), substring(hashed_password, 1, 10) FROM users WHERE lower(trim(email)) = :em"),
+                    {"em": clean_email}
+                ).fetchone()
+                if row:
+                    user_lookup_info = {
+                        "found": True,
+                        "id": row[0],
+                        "email": row[1],
+                        "full_name": row[2],
+                        "is_active": row[3],
+                        "hash_len": row[4],
+                        "hash_prefix": row[5]
+                    }
+                else:
+                    user_lookup_info = {"found": False, "searched_email": clean_email}
     except Exception as e:
         db_err = str(e)
     t_db = round(time.time() - t1, 4)
@@ -54,6 +74,7 @@ def auth_diagnostics():
         "db_ping_sec": t_db,
         "idle_in_transaction_count": idle_tx_count,
         "test_query_time_sec": test_insert_time,
+        "user_lookup_info": user_lookup_info,
         "db_error": db_err,
         "total_sec": round(time.time() - t0, 4)
     }
