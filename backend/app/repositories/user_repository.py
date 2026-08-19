@@ -23,13 +23,17 @@ class UserRepository(BaseRepository[User, UserCreate, UserCreate]):
 
     def get_by_email(self, db: Session, email: str) -> Optional[User]:
         """
-        Fetch a single User entity matching the given email address.
+        Fetch a single User entity matching the given email address (case-insensitive & trimmed).
 
         :param db: Active database session.
         :param email: Target user email address string.
         :return: Optional User instance if found, else None.
         """
-        return db.query(User).filter(User.email == email).first()
+        if not email:
+            return None
+        from sqlalchemy import func
+        clean_email = email.strip().lower()
+        return db.query(User).filter(func.lower(User.email) == clean_email).first()
 
     def create_user(self, db: Session, *, user_in: UserCreate) -> User:
         """
@@ -40,11 +44,13 @@ class UserRepository(BaseRepository[User, UserCreate, UserCreate]):
         :return: Persisted User model instance.
         """
         from app.models.models import UserWallet
+        clean_email = user_in.email.strip().lower()
+        clean_name = user_in.full_name.strip() if user_in.full_name else None
         hashed_pass = get_password_hash(user_in.password)
         db_user = User(
-            email=user_in.email,
+            email=clean_email,
             hashed_password=hashed_pass,
-            full_name=user_in.full_name,
+            full_name=clean_name,
             is_active=True,
             profile=UserProfile(profile_image_url=None),
             wallet=UserWallet(

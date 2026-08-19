@@ -18,10 +18,19 @@ def get_password_hash(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Compares a raw input password against a hashed database password string.
-    Returns True if they match, otherwise False.
+    Supports native sub-millisecond bcrypt hashes as well as legacy/passlib hashes.
     """
+    if not plain_password or not hashed_password:
+        return False
     try:
-        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+        if bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8")):
+            return True
+    except Exception:
+        pass
+
+    try:
+        pwd_context = CryptContext(schemes=["bcrypt", "pbkdf2_sha256"], deprecated="auto")
+        return pwd_context.verify(plain_password, hashed_password)
     except Exception:
         return False
 

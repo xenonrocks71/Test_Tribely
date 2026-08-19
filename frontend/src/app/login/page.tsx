@@ -31,9 +31,14 @@ function LoginContent() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !password) {
+      setError("Please enter your email and password.");
+      return;
+    }
     setError(""); setSuccess(""); setLoading(true);
     try {
-      await authService.login(email, password);
+      await authService.login(cleanEmail, password);
       // Immediately prefetch Arenas data into memory cache
       dataCache.prefetch("/api/arenas/").catch(() => {});
       const target = redirectTo.startsWith("/") ? redirectTo : "/dashboard";
@@ -43,7 +48,6 @@ function LoginContent() {
       setError(formatErrorMessage(err.response?.data?.detail, "Incorrect email or password."));
       setLoading(false);
     }
-
   };
 
   const features = [
