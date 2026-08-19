@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.core.security import create_access_token
 from app.core.config import settings
 from app.schemas.schemas import UserCreate, UserResponse
+from pydantic import BaseModel
 from app.services.auth_service import auth_service
 
 import time
@@ -159,6 +160,40 @@ async def login_user(
         subject=user.id, expires_delta=access_token_expires
     )
     
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_id": user.id,
+        "full_name": user.full_name,
+        "email": user.email
+    }
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    new_password: str
+
+@router.post("/reset-password")
+def reset_user_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Secure password reset endpoint allowing users to reset their account password and log in immediately.
+    """
+    clean_email = payload.email.strip().lower()
+    user = auth_service.user_repo.get_by_email(db, email=clean_email)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No account found with this email address. Please register a new account."
+        )
+    
+    user.hashed_password = get_password_hash(payload.new_password)
+    db.add(user)
+    db.commit()
+
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        subject=user.id, expires_delta=access_token_expires
+    )
+
     return {
         "access_token": access_token,
         "token_type": "bearer",

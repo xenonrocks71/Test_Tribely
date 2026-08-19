@@ -6,6 +6,7 @@ import Link from "next/link";
 import { authService } from "@/services/auth.service";
 import { dataCache } from "@/app/utils/dataCache";
 import { formatErrorMessage } from "@/app/utils/api";
+import { apiClient } from "@/lib/api-client";
 import { Eye, EyeOff, BookOpen, MessageCircle, Lock } from "lucide-react";
 
 import Image from "next/image";
@@ -20,6 +21,41 @@ function LoginContent() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState("");
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetError("");
+    setResetLoading(true);
+    try {
+      const res = await apiClient.post<any>("/api/auth/reset-password", {
+        email: resetEmail.trim(),
+        new_password: resetNewPassword,
+      });
+      if (res?.access_token) {
+        localStorage.setItem("tribely_token", res.access_token);
+        localStorage.setItem("token", res.access_token);
+        localStorage.setItem("tribely_user_id", String(res.user_id));
+        localStorage.setItem("tribely_user_name", res.full_name || "");
+        localStorage.setItem("user", JSON.stringify({
+          id: res.user_id,
+          full_name: res.full_name,
+          email: resetEmail.trim()
+        }));
+        dataCache.prefetch("/api/arenas/").catch(() => {});
+        router.push("/dashboard");
+      }
+    } catch (err: any) {
+      const detail = err.response?.data?.detail;
+      setResetError(typeof detail === "string" ? detail : "Failed to reset password. Please check your email.");
+      setResetLoading(false);
+    }
+  };
 
   useEffect(() => {
     // Prefetch dashboard route on login page load
@@ -198,9 +234,22 @@ function LoginContent() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--fg-muted)" }}>
-                Password
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--fg-muted)" }}>
+                  Password
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetEmail(email.trim());
+                    setShowResetModal(true);
+                  }}
+                  className="text-xs font-semibold hover:underline"
+                  style={{ color: "var(--accent)" }}
+                >
+                  Forgot / Set new password?
+                </button>
+              </div>
               <div className="relative">
                 <input
                   type={showPw ? "text" : "password"}
@@ -237,6 +286,71 @@ function LoginContent() {
               ) : "Sign in"}
             </button>
           </form>
+
+          {/* Quick Password Reset Modal */}
+          {showResetModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+              <div
+                className="w-full max-w-md rounded-2xl p-6 shadow-2xl border space-y-4 animate-in fade-in zoom-in-95 duration-150"
+                style={{ background: "var(--bg-raised)", borderColor: "var(--border)" }}
+              >
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-extrabold" style={{ color: "var(--fg)" }}>Set New Password</h3>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowResetModal(false);
+                      setResetError("");
+                    }}
+                    className="text-xs font-bold text-neutral-400 hover:text-white"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+                <p className="text-xs" style={{ color: "var(--fg-muted)" }}>
+                  Enter your email and a new password to update your credentials and sign in immediately.
+                </p>
+
+                {resetError && (
+                  <div className="p-3 rounded-xl text-xs font-semibold bg-rose-500/10 border border-rose-500/30 text-rose-400">
+                    {resetError}
+                  </div>
+                )}
+
+                <form onSubmit={handleResetPassword} className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold" style={{ color: "var(--fg-muted)" }}>Your Email</label>
+                    <input
+                      type="email"
+                      required
+                      value={resetEmail}
+                      onChange={(e) => setResetEmail(e.target.value)}
+                      className="input-base focus-accent font-medium w-full"
+                      placeholder="you@example.com"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold" style={{ color: "var(--fg-muted)" }}>New Password</label>
+                    <input
+                      type="password"
+                      required
+                      value={resetNewPassword}
+                      onChange={(e) => setResetNewPassword(e.target.value)}
+                      className="input-base focus-accent font-medium w-full"
+                      placeholder="Enter new password"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={resetLoading}
+                    className="btn-accent w-full py-3 rounded-xl text-xs font-extrabold disabled:opacity-50"
+                  >
+                    {resetLoading ? "Updating Password…" : "Update & Sign In"}
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
 
           <p className="mt-8 text-center text-xs font-medium" style={{ color: "var(--fg-muted)" }}>
             No account?{" "}
