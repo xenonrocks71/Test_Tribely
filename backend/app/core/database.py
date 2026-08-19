@@ -50,7 +50,8 @@ sync_engine = create_engine(
 SessionLocal = sessionmaker(
     bind=sync_engine,
     autocommit=False,
-    autoflush=False
+    autoflush=False,
+    expire_on_commit=False
 )
 
 # Maintain engine alias for backward compatibility
