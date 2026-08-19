@@ -196,14 +196,9 @@ function DashboardContent() {
   // Fetch User Kudos Balance for Account Wallet
   const fetchKudosBalance = async () => {
     try {
-      const token = localStorage.getItem("token");
-      if (!token) return;
-      const res = await fetch("http://localhost:8000/api/kudos/wallet", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (data.status === "success") {
-        setUserKudosBalance(data.data.kudos_balance);
+      const res: any = await api.get("/api/kudos/wallet");
+      if (res && res.status === "success" && res.data) {
+        setUserKudosBalance(res.data.kudos_balance);
       }
     } catch (e) {
       console.error("Error fetching Kudos balance:", e);
