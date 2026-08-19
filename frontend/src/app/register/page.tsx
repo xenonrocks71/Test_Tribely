@@ -21,9 +21,18 @@ function RegisterPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(""); setLoading(true);
+    setError("");
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = fullName.trim();
+
+    if (!cleanEmail || !password || !cleanName) {
+      setError("Please fill out all required fields.");
+      return;
+    }
+
+    setLoading(true);
     try {
-      await authService.register({ email, password, full_name: fullName });
+      await authService.register({ email: cleanEmail, password, full_name: cleanName });
       dataCache.prefetch("/api/arenas/").catch(() => {});
       router.prefetch("/dashboard");
       router.push("/dashboard");

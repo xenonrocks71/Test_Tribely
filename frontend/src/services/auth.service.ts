@@ -71,7 +71,10 @@ export class AuthService {
    */
   public logout(): void {
     if (typeof window !== 'undefined') {
+      localStorage.removeItem('tribely_token');
       localStorage.removeItem('token');
+      localStorage.removeItem('tribely_user_id');
+      localStorage.removeItem('tribely_user_name');
       localStorage.removeItem('user');
     }
   }
