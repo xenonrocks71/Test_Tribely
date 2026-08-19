@@ -53,6 +53,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Ensure static uploads directory exists and mount static route
+os.makedirs("static/uploads", exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.rate_limiter import RateLimiterMiddleware
@@ -77,6 +81,7 @@ app.include_router(admin_arena.router)
 app.include_router(profile.router)
 app.include_router(profile.router, prefix="/api")
 app.include_router(upload.router)
+app.include_router(upload.router, prefix="/api")
 app.include_router(streak.router)
 app.include_router(escrow.router)
 app.include_router(huddle.router)

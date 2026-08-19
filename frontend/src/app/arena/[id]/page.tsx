@@ -1580,6 +1580,21 @@ export default function ArenaRoomPage() {
       const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
       recorder.stream.getTracks().forEach((t) => t.stop());
 
+      // Optimistic Voice Note in Chat Feed (0ms delay)
+      const currentStoredUserId = typeof window !== "undefined" ? Number(localStorage.getItem("tribely_user_id")) : 0;
+      const tempId = `temp_audio_${Date.now()}`;
+      const localAudioUrl = URL.createObjectURL(audioBlob);
+      const optimisticVoiceMsg: Message = {
+        id: tempId as any,
+        user_id: currentStoredUserId || userId || 0,
+        sender_name: typeof window !== "undefined" ? localStorage.getItem("tribely_user_name") || "You" : "You",
+        sender_avatar_url: typeof window !== "undefined" ? localStorage.getItem("tribely_user_avatar") || null : null,
+        content: localAudioUrl,
+        message_type: "audio",
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [optimisticVoiceMsg, ...prev]);
+
       try {
         const formData = new FormData();
         formData.append("file", audioBlob, `voice_note_${Date.now()}.webm`);
@@ -1592,13 +1607,17 @@ export default function ArenaRoomPage() {
         if (audioUrl) {
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(
-              JSON.stringify({ content: audioUrl, message_type: "audio" })
+              JSON.stringify({ content: audioUrl, message_type: "audio", temp_id: tempId })
             );
           } else {
-            await api.post(`/api/activity/arena/${id}/message`, {
+            const res = await api.post(`/api/activity/arena/${id}/message`, {
               content: audioUrl,
               message_type: "audio",
             });
+            const returnedMsg = res.data?.data;
+            if (returnedMsg) {
+              setMessages((prev) => [returnedMsg, ...prev.filter((m) => String(m.id) !== String(tempId))]);
+            }
           }
         }
       } catch (err) {
@@ -1620,6 +1639,22 @@ export default function ArenaRoomPage() {
     if (!file) return;
 
     setIsUploadingMedia(true);
+    const tempId = `temp_img_${Date.now()}`;
+    const localImgUrl = URL.createObjectURL(file);
+
+    // Optimistic Image in Chat Feed (0ms delay)
+    const currentStoredUserId = typeof window !== "undefined" ? Number(localStorage.getItem("tribely_user_id")) : 0;
+    const optimisticImgMsg: Message = {
+      id: tempId as any,
+      user_id: currentStoredUserId || userId || 0,
+      sender_name: typeof window !== "undefined" ? localStorage.getItem("tribely_user_name") || "You" : "You",
+      sender_avatar_url: typeof window !== "undefined" ? localStorage.getItem("tribely_user_avatar") || null : null,
+      content: localImgUrl,
+      message_type: "image",
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [optimisticImgMsg, ...prev]);
+
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -1632,13 +1667,17 @@ export default function ArenaRoomPage() {
       if (imageUrl) {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(
-            JSON.stringify({ content: imageUrl, message_type: "image" })
+            JSON.stringify({ content: imageUrl, message_type: "image", temp_id: tempId })
           );
         } else {
-          await api.post(`/api/activity/arena/${id}/message`, {
+          const res = await api.post(`/api/activity/arena/${id}/message`, {
             content: imageUrl,
             message_type: "image",
           });
+          const returnedMsg = res.data?.data;
+          if (returnedMsg) {
+            setMessages((prev) => [returnedMsg, ...prev.filter((m) => String(m.id) !== String(tempId))]);
+          }
         }
       }
     } catch (err) {
@@ -1942,7 +1981,7 @@ export default function ArenaRoomPage() {
           }
 
 
-          // ── INCOMING_CALL: Someone started a new call — notify non-starters ──
+          // ── INCOMING_CALL: Someone started a new call — notify non-starters & log to chat ──
           if (liveData?.event_type === "INCOMING_CALL") {
             const callerName = liveData.caller_name || liveData.active_call?.caller_name || "A member";
             const callType = liveData.call_type || liveData.active_call?.call_type || "audio";
@@ -1955,6 +1994,21 @@ export default function ArenaRoomPage() {
             } else {
               setActiveCallState({ active: true, call_type: callType, caller_name: callerName, caller_id: callerId });
             }
+
+            // Real-time Call Log in Chat Feed (0ms delay)
+            const callMsg: Message = {
+              id: `call_${Date.now()}` as any,
+              user_id: callerId,
+              sender_name: callerName,
+              sender_avatar_url: null,
+              content: `${callType === "video" ? "📹 Video Call" : "📞 Voice Huddle"} started by ${callerName}! Tap to join.`,
+              message_type: "call_invite",
+              created_at: new Date().toISOString(),
+            };
+            setMessages((prev) => {
+              const alreadyHas = prev.some((m) => m.message_type === "call_invite" && Date.now() - new Date(m.created_at).getTime() < 10000);
+              return alreadyHas ? prev : [callMsg, ...prev];
+            });
 
             // If I'm not the starter, show toast to invite me to join
             if (selfId !== callerId) {
@@ -2026,6 +2080,22 @@ export default function ArenaRoomPage() {
             setShowVoiceCallModal(false);
             setShowVideoCallModal(false);
             stopLocalMediaStream();
+
+            // Real-time Call Ended Log in Chat Feed
+            const endCallMsg: Message = {
+              id: `call_end_${Date.now()}` as any,
+              user_id: 0,
+              sender_name: "System",
+              sender_avatar_url: null,
+              content: "📞 Call session ended.",
+              message_type: "call_ended",
+              created_at: new Date().toISOString(),
+            };
+            setMessages((prev) => {
+              const alreadyHas = prev.some((m) => m.message_type === "call_ended" && Date.now() - new Date(m.created_at).getTime() < 10000);
+              return alreadyHas ? prev : [endCallMsg, ...prev];
+            });
+
             toast.info("📞 The call has ended.");
             return;
           }
@@ -3230,14 +3300,14 @@ export default function ArenaRoomPage() {
                                 </div>
                               );
                             })()
-                          ) : msg.message_type === "audio" || (msg.content && (msg.content.endsWith(".webm") || msg.content.endsWith(".mp3") || msg.content.endsWith(".wav") || (msg.content.includes("/static/uploads/") && msg.content.includes("voice")))) ? (
+                          ) : msg.message_type === "audio" || (typeof msg.content === "string" && (msg.content.endsWith(".webm") || msg.content.endsWith(".mp3") || msg.content.endsWith(".wav") || msg.content.startsWith("blob:") || (msg.content.includes("/static/uploads/") && msg.content.includes("voice")))) ? (
                             <AudioMessagePlayer src={msg.content} isMe={isMe} />
-                          ) : msg.message_type === "image" || (msg.content && msg.content.startsWith("http") && (msg.content.endsWith(".png") || msg.content.endsWith(".jpg") || msg.content.endsWith(".jpeg") || msg.content.endsWith(".webp") || (msg.content.includes("/static/uploads/") && !msg.content.includes(".webm")))) ? (
+                          ) : msg.message_type === "image" || (typeof msg.content === "string" && (msg.content.startsWith("data:image/") || msg.content.startsWith("blob:") || /\.(jpg|jpeg|png|gif|webp|svg)/i.test(msg.content) || (msg.content.includes("/static/uploads/") && !msg.content.includes(".webm")))) ? (
                             <div
                               onClick={() => setViewerImageUrl(msg.content)}
                               className="overflow-hidden rounded-2xl border border-neutral-700/40 cursor-pointer max-w-[260px] shadow-sm hover:opacity-95 transition-opacity"
                             >
-                              <img src={msg.content} alt="Chat Attachment" className="w-full h-auto object-cover max-h-[300px]" />
+                              <img src={msg.content} alt="Chat Attachment" className="w-full h-auto object-cover max-h-[300px] rounded-2xl" />
                             </div>
                           ) : (
                             <div
