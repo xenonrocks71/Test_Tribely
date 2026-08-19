@@ -79,7 +79,6 @@ class UserRepository(BaseRepository[User, UserCreate, UserCreate]):
             db.add(ledger)
 
             db.commit()
-            db.refresh(db_user)
             return db_user
         except Exception:
             db.rollback()

@@ -31,6 +31,8 @@ AsyncSessionLocal = async_sessionmaker(
 # ------------------------------------------------------------------
 # 2. Sync Engine & Fallback Session Factory (Psycopg2 / SQLite)
 # ------------------------------------------------------------------
+from sqlalchemy.pool import NullPool
+
 sync_db_uri = settings.SYNC_DATABASE_URI
 is_sqlite = sync_db_uri.startswith("sqlite")
 sync_connect_args = {"check_same_thread": False} if is_sqlite else {
@@ -40,12 +42,8 @@ sync_connect_args = {"check_same_thread": False} if is_sqlite else {
 sync_engine = create_engine(
     sync_db_uri,
     connect_args=sync_connect_args,
-    pool_pre_ping=True,
-    pool_timeout=5,
     **({} if is_sqlite else {
-        "pool_size": 5,
-        "max_overflow": 10,
-        "pool_recycle": 30,
+        "poolclass": NullPool,
     })
 )
 
