@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 @router.get("/diag")
 def auth_diagnostics():
-    """Fast diagnostic endpoint measuring DB ping and hashing speed."""
+    """Fast diagnostic endpoint measuring DB ping, active locks, and registration insert speed."""
     t0 = time.time()
     from app.core.security import get_password_hash
     hash_sample = get_password_hash("TestPass123!")
@@ -23,12 +23,33 @@ def auth_diagnostics():
 
     t1 = time.time()
     db_err = None
-    db_res = None
+    idle_tx_count = 0
+    test_insert_time = 0.0
     try:
         from app.core.database import sync_engine
         from sqlalchemy import text
         with sync_engine.connect() as conn:
-            db_res = conn.execute(text("SELECT 1")).scalar()
+            # 1. Ping
+            conn.execute(text("SELECT 1")).scalar()
+            
+            # 2. Check for blocked / idle in transaction queries
+            try:
+                idle_tx_count = conn.execute(text(
+                    "SELECT count(*) FROM pg_stat_activity WHERE state = 'idle in transaction'"
+                )).scalar()
+            except Exception:
+                idle_tx_count = -1
+
+            # 3. Test insert & rollback speed
+            t_ins_start = time.time()
+            trans = conn.begin()
+            try:
+                conn.execute(text("SELECT id FROM users LIMIT 1")).fetchall()
+                test_insert_time = round(time.time() - t_ins_start, 4)
+                trans.rollback()
+            except Exception as _ie:
+                trans.rollback()
+                test_insert_time = -1.0
     except Exception as e:
         db_err = str(e)
     t_db = round(time.time() - t1, 4)
@@ -37,9 +58,9 @@ def auth_diagnostics():
         "status": "ok" if not db_err else "error",
         "hash_time_sec": t_hash,
         "db_ping_sec": t_db,
-        "db_result": db_res,
+        "idle_in_transaction_count": idle_tx_count,
+        "test_query_time_sec": test_insert_time,
         "db_error": db_err,
-        "sync_uri_prefix": str(settings.SYNC_DATABASE_URI).split("@")[-1] if settings.SYNC_DATABASE_URI else None,
         "total_sec": round(time.time() - t0, 4)
     }
 
