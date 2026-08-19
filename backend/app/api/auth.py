@@ -29,10 +29,8 @@ def auth_diagnostics():
         from app.core.database import sync_engine
         from sqlalchemy import text
         with sync_engine.connect() as conn:
-            # 1. Ping
             conn.execute(text("SELECT 1")).scalar()
             
-            # 2. Check for blocked / idle in transaction queries
             try:
                 idle_tx_count = conn.execute(text(
                     "SELECT count(*) FROM pg_stat_activity WHERE state = 'idle in transaction'"
@@ -40,15 +38,11 @@ def auth_diagnostics():
             except Exception:
                 idle_tx_count = -1
 
-            # 3. Test insert & rollback speed
             t_ins_start = time.time()
-            trans = conn.begin()
             try:
                 conn.execute(text("SELECT id FROM users LIMIT 1")).fetchall()
                 test_insert_time = round(time.time() - t_ins_start, 4)
-                trans.rollback()
             except Exception as _ie:
-                trans.rollback()
                 test_insert_time = -1.0
     except Exception as e:
         db_err = str(e)

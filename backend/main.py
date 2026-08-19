@@ -41,11 +41,6 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
-    try:
-        models.Base.metadata.create_all(bind=engine)
-        logging.info("Database schema synchronized successfully on boot.")
-    except Exception as e:
-        logging.error(f"Database schema sync notice: {e}")
     yield
 
 app = FastAPI(
