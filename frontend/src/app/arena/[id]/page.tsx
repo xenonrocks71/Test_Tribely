@@ -3249,12 +3249,12 @@ export default function ArenaRoomPage() {
                           )}
 
                           {/* Instagram Call Message Pill (Matching Reference DM Screenshot) */}
-                          {msg.message_type === "call_invite" || msg.message_type === "call_ended" || msg.content.includes("Voice Huddle started") || msg.content.includes("Video Call started") ? (
+                          {msg.message_type === "call_invite" || msg.message_type === "call_ended" || (typeof msg.content === "string" && (msg.content.includes("Voice Huddle started") || msg.content.includes("Video Call started"))) ? (
                             (() => {
                               const isEnded = msg.message_type === "call_ended";
                               // A call_invite pill is joinable ONLY if a live call is currently active
                               const callIsLive = !isEnded && isCallSessionLive(activeCallState);
-                              const isVideo = msg.content.toLowerCase().includes("video") ||
+                              const isVideo = (typeof msg.content === "string" && msg.content.toLowerCase().includes("video")) ||
                                 (activeCallState?.call_type === "video" && callIsLive);
                               const callTitle = isVideo
                                 ? isEnded ? "Video call ended" : "Video call"
@@ -3301,13 +3301,13 @@ export default function ArenaRoomPage() {
                               );
                             })()
                           ) : msg.message_type === "audio" || (typeof msg.content === "string" && (msg.content.endsWith(".webm") || msg.content.endsWith(".mp3") || msg.content.endsWith(".wav") || msg.content.startsWith("blob:") || (msg.content.includes("/static/uploads/") && msg.content.includes("voice")))) ? (
-                            <AudioMessagePlayer src={msg.content} isMe={isMe} />
+                            <AudioMessagePlayer src={msg.content || ""} isMe={isMe} />
                           ) : msg.message_type === "image" || (typeof msg.content === "string" && (msg.content.startsWith("data:image/") || msg.content.startsWith("blob:") || /\.(jpg|jpeg|png|gif|webp|svg)/i.test(msg.content) || (msg.content.includes("/static/uploads/") && !msg.content.includes(".webm")))) ? (
                             <div
-                              onClick={() => setViewerImageUrl(msg.content)}
+                              onClick={() => msg.content && setViewerImageUrl(msg.content)}
                               className="overflow-hidden rounded-2xl border border-neutral-700/40 cursor-pointer max-w-[260px] shadow-sm hover:opacity-95 transition-opacity"
                             >
-                              <img src={msg.content} alt="Chat Attachment" className="w-full h-auto object-cover max-h-[300px] rounded-2xl" />
+                              <img src={msg.content || ""} alt="Chat Attachment" className="w-full h-auto object-cover max-h-[300px] rounded-2xl" />
                             </div>
                           ) : (
                             <div
@@ -3321,7 +3321,7 @@ export default function ArenaRoomPage() {
                                 overflowWrap: "anywhere",
                               }}
                             >
-                              {renderFormattedMessageContent(msg.content, setViewerImageUrl)}
+                              {renderFormattedMessageContent(msg.content || "", setViewerImageUrl)}
                             </div>
                           )}
 
