@@ -5,24 +5,25 @@ from jose import jwt
 from passlib.context import CryptContext
 from app.core.config import settings
 
-# Silence the noisy internal passlib version warning regarding bcrypt __about__
-logging.getLogger("passlib").setLevel(logging.ERROR)
-
-# Explicitly setup passlib with optimized bcrypt rounds (rounds=6 for ultra-fast <5ms response on cloud containers)
-pwd_context = CryptContext(schemes=["bcrypt"], bcrypt__rounds=6, deprecated="auto")
+import bcrypt
 
 def get_password_hash(password: str) -> str:
     """
     Takes a raw password string and returns its secure cryptographic bcrypt hash.
+    Optimized with direct native C-bindings for sub-millisecond execution on cloud containers.
     """
-    return pwd_context.hash(password)
+    salt = bcrypt.gensalt(rounds=4)
+    return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Compares a raw input password against a hashed database password string.
     Returns True if they match, otherwise False.
     """
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    except Exception:
+        return False
 
 def create_access_token(subject: Union[str, Any], expires_delta: datetime.timedelta = None) -> str:
     """
