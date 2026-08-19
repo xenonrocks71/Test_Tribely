@@ -38,28 +38,25 @@ export class AuthService {
   }
 
   /**
-   * Login user with email and password via OAuth2 form payload.
+   * Login user with email and password.
    */
   public async login(email: string, password: string): Promise<LoginResponse> {
-    const formData = new URLSearchParams();
-    formData.append('username', email);
-    formData.append('password', password);
-
-    const response = await apiClient.post<LoginResponse>('/api/auth/login', formData, {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
+    const cleanEmail = email.trim();
+    const response = await apiClient.post<LoginResponse>('/api/auth/login', {
+      email: cleanEmail,
+      username: cleanEmail,
+      password: password,
     });
 
     if (response.access_token && typeof window !== 'undefined') {
       localStorage.setItem('tribely_token', response.access_token);
       localStorage.setItem('token', response.access_token);
-      localStorage.setItem('tribely_user_id', response.user_id.toString());
-      localStorage.setItem('tribely_user_name', response.full_name);
+      localStorage.setItem('tribely_user_id', String(response.user_id));
+      localStorage.setItem('tribely_user_name', response.full_name || '');
       localStorage.setItem('user', JSON.stringify({
         id: response.user_id,
         full_name: response.full_name,
-        email: email
+        email: cleanEmail
       }));
     }
 

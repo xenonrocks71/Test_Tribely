@@ -23,7 +23,7 @@ class UserRepository(BaseRepository[User, UserCreate, UserCreate]):
 
     def get_by_email(self, db: Session, email: str) -> Optional[User]:
         """
-        Fetch a single User entity matching the given email address (case-insensitive & trimmed).
+        Fetch a single User entity matching the given email address (case-insensitive & whitespace-trimmed).
 
         :param db: Active database session.
         :param email: Target user email address string.
@@ -31,9 +31,16 @@ class UserRepository(BaseRepository[User, UserCreate, UserCreate]):
         """
         if not email:
             return None
-        from sqlalchemy import func
+        from sqlalchemy import func, or_
         clean_email = email.strip().lower()
-        return db.query(User).filter(func.lower(User.email) == clean_email).first()
+        return db.query(User).filter(
+            or_(
+                func.lower(func.trim(User.email)) == clean_email,
+                func.lower(User.email) == clean_email,
+                User.email == clean_email,
+                User.email == email
+            )
+        ).first()
 
     def create_user(self, db: Session, *, user_in: UserCreate) -> User:
         """

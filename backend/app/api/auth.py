@@ -79,13 +79,53 @@ def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
         "user_id": user.id
     }
 
+from fastapi import Request
+
 @router.post("/login")
-def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+async def login_user(
+    request: Request,
+    db: Session = Depends(get_db)
+):
     """
-    Authenticates user credentials and returns a secure signed JWT Access Token with user metadata.
-    Delegates authentication checks to AuthService.
+    Authenticates user credentials and returns a secure signed JWT Access Token.
+    Accepts both application/json ({email/username, password}) and application/x-www-form-urlencoded.
     """
-    user = auth_service.authenticate_user(db, email=form_data.username, password=form_data.password)
+    username = ""
+    password = ""
+
+    content_type = request.headers.get("content-type", "").lower()
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            username = str(body.get("email") or body.get("username") or "").strip()
+            password = str(body.get("password") or "")
+        except Exception:
+            pass
+    else:
+        try:
+            form = await request.form()
+            username = str(form.get("username") or form.get("email") or "").strip()
+            password = str(form.get("password") or "")
+        except Exception:
+            pass
+
+    if not username or not password:
+        try:
+            body_bytes = await request.body()
+            import urllib.parse
+            parsed = urllib.parse.parse_qs(body_bytes.decode("utf-8", errors="ignore"))
+            username = str((parsed.get("username", [""])[0] or parsed.get("email", [""])[0])).strip()
+            password = str(parsed.get("password", [""])[0])
+        except Exception:
+            pass
+
+    if not username or not password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide both email/username and password."
+        )
+
+    user = auth_service.authenticate_user(db, email=username, password=password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -102,5 +142,6 @@ def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = D
         "access_token": access_token,
         "token_type": "bearer",
         "user_id": user.id,
-        "full_name": user.full_name
+        "full_name": user.full_name,
+        "email": user.email
     }

@@ -45,7 +45,9 @@ function LoginContent() {
       router.prefetch(target);
       router.push(target);
     } catch (err: any) {
-      setError(formatErrorMessage(err.response?.data?.detail, "Incorrect email or password."));
+      const detail = err.response?.data?.detail;
+      const message = typeof detail === "string" ? detail : (detail?.[0]?.msg || "Incorrect email or password.");
+      setError(message);
       setLoading(false);
     }
   };

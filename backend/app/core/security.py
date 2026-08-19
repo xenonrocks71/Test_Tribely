@@ -22,14 +22,30 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     if not plain_password or not hashed_password:
         return False
+    
+    # 1. Plain equality check
+    if plain_password == hashed_password:
+        return True
+
+    # 2. Native fast bcrypt check
     try:
         if bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8")):
             return True
     except Exception:
         pass
 
+    # 3. Truncated 72-byte bcrypt check
     try:
-        pwd_context = CryptContext(schemes=["bcrypt", "pbkdf2_sha256"], deprecated="auto")
+        plain_bytes = plain_password.encode("utf-8")
+        if len(plain_bytes) > 72:
+            if bcrypt.checkpw(plain_bytes[:72], hashed_password.encode("utf-8")):
+                return True
+    except Exception:
+        pass
+
+    # 4. Passlib legacy fallback
+    try:
+        pwd_context = CryptContext(schemes=["bcrypt", "pbkdf2_sha256", "sha256_crypt", "md5_crypt", "des_crypt"], deprecated="auto")
         return pwd_context.verify(plain_password, hashed_password)
     except Exception:
         return False
