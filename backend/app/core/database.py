@@ -7,17 +7,11 @@ from app.core.config import settings
 # ------------------------------------------------------------------
 # 1. Async Engine & High-Concurrency Connection Pool (Asyncpg)
 # ------------------------------------------------------------------
-async_engine_kwargs = {
-    "pool_size": 20,
-    "max_overflow": 10,
-    "pool_timeout": 30,
-    "pool_recycle": 1800,
-    "pool_pre_ping": True,
-}
+from sqlalchemy.pool import NullPool
 
 async_engine = create_async_engine(
     settings.ASYNC_DATABASE_URI,
-    **async_engine_kwargs
+    poolclass=NullPool
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -31,8 +25,6 @@ AsyncSessionLocal = async_sessionmaker(
 # ------------------------------------------------------------------
 # 2. Sync Engine & Fallback Session Factory (Psycopg2 / SQLite)
 # ------------------------------------------------------------------
-from sqlalchemy.pool import NullPool
-
 sync_db_uri = settings.SYNC_DATABASE_URI
 is_sqlite = sync_db_uri.startswith("sqlite")
 sync_connect_args = {"check_same_thread": False} if is_sqlite else {
