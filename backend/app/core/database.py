@@ -75,6 +75,10 @@ def get_db() -> Generator:
         db.rollback()
         raise
     finally:
+        try:
+            db.rollback()
+        except Exception:
+            pass
         db.close()
 
 
@@ -84,4 +88,8 @@ def get_read_db() -> Generator:
     try:
         yield db
     finally:
+        try:
+            db.rollback()
+        except Exception:
+            pass
         db.close()
