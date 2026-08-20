@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.services.auth_service import auth_service
 
 import time
+import asyncio
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
@@ -147,7 +148,8 @@ async def login_user(
             detail="Please provide both email/username and password."
         )
 
-    user = auth_service.authenticate_user(db, email=username, password=password)
+    # Offload sync DB query and CPU-bound bcrypt hash check to worker threadpool
+    user = await asyncio.to_thread(auth_service.authenticate_user, db, username, password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
