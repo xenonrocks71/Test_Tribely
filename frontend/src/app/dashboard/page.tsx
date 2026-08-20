@@ -291,8 +291,17 @@ function DashboardContent() {
     await dataCache.fetchSWR<Arena[]>(
       "/api/arenas/",
       (data) => {
-        setArenas(data || []);
+        const list = data || [];
+        setArenas(list);
         setLoading(false);
+        // Instant Chat Preload: Prefetch recent chats & transactions for active arenas
+        if (Array.isArray(list) && list.length > 0) {
+          list.slice(0, 10).forEach((a) => {
+            if (a.membership_status === "approved" || !a.is_private) {
+              dataCache.prefetch(`/api/activity/arena/${a.id}/history`).catch(() => {});
+            }
+          });
+        }
       },
       () => {
         setError("Could not retrieve habit Arenas.");

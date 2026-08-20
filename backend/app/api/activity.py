@@ -663,6 +663,12 @@ async def send_arena_message(
         "created_at": db_msg.created_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if db_msg.created_at else ""
     }
 
+    # Push to Redis for instant sub-millisecond prefetching
+    try:
+        from app.services.chat_cache_service import chat_cache_service
+        chat_cache_service.push_recent_message(arena_id, broadcast_payload)
+    except Exception as c_err:
+        print(f"ChatCache push notice: {c_err}")
 
     try:
         await websocket_manager.broadcast_to_arena(arena_id, broadcast_payload)
