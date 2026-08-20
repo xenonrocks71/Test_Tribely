@@ -7,34 +7,56 @@ from typing import Optional
 import redis.asyncio as aioredis
 from app.core.config import settings
 
+_redis_pool: Optional[aioredis.ConnectionPool] = None
 _redis_client: Optional[aioredis.Redis] = None
+
+
+def get_redis_pool() -> aioredis.ConnectionPool:
+    """
+    Get or initialize global async Redis ConnectionPool.
+    """
+    global _redis_pool
+    if _redis_pool is None:
+        is_ssl = (
+            "upstash.io" in settings.REDIS_HOST
+            or settings.REDIS_HOST.startswith("rediss://")
+            or getattr(settings, "REDIS_SSL", False)
+        )
+        _redis_pool = aioredis.ConnectionPool(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            password=settings.REDIS_PASSWORD or None,
+            decode_responses=True,
+            ssl=is_ssl,
+            ssl_cert_reqs=None if is_ssl else None,
+            socket_timeout=2.0,
+            socket_connect_timeout=3.0,
+            max_connections=50,
+            retry_on_timeout=True,
+        )
+    return _redis_pool
 
 
 async def get_redis_client() -> aioredis.Redis:
     """
-    Get or initialize global async Redis client instance.
+    Get or initialize global async Redis client instance backed by connection pool.
     """
     global _redis_client
     if _redis_client is None:
-        is_upstash = "upstash.io" in settings.REDIS_HOST
-        _redis_client = aioredis.Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            password=settings.REDIS_PASSWORD,
-            decode_responses=True,
-            ssl=is_upstash,
-            ssl_cert_reqs=None if is_upstash else "required",
-            socket_timeout=0.15,
-            socket_connect_timeout=0.15,
-        )
+        pool = get_redis_pool()
+        _redis_client = aioredis.Redis(connection_pool=pool)
     return _redis_client
 
 
 async def close_redis_client() -> None:
     """
-    Close global async Redis connection.
+    Close global async Redis connection and pool.
     """
-    global _redis_client
+    global _redis_client, _redis_pool
     if _redis_client is not None:
         await _redis_client.aclose()
         _redis_client = None
+    if _redis_pool is not None:
+        await _redis_pool.disconnect()
+        _redis_pool = None
+
