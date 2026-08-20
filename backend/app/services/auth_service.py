@@ -26,7 +26,7 @@ class AuthService:
         """
         self.user_repo = user_repo
 
-    def register_user(self, db: Session, *, user_in: UserCreate) -> User:
+    def register_user(self, db: Session, user_in: UserCreate = None, **kwargs) -> User:
         """
         Register a new user account with duplicate email validation in a single atomic database roundtrip.
 
@@ -35,6 +35,8 @@ class AuthService:
         :return: Persisted User model instance.
         :raises HTTPException: 400 Bad Request if email is already registered.
         """
+        if user_in is None:
+            user_in = kwargs.get("user_in")
         from sqlalchemy.exc import IntegrityError
         try:
             db_user = self.user_repo.create_user(db, user_in=user_in)
@@ -50,29 +52,32 @@ class AuthService:
             raise
 
 
-    def authenticate_user(self, db: Session, *, email: str, password: str) -> Optional[User]:
+    def authenticate_user(self, db: Session, email: str = None, password: str = None, **kwargs) -> Optional[User]:
         """
         Validate credentials against stored user password hash.
+        Supports both positional and keyword invocations.
 
         :param db: Active database session.
         :param email: Login email address.
         :param password: Raw plaintext password.
         :return: Optional User instance if valid, else None.
         """
+        email = email or kwargs.get("email")
+        password = password or kwargs.get("password")
         if not email or not password:
             return None
-        clean_email = email.strip().lower()
+        clean_email = str(email).strip().lower()
         user = self.user_repo.get_by_email(db, email=clean_email)
         if not user:
             # Fallback to exact search if email wasn't normalized in legacy records
-            user = self.user_repo.get_by_email(db, email=email)
+            user = self.user_repo.get_by_email(db, email=str(email))
         if not user:
             return None
-        if not verify_password(password, user.hashed_password):
+        if not verify_password(str(password), user.hashed_password):
             return None
         return user
 
-    def login(self, db: Session, *, email: str, password: str) -> Tuple[Token, User]:
+    def login(self, db: Session, email: str = None, password: str = None, **kwargs) -> Tuple[Token, User]:
         """
         Perform complete login workflow and issue a JWT access token.
 
@@ -82,6 +87,8 @@ class AuthService:
         :return: Tuple containing Token schema and authenticated User instance.
         :raises HTTPException: 400 Bad Request on invalid credentials.
         """
+        email = email or kwargs.get("email")
+        password = password or kwargs.get("password")
         user = self.authenticate_user(db, email=email, password=password)
         if not user:
             raise HTTPException(
@@ -93,7 +100,7 @@ class AuthService:
         token = Token(access_token=access_token, token_type="bearer")
         return token, user
 
-    def change_password(self, db: Session, *, user: User, current_password: str, new_password: str) -> bool:
+    def change_password(self, db: Session, user: User = None, current_password: str = None, new_password: str = None, **kwargs) -> bool:
         """
         Update user account password after validating current password.
 
@@ -104,6 +111,9 @@ class AuthService:
         :return: True if password updated successfully.
         :raises HTTPException: 400 Bad Request if current password validation fails.
         """
+        user = user or kwargs.get("user")
+        current_password = current_password or kwargs.get("current_password")
+        new_password = new_password or kwargs.get("new_password")
         if not verify_password(current_password, user.hashed_password):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

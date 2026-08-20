@@ -104,9 +104,16 @@ import traceback
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logging.error(f"Global Unhandled Exception: {exc}\n{traceback.format_exc()}")
+    origin = request.headers.get("origin") or "*"
     return JSONResponse(
         status_code=500,
-        content={"detail": str(exc)}
+        content={"detail": str(exc)},
+        headers={
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
     )
 app.include_router(notifications.router)
 app.include_router(kudos.router)
