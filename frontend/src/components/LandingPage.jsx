@@ -103,7 +103,7 @@ export default function LandingPage({ initialTab = "explore" }) {
     { icon: "🔒", color: "rgba(245,158,11,0.12)", title: "Private & Public Arenas", body: "Create invite-only private rooms with admin approval gates or join open public arenas." },
   ];
 
-  const FOOTER_LINKS = [["protocol","Protocol"],["security","Security"],["support","Support"],["transparency","Transparency"]];
+  const FOOTER_LINKS = [["protocol", "Protocol"], ["security", "Security"], ["support", "Support"], ["transparency", "Transparency"]];
 
   return (
     <div style={{ background: "var(--bg)", color: "var(--fg)" }} className="min-h-screen w-full overflow-x-hidden transition-colors duration-200">
@@ -325,7 +325,7 @@ export default function LandingPage({ initialTab = "explore" }) {
 
           {isLoading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[1,2,3].map(i => (
+              {[1, 2, 3].map(i => (
                 <div key={i} className="rounded-[28px] h-64 animate-shimmer"
                   style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }} />
               ))}
@@ -440,7 +440,7 @@ export default function LandingPage({ initialTab = "explore" }) {
             <span>© {new Date().getFullYear()} Tribely Technologies. All rights reserved.</span>
           </div>
           <div className="flex items-center gap-6 font-medium">
-            {[["/protocol","Protocol"],["/security","Security"],["/support","Support"],["/transparency","Transparency"]].map(([href, label]) => (
+            {[["/protocol", "Protocol"], ["/security", "Security"], ["/support", "Support"], ["/transparency", "Transparency"]].map(([href, label]) => (
               <Link key={href} href={href} className="hover:opacity-80 transition" style={{ color: "var(--fg-muted)" }}>{label}</Link>
             ))}
           </div>
