@@ -3248,24 +3248,21 @@ export default function ArenaRoomPage() {
                             </span>
                           )}
 
-                          {/* Call Ended System Badge */}
-                          {msg.message_type === "call_ended" ? (
-                            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold text-neutral-400 bg-neutral-800/40 border border-neutral-700/30 my-0.5 shadow-xs">
-                              <span>📞</span>
-                              <span>{typeof msg.content === "string" && msg.content ? msg.content : "Call ended"}</span>
-                              <span className="opacity-60 font-normal">· <TimeOnlyStr iso={msg.created_at} /></span>
-                            </div>
-                          ) : msg.message_type === "call_invite" ? (
+                          {/* 1. Instagram Call Log Pill (Preserving Original Design) */}
+                          {msg.message_type === "call_invite" || msg.message_type === "call_ended" || (typeof msg.content === "string" && (msg.content.startsWith("📞") || msg.content.startsWith("📹") || msg.content.includes("Voice Huddle") || msg.content.includes("Video Call") || msg.content.includes("call session ended") || msg.content.includes("Call session ended"))) ? (
                             (() => {
-                              const callIsLive = isCallSessionLive(activeCallState);
+                              const isEnded = msg.message_type === "call_ended" || (typeof msg.content === "string" && (msg.content.includes("ended") || msg.content.includes("Ended")));
+                              const callIsLive = !isEnded && isCallSessionLive(activeCallState);
                               const isVideo = (typeof msg.content === "string" && msg.content.toLowerCase().includes("video")) ||
                                 (activeCallState?.call_type === "video" && callIsLive);
-                              const callTitle = isVideo ? (callIsLive ? "Video Call (Live)" : "Video Call") : (callIsLive ? "Voice Huddle (Live)" : "Voice Huddle");
+                              const callTitle = isVideo
+                                ? isEnded ? "Video call ended" : "Video call"
+                                : isEnded ? "Voice call ended" : "Voice Huddle";
 
                               return (
                                 <div
                                   onClick={() => {
-                                    if (!callIsLive) {
+                                    if (isEnded || !callIsLive) {
                                       toast.info("📞 This call has already ended.");
                                       return;
                                     }
@@ -3274,9 +3271,13 @@ export default function ArenaRoomPage() {
                                     else handleStartVoiceCall();
                                   }}
                                   className={`px-3.5 py-2 rounded-[20px] flex items-center gap-3 shadow-xs border my-0.5 transition-all duration-200 ${
-                                    callIsLive ? "cursor-pointer hover:scale-[1.02] active:scale-95 bg-emerald-950/40 border-emerald-500/40 text-emerald-200" : "cursor-default opacity-70 bg-neutral-800 text-neutral-300 border-neutral-700/40"
+                                    callIsLive ? "cursor-pointer hover:scale-[1.02] active:scale-95" : "cursor-default opacity-85"
+                                  } ${
+                                    isMe
+                                      ? "bg-neutral-800 text-white border-neutral-700/40 hover:bg-neutral-700"
+                                      : "bg-neutral-200 text-neutral-900 dark:bg-[#262626] dark:text-[#F5F5F5] border-neutral-300/30 dark:border-neutral-700/30 hover:bg-neutral-300 dark:hover:bg-[#303030]"
                                   }`}
-                                  title={callIsLive ? "Tap to Join Ongoing Call" : "Call Ended"}
+                                  title={isEnded ? "Call Ended" : callIsLive ? "Tap to Join Ongoing Call" : "No Active Call"}
                                 >
                                   <div className="w-8 h-8 rounded-full bg-neutral-500/30 dark:bg-neutral-700/60 flex items-center justify-center text-xs shrink-0">
                                     {isVideo ? "📹" : "📞"}
@@ -3307,6 +3308,7 @@ export default function ArenaRoomPage() {
                               <img src={msg.content || ""} alt="Chat Attachment" className="w-full h-auto object-cover max-h-[300px] rounded-2xl" />
                             </div>
                           ) : (
+                            /* 2. Text Message Bubble typed by users */
                             <div
                               className={`px-4 py-2.5 text-sm leading-snug break-words whitespace-pre-wrap min-w-0 max-w-full shadow-xs ${
                                 isMe
