@@ -7,11 +7,22 @@ from app.core.config import settings
 # ------------------------------------------------------------------
 # 1. Async Engine & High-Concurrency Connection Pool (Asyncpg)
 # ------------------------------------------------------------------
-from sqlalchemy.pool import NullPool
+async_db_uri = settings.ASYNC_DATABASE_URI
+is_async_sqlite = async_db_uri.startswith("sqlite")
+
+async_engine_kwargs = {}
+if not is_async_sqlite:
+    async_engine_kwargs = {
+        "pool_size": settings.DB_POOL_SIZE,
+        "max_overflow": settings.DB_MAX_OVERFLOW,
+        "pool_timeout": settings.DB_POOL_TIMEOUT,
+        "pool_recycle": settings.DB_POOL_RECYCLE,
+        "pool_pre_ping": True,
+    }
 
 async_engine = create_async_engine(
-    settings.ASYNC_DATABASE_URI,
-    poolclass=NullPool
+    async_db_uri,
+    **async_engine_kwargs
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -23,20 +34,29 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 # ------------------------------------------------------------------
-# 2. Sync Engine & Fallback Session Factory (Psycopg2 / SQLite)
+# 2. Sync Engine & High-Performance Connection Pool (Psycopg2 / SQLite)
 # ------------------------------------------------------------------
 sync_db_uri = settings.SYNC_DATABASE_URI
 is_sqlite = sync_db_uri.startswith("sqlite")
 sync_connect_args = {"check_same_thread": False} if is_sqlite else {
-    "connect_timeout": 5,
+    "connect_timeout": 10,
 }
+
+sync_engine_kwargs = {
+    "connect_args": sync_connect_args,
+}
+if not is_sqlite:
+    sync_engine_kwargs.update({
+        "pool_size": settings.DB_POOL_SIZE,
+        "max_overflow": settings.DB_MAX_OVERFLOW,
+        "pool_timeout": settings.DB_POOL_TIMEOUT,
+        "pool_recycle": settings.DB_POOL_RECYCLE,
+        "pool_pre_ping": True,
+    })
 
 sync_engine = create_engine(
     sync_db_uri,
-    connect_args=sync_connect_args,
-    **({} if is_sqlite else {
-        "poolclass": NullPool,
-    })
+    **sync_engine_kwargs
 )
 
 SessionLocal = sessionmaker(

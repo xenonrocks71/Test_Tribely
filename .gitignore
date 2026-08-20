@@ -17,11 +17,14 @@ frontend/node_modules/
 *.tsbuildinfo
 
 # Python / Backend
-__pycache__/
+**/__pycache__/
 *.pyc
 backend/venv/
-backend/__pycache__/
 backend/scratch/
+backend/static/uploads/*
+!backend/static/uploads/.gitkeep
+static/uploads/*
+!static/uploads/.gitkeep
 
 # Docker & logs
 *.log
@@ -38,4 +41,5 @@ PROJECT_HANDOVER_GUIDE.md
 resources.md
 TRIBELY_COMPLETE_PROJECT_GUIDE.md
 TRIBELY_END_USER_WORKFLOW_GUIDE.md
+
 
