@@ -54,6 +54,11 @@ const IconX = () => (
     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
   </svg>
 );
+const IconLogOut = () => (
+  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+  </svg>
+);
 
 function Skeleton({ className = "" }: { className?: string }) {
   return (
@@ -314,6 +319,16 @@ export default function UserProfileClient() {
     );
   }
 
+  const handleLogout = () => {
+    localStorage.removeItem("tribely_token");
+    localStorage.removeItem("tribely_user_id");
+    localStorage.removeItem("tribely_user_name");
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    dataCache.clear();
+    router.push("/login");
+  };
+
   const TABS = [
     { id: "overview", label: "Account", icon: "👤" },
     { id: "appearance", label: "Appearance", icon: "🎨" },
@@ -337,14 +352,24 @@ export default function UserProfileClient() {
         <span className="text-[11px] font-black uppercase tracking-widest bg-clip-text text-transparent bg-gradient-to-r from-orange-500 to-red-500" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}>
           Profile & Settings
         </span>
-        <button
-          onClick={() => setTheme(isDark ? "light" : "dark")}
-          className="p-2 rounded-xl transition hover:scale-105 active:scale-90"
-          style={{ background: "var(--bg-raised)", border: "1px solid var(--border)", color: "var(--fg-muted)" }}
-          aria-label="Toggle theme"
-        >
-          {isDark ? <IconSun /> : <IconMoon />}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setTheme(isDark ? "light" : "dark")}
+            className="p-2 rounded-xl transition hover:scale-105 active:scale-90"
+            style={{ background: "var(--bg-raised)", border: "1px solid var(--border)", color: "var(--fg-muted)" }}
+            aria-label="Toggle theme"
+          >
+            {isDark ? <IconSun /> : <IconMoon />}
+          </button>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-red-500/30 text-red-500 hover:bg-red-500/10 active:scale-95 transition cursor-pointer"
+            title="Sign out of Tribely"
+          >
+            <IconLogOut />
+            <span className="hidden sm:inline">Logout</span>
+          </button>
+        </div>
       </header>
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-6">

@@ -146,11 +146,28 @@ export default function LandingPage({ initialTab = "explore" }) {
               {isMounted ? (isDark ? <SunIcon /> : <MoonIcon />) : <MoonIcon />}
             </button>
             {isLoggedIn ? (
-              <Link href="/dashboard"
-                className="px-5 py-2.5 rounded-full text-xs font-bold text-white transition-all duration-150 hover:opacity-90 active:scale-95"
-                style={{ background: "var(--accent)", boxShadow: "0 4px 16px var(--accent-glow)" }}>
-                Dashboard →
-              </Link>
+              <div className="flex items-center gap-2">
+                <Link href="/dashboard"
+                  className="px-5 py-2.5 rounded-full text-xs font-bold text-white transition-all duration-150 hover:opacity-90 active:scale-95"
+                  style={{ background: "var(--accent)", boxShadow: "0 4px 16px var(--accent-glow)" }}>
+                  Dashboard →
+                </Link>
+                <button
+                  onClick={() => {
+                    localStorage.removeItem("tribely_token");
+                    localStorage.removeItem("tribely_user_id");
+                    localStorage.removeItem("tribely_user_name");
+                    localStorage.removeItem("token");
+                    localStorage.removeItem("user");
+                    setIsLoggedIn(false);
+                    router.push("/login");
+                  }}
+                  className="hidden sm:inline-flex px-3.5 py-2 rounded-full text-xs font-bold border border-red-500/30 text-red-500 hover:bg-red-500/10 active:scale-95 transition cursor-pointer"
+                  title="Sign out"
+                >
+                  Logout
+                </button>
+              </div>
             ) : (
               <>
                 <Link href="/login"

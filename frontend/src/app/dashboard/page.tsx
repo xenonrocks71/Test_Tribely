@@ -452,9 +452,20 @@ function DashboardContent() {
             {isMounted ? (isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />) : <Moon className="w-4 h-4" />}
           </button>
 
-          <Link href="/profile" className="hidden sm:flex w-9 h-9 rounded-xl overflow-hidden items-center justify-center font-bold text-xs text-white transition ring-2 ring-[var(--accent-glow)] transform hover:scale-105" style={{ background: profileImageUrl ? "transparent" : "var(--accent-gradient)" }}>
+          <Link href="/profile" className="hidden sm:flex w-9 h-9 rounded-xl overflow-hidden items-center justify-center font-bold text-xs text-white transition ring-2 ring-[var(--accent-glow)] transform hover:scale-105" style={{ background: profileImageUrl ? "transparent" : "var(--accent-gradient)" }} title="My Profile">
             {profileImageUrl ? <img src={profileImageUrl} alt="Profile" className="h-full w-full object-cover" /> : initials(userName || "TM")}
           </Link>
+
+          {/* Desktop Logout Button */}
+          <button
+            onClick={handleLogout}
+            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-red-500/30 text-red-500 hover:bg-red-500/10 active:scale-95 transition shadow-xs cursor-pointer"
+            title="Sign out of Tribely"
+            aria-label="Logout"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Logout</span>
+          </button>
 
           {/* Mobile Navigation Drawer Trigger */}
           <button
