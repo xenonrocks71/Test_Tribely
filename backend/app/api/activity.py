@@ -236,6 +236,7 @@ def submit_proof(
             db.rollback()
 
         # Real-time WebSockets broadcast for live ledger update across all connected users
+        user_avatar = (current_user.profile.profile_image_url if current_user.profile else None) or get_user_avatar_url(db, current_user.id)
         broadcast_ledger_event(
             payload.arena_id,
             {
@@ -246,7 +247,7 @@ def submit_proof(
                     "id": new_submission.id,
                     "user_id": current_user.id,
                     "user_name": current_user.full_name or f"Member #{current_user.id}",
-                    "user_avatar_url": get_user_avatar_url(db, current_user.id),
+                    "user_avatar_url": user_avatar,
                     "proof_url": new_submission.proof_url,
                     "submitted_at": str(new_submission.submitted_at),
                     "upvotes": 0,
@@ -516,7 +517,7 @@ def get_arena_history(
     try:
         submissions = db.query(Submission)\
             .filter(Submission.arena_id == arena_id)\
-            .options(joinedload(Submission.user))\
+            .options(joinedload(Submission.user).joinedload(User.profile))\
             .order_by(Submission.submitted_at.desc())\
             .all()
             
@@ -528,7 +529,7 @@ def get_arena_history(
         else:
             messages = db.query(Message)\
                 .filter(Message.arena_id == arena_id)\
-                .options(joinedload(Message.user))\
+                .options(joinedload(Message.user).joinedload(User.profile))\
                 .order_by(Message.created_at.desc())\
                 .limit(50)\
                 .all()
@@ -541,7 +542,7 @@ def get_arena_history(
                     "message_type": str(msg.message_type or "text"),
                     "created_at": msg.created_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if msg.created_at else "",
                     "sender_name": msg.user.full_name if (msg.user and getattr(msg.user, 'full_name', None)) else f"Member #{msg.user_id}",
-                    "sender_avatar_url": get_user_avatar_url(db, msg.user_id)
+                    "sender_avatar_url": (msg.user.profile.profile_image_url if (msg.user and msg.user.profile) else None)
                 } for msg in messages
             ]
             for m_item in reversed(formatted_messages):
@@ -558,10 +559,11 @@ def get_arena_history(
                 users_dict = {}
                 profiles_dict = {}
                 if voter_user_ids:
-                    voter_users = db.query(User).filter(User.id.in_(voter_user_ids)).all()
-                    users_dict = {u.id: u.full_name or f"Member #{u.id}" for u in voter_users}
-                    profiles = db.query(UserProfile).filter(UserProfile.user_id.in_(voter_user_ids)).all()
-                    profiles_dict = {p.user_id: p.profile_image_url for p in profiles if p.profile_image_url}
+                    voter_users = db.query(User).options(joinedload(User.profile)).filter(User.id.in_(voter_user_ids)).all()
+                    for u in voter_users:
+                        users_dict[u.id] = u.full_name or f"Member #{u.id}"
+                        if u.profile and u.profile.profile_image_url:
+                            profiles_dict[u.id] = u.profile.profile_image_url
 
                 for v in all_votes:
                     if v.user_id == current_user.id:
@@ -585,7 +587,7 @@ def get_arena_history(
                     "proof_url": sub.proof_url,
                     "submitted_at": str(sub.submitted_at),
                     "user_name": sub.user.full_name if (sub.user and getattr(sub.user, 'full_name', None)) else f"Member #{sub.user_id}",
-                    "user_avatar_url": get_user_avatar_url(db, sub.user_id),
+                    "user_avatar_url": (sub.user.profile.profile_image_url if (sub.user and sub.user.profile) else None),
                     "upvotes": getattr(sub, 'upvotes', 0) or 0,
                     "downvotes": getattr(sub, 'downvotes', 0) or 0,
                     "is_absent": getattr(sub, 'is_absent', False) or False,
@@ -646,7 +648,7 @@ async def send_arena_message(
     db_msg = activity_repository.create_message(db, message_in=msg_schema, arena_id=arena_id, user_id=current_user.id)
 
     sender_name = current_user.full_name if (current_user and getattr(current_user, 'full_name', None)) else f"Member #{current_user.id}"
-    sender_avatar_url = get_user_avatar_url(db, current_user.id)
+    sender_avatar_url = (current_user.profile.profile_image_url if current_user.profile else None) or get_user_avatar_url(db, current_user.id)
 
     broadcast_payload = {
         "event_type": "chat_message",
