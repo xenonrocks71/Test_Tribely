@@ -59,7 +59,13 @@ class AuthService:
         :param password: Raw plaintext password.
         :return: Optional User instance if valid, else None.
         """
-        user = self.user_repo.get_by_email(db, email=email)
+        if not email or not password:
+            return None
+        clean_email = email.strip().lower()
+        user = self.user_repo.get_by_email(db, email=clean_email)
+        if not user:
+            # Fallback to exact search if email wasn't normalized in legacy records
+            user = self.user_repo.get_by_email(db, email=email)
         if not user:
             return None
         if not verify_password(password, user.hashed_password):

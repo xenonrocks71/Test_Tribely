@@ -18,37 +18,47 @@ def get_password_hash(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Compares a raw input password against a hashed database password string.
-    Supports native sub-millisecond bcrypt hashes as well as legacy/passlib hashes.
+    Supports native sub-millisecond bcrypt hashes, whitespace-tolerant matching,
+    and legacy/passlib hashes.
     """
     if not plain_password or not hashed_password:
         return False
     
-    # 1. Plain equality check
-    if plain_password == hashed_password:
+    # 1. Plain equality check (including whitespace trimmed)
+    if plain_password == hashed_password or plain_password.strip() == hashed_password.strip():
         return True
 
-    # 2. Native fast bcrypt check
-    try:
-        if bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8")):
-            return True
-    except Exception:
-        pass
+    # Candidates: original password and trimmed password
+    candidates = [plain_password]
+    if plain_password.strip() != plain_password:
+        candidates.append(plain_password.strip())
 
-    # 3. Truncated 72-byte bcrypt check
-    try:
-        plain_bytes = plain_password.encode("utf-8")
-        if len(plain_bytes) > 72:
-            if bcrypt.checkpw(plain_bytes[:72], hashed_password.encode("utf-8")):
+    for candidate in candidates:
+        # 2. Native fast bcrypt check
+        try:
+            if bcrypt.checkpw(candidate.encode("utf-8"), hashed_password.strip().encode("utf-8")):
                 return True
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    # 4. Passlib legacy fallback
-    try:
-        pwd_context = CryptContext(schemes=["bcrypt", "pbkdf2_sha256", "sha256_crypt", "md5_crypt", "des_crypt"], deprecated="auto")
-        return pwd_context.verify(plain_password, hashed_password)
-    except Exception:
-        return False
+        # 3. Truncated 72-byte bcrypt check
+        try:
+            plain_bytes = candidate.encode("utf-8")
+            if len(plain_bytes) > 72:
+                if bcrypt.checkpw(plain_bytes[:72], hashed_password.strip().encode("utf-8")):
+                    return True
+        except Exception:
+            pass
+
+        # 4. Passlib legacy fallback
+        try:
+            pwd_context = CryptContext(schemes=["bcrypt", "pbkdf2_sha256", "sha256_crypt", "md5_crypt", "des_crypt"], deprecated="auto")
+            if pwd_context.verify(candidate, hashed_password.strip()):
+                return True
+        except Exception:
+            pass
+
+    return False
 
 def create_access_token(subject: Union[str, Any], expires_delta: datetime.timedelta = None) -> str:
     """
