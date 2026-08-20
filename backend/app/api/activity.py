@@ -521,32 +521,40 @@ def get_arena_history(
             .order_by(Submission.submitted_at.desc())\
             .all()
             
-        from app.services.chat_cache_service import chat_cache_service
-        cached_msgs = chat_cache_service.get_recent_messages(arena_id, limit=50)
+        # 1. Fetch ground-truth persistent messages from database
+        db_messages = db.query(Message)\
+            .filter(Message.arena_id == arena_id)\
+            .options(joinedload(Message.user).joinedload(User.profile))\
+            .order_by(Message.created_at.desc())\
+            .limit(50)\
+            .all()
 
-        if cached_msgs is not None and len(cached_msgs) > 0:
-            formatted_messages = cached_msgs
-        else:
-            messages = db.query(Message)\
-                .filter(Message.arena_id == arena_id)\
-                .options(joinedload(Message.user).joinedload(User.profile))\
-                .order_by(Message.created_at.desc())\
-                .limit(50)\
-                .all()
+        formatted_messages = [
+            {
+                "id": msg.id,
+                "user_id": msg.user_id,
+                "content": str(msg.content),
+                "message_type": str(msg.message_type or "text"),
+                "created_at": msg.created_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if msg.created_at else "",
+                "sender_name": msg.user.full_name if (msg.user and getattr(msg.user, 'full_name', None)) else f"Member #{msg.user_id}",
+                "sender_avatar_url": (msg.user.profile.profile_image_url if (msg.user and msg.user.profile) else None)
+            } for msg in db_messages
+        ]
 
-            formatted_messages = [
-                {
-                    "id": msg.id,
-                    "user_id": msg.user_id,
-                    "content": str(msg.content),
-                    "message_type": str(msg.message_type or "text"),
-                    "created_at": msg.created_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if msg.created_at else "",
-                    "sender_name": msg.user.full_name if (msg.user and getattr(msg.user, 'full_name', None)) else f"Member #{msg.user_id}",
-                    "sender_avatar_url": (msg.user.profile.profile_image_url if (msg.user and msg.user.profile) else None)
-                } for msg in messages
-            ]
-            for m_item in reversed(formatted_messages):
-                chat_cache_service.push_recent_message(arena_id, m_item)
+        # 2. Merge any ultra-recent uncommitted messages from Redis cache (deduplicated by id)
+        try:
+            from app.services.chat_cache_service import chat_cache_service
+            cached_msgs = chat_cache_service.get_recent_messages(arena_id, limit=50)
+            if cached_msgs:
+                existing_ids = {str(m.get("id")) for m in formatted_messages if "id" in m}
+                for c_msg in cached_msgs:
+                    c_id = str(c_msg.get("id"))
+                    c_type = str(c_msg.get("message_type", "text"))
+                    if c_id not in existing_ids and c_type in ("text", "image", "audio", "video", "media"):
+                        formatted_messages.insert(0, c_msg)
+                        existing_ids.add(c_id)
+        except Exception as c_err:
+            print(f"ChatCache history merge notice: {c_err}")
 
         submission_ids = [sub.id for sub in submissions]
         user_votes_dict = {}

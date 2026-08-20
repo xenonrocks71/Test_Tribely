@@ -3249,7 +3249,7 @@ export default function ArenaRoomPage() {
                           )}
 
                           {/* Instagram Call Message Pill (Matching Reference DM Screenshot) */}
-                          {msg.message_type === "call_invite" || msg.message_type === "call_ended" || (typeof msg.content === "string" && (msg.content.includes("Voice Huddle started") || msg.content.includes("Video Call started"))) ? (
+                          {msg.message_type === "call_invite" || msg.message_type === "call_ended" ? (
                             (() => {
                               const isEnded = msg.message_type === "call_ended";
                               // A call_invite pill is joinable ONLY if a live call is currently active
