@@ -1720,8 +1720,8 @@ export default function ArenaRoomPage() {
 
   const fetchHistory = async () => {
     try {
-      const res = await api.get(`/api/activity/arena/${id}/history`);
-      const payload = res.data?.data;
+      const res: any = await api.get(`/api/activity/arena/${id}/history`);
+      const payload = res?.data?.data !== undefined ? res.data.data : res?.data !== undefined ? res.data : res;
       if (payload) {
         if (Array.isArray(payload.submissions))
           setSubmissions(payload.submissions);
@@ -1731,9 +1731,7 @@ export default function ArenaRoomPage() {
         } else {
           setActiveCallState(null);
         }
-
       }
-
     } catch (err: any) {
       if (err?.response?.status === 403)
         setError("Membership approval required to access this arena.");
@@ -2428,11 +2426,11 @@ export default function ArenaRoomPage() {
 
     // 2. Fallback to HTTP POST if WebSocket is disconnected or send failed
     try {
-      const res = await api.post(`/api/activity/arena/${id}/message`, {
+      const res: any = await api.post(`/api/activity/arena/${id}/message`, {
         content: messageText,
         message_type: "text",
       });
-      const returnedMsg = res.data?.data;
+      const returnedMsg = res?.data?.data || res?.data || res;
       if (returnedMsg) {
         setMessages((prev) => {
           // Replace temp message with server message
