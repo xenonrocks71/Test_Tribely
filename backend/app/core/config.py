@@ -18,12 +18,12 @@ class Settings(BaseSettings):
     ]
 
     # PostgreSQL Connection Parameters
-    POSTGRES_SERVER: str = "localhost"
-    POSTGRES_USER: str = "postgres"
-    POSTGRES_PASSWORD: str = "postgres"
-    POSTGRES_DB: str = "tribely_db"
-    POSTGRES_PORT: int = 5432
-    DATABASE_URL: str | None = None
+    POSTGRES_SERVER: str = os.environ.get("POSTGRES_SERVER") or os.environ.get("POSTGRES_HOST") or os.environ.get("PGHOST") or "localhost"
+    POSTGRES_USER: str = os.environ.get("POSTGRES_USER") or os.environ.get("PGUSER") or "postgres"
+    POSTGRES_PASSWORD: str = os.environ.get("POSTGRES_PASSWORD") or os.environ.get("PGPASSWORD") or "postgres"
+    POSTGRES_DB: str = os.environ.get("POSTGRES_DB") or os.environ.get("POSTGRES_DATABASE") or os.environ.get("PGDATABASE") or "tribely_db"
+    POSTGRES_PORT: int = int(os.environ.get("POSTGRES_PORT") or os.environ.get("PGPORT") or 5432)
+    DATABASE_URL: str | None = os.environ.get("DATABASE_URL") or os.environ.get("INTERNAL_DATABASE_URL") or os.environ.get("POSTGRES_URL") or os.environ.get("POSTGRESQL_URL") or os.environ.get("DB_URL") or None
 
     # Connection Pool Settings
     DB_POOL_SIZE: int = 20
@@ -32,19 +32,18 @@ class Settings(BaseSettings):
     DB_POOL_RECYCLE: int = 300
 
     # Redis Configuration
-    REDIS_HOST: str = "127.0.0.1"
-    REDIS_PORT: int = 6379
-    REDIS_PASSWORD: str | None = None
-
-
-
+    REDIS_HOST: str = os.environ.get("REDIS_HOST") or os.environ.get("REDISHOST") or "127.0.0.1"
+    REDIS_PORT: int = int(os.environ.get("REDIS_PORT") or os.environ.get("REDISPORT") or 6379)
+    REDIS_PASSWORD: str | None = os.environ.get("REDIS_PASSWORD") or os.environ.get("REDISPASSWORD") or None
+    REDIS_URL: str | None = os.environ.get("REDIS_URL") or os.environ.get("REDIS_TLS_URL") or None
 
     # Computed Property for Asynchronous Asyncpg Database URL
     @computed_field
     @property
     def ASYNC_DATABASE_URI(self) -> str:
-        if self.DATABASE_URL:
-            url = self.DATABASE_URL
+        resolved_url = self.DATABASE_URL or os.environ.get("DATABASE_URL") or os.environ.get("INTERNAL_DATABASE_URL") or os.environ.get("POSTGRES_URL") or os.environ.get("POSTGRESQL_URL")
+        if resolved_url:
+            url = resolved_url
             if url.startswith("postgresql://"):
                 url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
             elif url.startswith("postgres://"):
@@ -57,8 +56,9 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def SYNC_DATABASE_URI(self) -> str:
-        if self.DATABASE_URL:
-            url = self.DATABASE_URL
+        resolved_url = self.DATABASE_URL or os.environ.get("DATABASE_URL") or os.environ.get("INTERNAL_DATABASE_URL") or os.environ.get("POSTGRES_URL") or os.environ.get("POSTGRESQL_URL")
+        if resolved_url:
+            url = resolved_url
             if url.startswith("postgresql+asyncpg://"):
                 url = url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
             elif url.startswith("postgres://"):
