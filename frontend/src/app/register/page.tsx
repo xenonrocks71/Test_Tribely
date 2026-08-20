@@ -37,8 +37,21 @@ function RegisterPage() {
       router.prefetch("/dashboard");
       router.push("/dashboard");
     } catch (err: any) {
-      const msg = err.response?.data?.detail || err.message;
-      setError(formatErrorMessage(msg, "Could not create account. That email may already be in use."));
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail;
+      let msg = "Could not create account. That email may already be in use.";
+      if (typeof detail === "string") {
+        msg = detail;
+      } else if (Array.isArray(detail) && detail[0]?.msg) {
+        msg = detail[0].msg;
+      } else if (status === 502 || status === 503) {
+        msg = "Server is temporarily waking up (502). Please retry in a few moments.";
+      } else if (status === 500) {
+        msg = "Server encountered an internal error. Please try again.";
+      } else if (!err.response) {
+        msg = "Network error: Unable to reach backend server. Please verify your connection.";
+      }
+      setError(msg);
       setLoading(false);
     }
   };

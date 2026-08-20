@@ -81,8 +81,20 @@ function LoginContent() {
       router.prefetch(target);
       router.push(target);
     } catch (err: any) {
+      const status = err.response?.status;
       const detail = err.response?.data?.detail;
-      const message = typeof detail === "string" ? detail : (detail?.[0]?.msg || "Incorrect email or password.");
+      let message = "Incorrect email or password.";
+      if (typeof detail === "string") {
+        message = detail;
+      } else if (Array.isArray(detail) && detail[0]?.msg) {
+        message = detail[0].msg;
+      } else if (status === 502 || status === 503) {
+        message = "Server is temporarily waking up or unavailable (502). Please retry in a few seconds.";
+      } else if (status === 500) {
+        message = "Server encountered an internal error. Please try again.";
+      } else if (!err.response) {
+        message = "Network error: Unable to reach backend server. Please verify your connection.";
+      }
       setError(message);
       setLoading(false);
     }

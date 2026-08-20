@@ -38,9 +38,18 @@ if is_prod and (not settings.SECRET_KEY or settings.SECRET_KEY == "tribely_super
     logging.warning("SECURITY NOTICE: Using default SECRET_KEY in production environment.")
 
 from contextlib import asynccontextmanager
+import asyncio
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
+    # Auto-initialize database tables on server startup if not present
+    try:
+        from app.core.database import sync_engine, Base
+        import app.models.models
+        await asyncio.to_thread(Base.metadata.create_all, bind=sync_engine)
+        logging.info("Database tables verified and initialized successfully.")
+    except Exception as e:
+        logging.error(f"Notice during database startup verification: {e}")
     yield
 
 app = FastAPI(
