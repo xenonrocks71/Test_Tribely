@@ -526,7 +526,7 @@ def get_arena_history(
             .filter(Message.arena_id == arena_id)\
             .options(joinedload(Message.user).joinedload(User.profile))\
             .order_by(Message.created_at.desc())\
-            .limit(50)\
+            .limit(200)\
             .all()
 
         formatted_messages = [
