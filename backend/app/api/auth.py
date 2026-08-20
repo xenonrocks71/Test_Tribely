@@ -149,7 +149,7 @@ async def login_user(
         )
 
     # Offload sync DB query and CPU-bound bcrypt hash check to worker threadpool
-    user = await asyncio.to_thread(auth_service.authenticate_user, db, username, password)
+    user = await asyncio.to_thread(auth_service.authenticate_user, db, email=username, password=password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
