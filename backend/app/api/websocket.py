@@ -326,11 +326,21 @@ async def arena_websocket_endpoint(
                             chat_cache_service.cache_user_meta(user_id, sender_name, sender_avatar_url)
                             user_meta = {"full_name": sender_name, "avatar_url": sender_avatar_url}
 
+                    # Persist message to database immediately for unbroken ground truth history
+                    db_msg_id = None
+                    try:
+                        with SessionLocal() as bg_db:
+                            msg_schema = MessageCreate(content=content, message_type=message_type)
+                            db_msg = activity_repository.create_message(bg_db, message_in=msg_schema, arena_id=arena_id, user_id=user_id)
+                            db_msg_id = db_msg.id
+                    except Exception as p_err:
+                        print(f"[WebSocket] Message persistence error: {p_err}")
+
                     temp_id = payload.get("temp_id") or payload.get("client_id")
                     created_time_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
                     broadcast_payload = {
                         "event_type": "chat_message",
-                        "id": int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000),
+                        "id": db_msg_id or int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000),
                         "temp_id": temp_id,
                         "arena_id": arena_id,
                         "user_id": user_id,
@@ -342,22 +352,11 @@ async def arena_websocket_endpoint(
                         "created_at": created_time_str
                     }
 
-                    # 2. INSTANT ZERO-LATENCY WEBSOCKET BROADCAST (< 5ms)
+                    # INSTANT WEBSOCKET BROADCAST (< 5ms)
                     await manager.broadcast_to_arena(arena_id, broadcast_payload)
 
-                    # 3. Push to Redis recent message list
+                    # Push to Redis recent message list
                     chat_cache_service.push_recent_message(arena_id, broadcast_payload)
-
-                    # 4. Asynchronous Non-Blocking Database Persistence (Background Task)
-                    async def _async_persist_msg():
-                        try:
-                            with SessionLocal() as bg_db:
-                                msg_schema = MessageCreate(content=content, message_type=message_type)
-                                activity_repository.create_message(bg_db, message_in=msg_schema, arena_id=arena_id, user_id=user_id)
-                        except Exception as p_err:
-                            print(f"[AsyncPersistMessage] Background persistence error: {p_err}")
-
-                    asyncio.create_task(_async_persist_msg())
 
                 except Exception as e:
                     print(f"Error processing WebSocket message: {str(e)}")

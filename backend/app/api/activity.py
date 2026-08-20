@@ -541,21 +541,6 @@ def get_arena_history(
             } for msg in db_messages
         ]
 
-        # 2. Merge any ultra-recent uncommitted messages from Redis cache (deduplicated by id)
-        try:
-            from app.services.chat_cache_service import chat_cache_service
-            cached_msgs = chat_cache_service.get_recent_messages(arena_id, limit=50)
-            if cached_msgs:
-                existing_ids = {str(m.get("id")) for m in formatted_messages if "id" in m}
-                for c_msg in cached_msgs:
-                    c_id = str(c_msg.get("id"))
-                    c_type = str(c_msg.get("message_type", "text"))
-                    if c_id not in existing_ids and c_type in ("text", "image", "audio", "video", "media"):
-                        formatted_messages.insert(0, c_msg)
-                        existing_ids.add(c_id)
-        except Exception as c_err:
-            print(f"ChatCache history merge notice: {c_err}")
-
         submission_ids = [sub.id for sub in submissions]
         user_votes_dict = {}
         voters_by_sub = {}
