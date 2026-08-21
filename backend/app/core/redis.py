@@ -17,23 +17,33 @@ def get_redis_pool() -> aioredis.ConnectionPool:
     """
     global _redis_pool
     if _redis_pool is None:
-        is_ssl = (
-            "upstash.io" in settings.REDIS_HOST
-            or settings.REDIS_HOST.startswith("rediss://")
-            or getattr(settings, "REDIS_SSL", False)
-        )
-        _redis_pool = aioredis.ConnectionPool(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            password=settings.REDIS_PASSWORD or None,
-            decode_responses=True,
-            ssl=is_ssl,
-            ssl_cert_reqs=None if is_ssl else None,
-            socket_timeout=2.0,
-            socket_connect_timeout=3.0,
-            max_connections=50,
-            retry_on_timeout=True,
-        )
+        if settings.REDIS_URL:
+            _redis_pool = aioredis.ConnectionPool.from_url(
+                settings.REDIS_URL,
+                decode_responses=True,
+                socket_timeout=2.0,
+                socket_connect_timeout=3.0,
+                max_connections=50,
+                retry_on_timeout=True,
+            )
+        else:
+            is_ssl = (
+                "upstash.io" in settings.REDIS_HOST
+                or settings.REDIS_HOST.startswith("rediss://")
+                or getattr(settings, "REDIS_SSL", False)
+            )
+            _redis_pool = aioredis.ConnectionPool(
+                host=settings.REDIS_HOST,
+                port=settings.REDIS_PORT,
+                password=settings.REDIS_PASSWORD or None,
+                decode_responses=True,
+                ssl=is_ssl,
+                ssl_cert_reqs=None if is_ssl else None,
+                socket_timeout=2.0,
+                socket_connect_timeout=3.0,
+                max_connections=50,
+                retry_on_timeout=True,
+            )
     return _redis_pool
 
 
