@@ -69,6 +69,7 @@ async def arena_websocket_endpoint(
         return
 
     await manager.connect(websocket, arena_id)
+    manager.connect_user(websocket, user_id)
     
     try:
         while True:
@@ -364,8 +365,10 @@ async def arena_websocket_endpoint(
                     
     except WebSocketDisconnect:
         manager.disconnect(websocket, arena_id)
+        manager.disconnect_user(websocket, user_id)
     except Exception as e:
         manager.disconnect(websocket, arena_id)
+        manager.disconnect_user(websocket, user_id)
         print(f"WebSocket error in arena {arena_id}: {str(e)}")
 
 

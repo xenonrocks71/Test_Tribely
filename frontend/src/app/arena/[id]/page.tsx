@@ -653,28 +653,53 @@ function TimeStr({ iso }: { iso: string }) {
 
 
 
-// Dedicated audio element for remote streams — separate ref per stream avoids autoplay block
+// Dedicated resilient audio element for remote streams — ensures unthrottled background playback
 function RemoteAudioElement({ stream }: { stream: MediaStream }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   useEffect(() => {
     const el = audioRef.current;
     if (!el || !stream) return;
     el.srcObject = stream;
-    // Unmute and play — autoplay policy requires user gesture; we use a try/catch
     el.muted = false;
     el.volume = 1.0;
-    const playPromise = el.play();
-    if (playPromise !== undefined) {
-      playPromise.catch(() => {
-        // Autoplay blocked — retry after a short delay (common on mobile)
-        setTimeout(() => el.play().catch(() => {}), 500);
+    
+    // Play with automatic retry on mobile / browser gesture restrictions
+    const attemptPlay = () => {
+      if (!el) return;
+      el.play().catch(() => {
+        const resumeOnInteraction = () => {
+          el?.play().catch(() => {});
+          window.removeEventListener("click", resumeOnInteraction);
+          window.removeEventListener("touchstart", resumeOnInteraction);
+        };
+        window.addEventListener("click", resumeOnInteraction, { once: true });
+        window.addEventListener("touchstart", resumeOnInteraction, { once: true });
       });
-    }
+    };
+
+    attemptPlay();
+
     return () => {
-      el.srcObject = null;
+      if (el) el.srcObject = null;
     };
   }, [stream]);
-  return <audio ref={audioRef} autoPlay playsInline muted={false} className="hidden" />;
+
+  return (
+    <audio
+      ref={audioRef}
+      autoPlay
+      playsInline
+      style={{
+        position: "fixed",
+        top: -9999,
+        left: -9999,
+        width: "1px",
+        height: "1px",
+        opacity: 0.001,
+        pointerEvents: "none",
+      }}
+    />
+  );
 }
 
 function RemoteMediaElement({ stream, isVideo }: { stream: MediaStream; isVideo: boolean }) {
@@ -684,7 +709,9 @@ function RemoteMediaElement({ stream, isVideo }: { stream: MediaStream; isVideo:
     if (!el || !stream) return;
     el.srcObject = stream;
     el.play().catch(() => {});
-    return () => { el.srcObject = null; };
+    return () => {
+      if (el) el.srcObject = null;
+    };
   }, [stream]);
 
   if (isVideo) {
@@ -2114,6 +2141,14 @@ export default function ArenaRoomPage() {
                 pc.setRemoteDescription(new RTCSessionDescription(liveData.sdp))
                   .then(async () => {
                     if (liveData.sdp.type === "offer") {
+                      // Attach local audio/video tracks before creating answer so peer receives audio
+                      if (localStreamRef.current) {
+                        const senders = pc.getSenders();
+                        localStreamRef.current.getTracks().forEach((track) => {
+                          const exists = senders.some((s) => s.track?.kind === track.kind);
+                          if (!exists) pc.addTrack(track, localStreamRef.current!);
+                        });
+                      }
                       const answer = await pc.createAnswer();
                       await pc.setLocalDescription(answer);
                       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -2129,9 +2164,11 @@ export default function ArenaRoomPage() {
                       }
                     }
                   })
-                  .catch(console.error);
+                  .catch((err) => console.error("setRemoteDescription error:", err));
               } else if (liveData.candidate) {
-                pc.addIceCandidate(new RTCIceCandidate(liveData.candidate)).catch(() => {});
+                pc.addIceCandidate(new RTCIceCandidate(liveData.candidate)).catch((candErr) => {
+                  console.warn("addIceCandidate warning:", candErr);
+                });
               }
             }
             return;
