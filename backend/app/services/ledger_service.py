@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from app.models.models import Arena, ArenaMembership, Submission, EscrowLedger, ArenaPool, UserWallet
+from app.models.models import Arena, ArenaMembership, Submission, EscrowLedger, ArenaPool, UserWallet, User
 from app.services.streak_service import streak_service
 
 
@@ -287,6 +287,178 @@ class LedgerService:
             "message": f"Deducted {commission} Tribes platform commission from arena reserve pool",
             "commission_deducted_inr": commission,
             "remaining_reserve_pool_inr": pool.reserve_pool_tribes
+        }
+
+
+    def get_21_day_arena_ledger_status(self, db: Session, arena_id: int) -> Dict[str, Any]:
+        """
+        Calculates the 21-day cycle consistency metrics, accumulated arena income,
+        and projected equal reward shares for all active members.
+        """
+        pool = self.get_or_create_arena_pool(db, arena_id)
+        now = datetime.utcnow()
+        twenty_one_days_ago = now - timedelta(days=21)
+
+        memberships = db.query(ArenaMembership).filter(
+            ArenaMembership.arena_id == arena_id,
+            ArenaMembership.status == "approved"
+        ).all()
+
+        members_consistency = []
+        for m in memberships:
+            uid = m.user_id
+            user_obj = db.query(User).filter(User.id == uid).first()
+            user_name = user_obj.full_name if user_obj else f"Member #{uid}"
+            user_avatar = user_obj.profile.profile_image_url if (user_obj and user_obj.profile) else None
+
+            # Submissions in last 21 days
+            verified_count = db.query(Submission).filter(
+                Submission.arena_id == arena_id,
+                Submission.user_id == uid,
+                Submission.is_absent == False,
+                Submission.submitted_at >= twenty_one_days_ago
+            ).count()
+
+            streak_info = streak_service.calculate_user_streak(db, uid, arena_id)
+            current_streak = streak_info.get("current_streak", 0)
+
+            wallet = self.get_or_create_user_wallet(db, uid)
+            is_seized = getattr(wallet, "is_frozen", False) or getattr(wallet, "kudos_balance", 0.0) < 0
+
+            consistency_pct = min(100.0, round((verified_count / 21.0) * 100.0, 1))
+
+            members_consistency.append({
+                "user_id": uid,
+                "user_name": user_name,
+                "user_avatar_url": user_avatar,
+                "verified_days_21": verified_count,
+                "consistency_pct": consistency_pct,
+                "current_streak": current_streak,
+                "is_seized": is_seized,
+                "kudos_balance": getattr(wallet, "kudos_balance", 0.0) or getattr(wallet, "tribes_balance", 0.0)
+            })
+
+        # Sort by consistency percentage descending
+        members_consistency.sort(key=lambda x: (x["consistency_pct"], x["current_streak"]), reverse=True)
+
+        # Consistent qualifiers: members with >= 70% attendance or top performers
+        qualifiers = [m for m in members_consistency if m["verified_days_21"] >= 15 or m["consistency_pct"] >= 70.0]
+        if not qualifiers and members_consistency:
+            # If early in cycle or lower compliance, qualify top 30% consistent performers with > 0 submissions
+            top_threshold = max([m["verified_days_21"] for m in members_consistency], default=0)
+            if top_threshold > 0:
+                qualifiers = [m for m in members_consistency if m["verified_days_21"] == top_threshold]
+
+        total_accumulated = pool.reward_pool_tribes
+        total_treasury = pool.reserve_pool_tribes + pool.reward_pool_tribes
+        estimated_payout_per_user = round(total_accumulated / len(qualifiers), 2) if qualifiers and total_accumulated > 0 else 0.0
+
+        return {
+            "arena_id": arena_id,
+            "total_arena_revenue": total_treasury,
+            "reward_pot_21_days": total_accumulated,
+            "reserve_treasury": pool.reserve_pool_tribes,
+            "total_penalties_count": pool.total_penalties_count,
+            "qualifying_members_count": len(qualifiers),
+            "estimated_payout_per_user": estimated_payout_per_user,
+            "qualifiers": qualifiers,
+            "members": members_consistency,
+            "cycle_days": 21
+        }
+
+    def distribute_21_day_consistency_rewards(self, db: Session, arena_id: int) -> Dict[str, Any]:
+        """
+        Executes the 21-Day Consistency Reward Distribution:
+          - Gathers all consistent members from the last 21 days.
+          - Divides the accumulated arena revenue from penalties EQUALLY among them.
+          - Credits each consistent member's personal wallet atomically.
+          - Creates EscrowLedger audit records.
+          - Resets the 21-day reward pool to 0.0 for the next cycle.
+          - Broadcasts celebratory event over WebSocket.
+        """
+        status_info = self.get_21_day_arena_ledger_status(db, arena_id)
+        pool = self.get_or_create_arena_pool(db, arena_id)
+        accumulated_reward = pool.reward_pool_tribes
+
+        if accumulated_reward <= 0:
+            return {
+                "status": "empty_pot",
+                "message": "No accumulated penalty revenue in reward pot to distribute.",
+                "distributed_amount": 0.0,
+                "winners": []
+            }
+
+        qualifiers = status_info.get("qualifiers") or []
+        if not qualifiers:
+            members = status_info["members"]
+            max_days = max([m["verified_days_21"] for m in members], default=0)
+            qualifiers = [m for m in members if m["verified_days_21"] >= 15 or (max_days > 0 and m["verified_days_21"] == max_days)]
+
+        if not qualifiers:
+            return {
+                "status": "no_qualifiers",
+                "message": "No members met consistency requirements in this 21-day cycle.",
+                "distributed_amount": 0.0,
+                "winners": []
+            }
+
+        equal_share = round(accumulated_reward / len(qualifiers), 2)
+        now = datetime.utcnow()
+        now_str = now.strftime("%Y%m%d%H%M%S")
+
+        winners_list = []
+        for q in qualifiers:
+            uid = q["user_id"]
+            wallet = self.get_or_create_user_wallet(db, uid)
+            wallet.tribes_balance += equal_share
+            wallet.last_reward_won_at = now
+
+            idempotency_key = f"consistency_reward_21d:{arena_id}:{uid}:{now_str}"
+            reward_entry = EscrowLedger(
+                arena_id=arena_id,
+                user_id=uid,
+                debit_account=f"arena:{arena_id}:reward",
+                credit_account=f"user:{uid}:wallet",
+                amount_tribes=equal_share,
+                entry_type="consistency_reward_payout",
+                idempotency_key=idempotency_key,
+                description=f"21-day consistency equal reward payout of {equal_share} coins to user #{uid}"
+            )
+            db.add(reward_entry)
+            winners_list.append({
+                "user_id": uid,
+                "user_name": q["user_name"],
+                "payout_amount": equal_share,
+                "consistency_pct": q["consistency_pct"],
+                "streak": q["current_streak"]
+            })
+
+        # Reset reward pot for next 21-day cycle
+        pool.reward_pool_tribes = 0.0
+        pool.updated_at = now
+        db.commit()
+
+        # Broadcast real-time celebratory event
+        try:
+            from app.core.managers.websocket_manager import websocket_manager
+            websocket_manager.safe_broadcast_to_arena(arena_id, {
+                "event_type": "21day_reward_distributed",
+                "arena_id": arena_id,
+                "total_distributed": accumulated_reward,
+                "equal_share": equal_share,
+                "winners_count": len(qualifiers),
+                "winners": winners_list,
+                "message": f"🎉 21-Day Consistency Rewards Distributed! {len(qualifiers)} members each won {equal_share} coins!"
+            })
+        except Exception as be:
+            print(f"Non-critical reward broadcast error: {be}")
+
+        return {
+            "status": "success",
+            "message": f"Successfully distributed {accumulated_reward} coins equally among {len(qualifiers)} consistent members.",
+            "total_distributed": accumulated_reward,
+            "equal_share_per_winner": equal_share,
+            "winners": winners_list
         }
 
 

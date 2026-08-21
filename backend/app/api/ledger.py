@@ -68,12 +68,22 @@ def get_user_wallet_summary(
     current_user: User = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """
-    Returns current authenticated user wallet balance in INR and last reward won timestamp.
+    Returns current authenticated user wallet balance, frozen status, and last reward won timestamp.
     """
     try:
         wallet = ledger_service.get_or_create_user_wallet(db, current_user.id)
+        kudos_val = getattr(wallet, "kudos_balance", None)
+        if kudos_val is None:
+            kudos_val = getattr(wallet, "tribes_balance", 1000.0) or 0.0
+
+        is_seized = getattr(wallet, "is_frozen", False) or kudos_val < 0
+
         return success_response({
-            "balance_inr": float(wallet.balance_inr or 0.0),
+            "user_id": current_user.id,
+            "kudos_balance": float(kudos_val),
+            "tribes_balance": float(getattr(wallet, "tribes_balance", kudos_val) or 0.0),
+            "is_frozen": is_seized,
+            "is_seized": is_seized,
             "last_reward_won_at": wallet.last_reward_won_at.isoformat() if wallet.last_reward_won_at else None
         })
     except Exception as e:
@@ -81,3 +91,71 @@ def get_user_wallet_summary(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed retrieving user wallet summary: {str(e)}"
         )
+
+
+@router.get("/arenas/{arena_id}/21day-status")
+def get_arena_21day_status(
+    arena_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    Returns the 21-day cycle consistency ledger statistics, reward pot, and member compliance.
+    """
+    try:
+        status_info = ledger_service.get_21_day_arena_ledger_status(db, arena_id)
+        return success_response(status_info)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed retrieving 21-day ledger status: {str(e)}"
+        )
+
+
+@router.post("/arenas/{arena_id}/distribute-21day-rewards")
+def trigger_21day_reward_distribution(
+    arena_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    Distributes the 21-day accumulated arena penalty revenue equally among consistent members.
+    """
+    try:
+        res = ledger_service.distribute_21_day_consistency_rewards(db, arena_id)
+        return success_response(res)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed distributing 21-day rewards: {str(e)}"
+        )
+
+
+class RechargePayload:
+    amount: float
+
+
+from pydantic import BaseModel
+class WalletRechargeRequest(BaseModel):
+    amount: float = 100.0
+
+
+@router.post("/wallet/recharge")
+def recharge_user_wallet(
+    payload: WalletRechargeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    Credits coins to user wallet and unfreezes seized accounts.
+    """
+    try:
+        from app.services.kudos_service import kudos_service
+        res = kudos_service.recharge_wallet(db, current_user.id, payload.amount)
+        return success_response(res)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+

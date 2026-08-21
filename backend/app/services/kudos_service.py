@@ -429,6 +429,42 @@ class TribesService:
         db.add(entry)
         return entry
 
+    def recharge_wallet(self, db: Session, user_id: int, amount_coins: float) -> Dict[str, Any]:
+        """
+        Credits user wallet with purchased/recharged coins.
+        If account was seized/frozen due to negative balance and new balance >= 0, unfreezes immediately.
+        """
+        if amount_coins <= 0:
+            raise ValueError("Recharge amount must be greater than 0.")
+
+        wallet = self.get_or_create_user_wallet(db, user_id)
+        wallet.tribes_balance += amount_coins
+
+        if wallet.tribes_balance >= 0 and wallet.is_frozen:
+            wallet.is_frozen = False
+
+        now_str = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        self._log_tribes_ledger(
+            db=db,
+            user_id=user_id,
+            arena_id=None,
+            transaction_type="WALLET_RECHARGE",
+            amount_kudos=amount_coins,
+            debit_account="payment_gateway:external",
+            credit_account=f"user:{user_id}:wallet",
+            idempotency_key=f"recharge:{user_id}:{now_str}",
+            description=f"Direct wallet coin recharge of +{amount_coins} coins"
+        )
+        db.commit()
+        db.refresh(wallet)
+
+        return {
+            "status": "success",
+            "message": f"Successfully recharged +{amount_coins} coins.",
+            "kudos_balance": wallet.tribes_balance,
+            "is_frozen": wallet.is_frozen
+        }
+
 
 # Singleton Service Instances
 tribes_service = TribesService()

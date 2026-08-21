@@ -170,6 +170,17 @@ def submit_proof(
             except Exception:
                 pass
 
+        user_wallet = db.query(UserWallet).filter(UserWallet.user_id == current_user.id).first()
+        if user_wallet and (getattr(user_wallet, 'is_frozen', False) or (getattr(user_wallet, 'kudos_balance', 0.0) is not None and getattr(user_wallet, 'kudos_balance', 0.0) < 0)):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "status": "error",
+                    "message": "Your account has been seized for proof submissions due to an outstanding penalty balance. Please recharge your coins to unfreeze your account.",
+                    "error_code": "ACCOUNT_SEIZED_INSUFFICIENT_FUNDS",
+                },
+            )
+
         window_start, window_end, target_date_str = calculate_active_submission_window(arena.deadline_time)
 
         existing = db.query(Submission).filter(
@@ -631,10 +642,23 @@ def get_arena_history(
     except Exception as ce:
         print(f"Error checking active call for arena {arena_id}: {ce}")
 
+    twenty_one_day_stats = None
+    try:
+        from app.services.ledger_service import ledger_service
+        twenty_one_day_stats = ledger_service.get_21_day_arena_ledger_status(db, arena_id)
+    except Exception as le:
+        print(f"Error fetching 21-day ledger stats: {le}")
+
+    user_wallet = db.query(UserWallet).filter(UserWallet.user_id == current_user.id).first()
+    user_is_seized = bool(user_wallet and (getattr(user_wallet, 'is_frozen', False) or (getattr(user_wallet, 'kudos_balance', 0.0) is not None and getattr(user_wallet, 'kudos_balance', 0.0) < 0)))
+
     return success_response({
         "submissions": formatted_submissions,
         "messages": formatted_messages,
-        "active_call": active_call
+        "active_call": active_call,
+        "twenty_one_day_stats": twenty_one_day_stats,
+        "user_is_seized": user_is_seized,
+        "user_kudos_balance": getattr(user_wallet, 'tribes_balance', 1000.0) if user_wallet else 1000.0
     })
 
 

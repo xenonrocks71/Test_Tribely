@@ -1027,6 +1027,48 @@ export default function ArenaRoomPage() {
 
 
 
+  // 21-Day Consistency & Seized Wallet States
+  const [userIsSeized, setUserIsSeized] = useState(false);
+  const [twentyOneDayStats, setTwentyOneDayStats] = useState<any>(null);
+  const [showRechargeModal, setShowRechargeModal] = useState(false);
+  const [rechargeAmount, setRechargeAmount] = useState(100);
+  const [isRecharging, setIsRecharging] = useState(false);
+  const [ledgerSubTab, setLedgerSubTab] = useState<"proofs" | "consistency">("proofs");
+
+  const handleRechargeWallet = async (amount: number) => {
+    setIsRecharging(true);
+    try {
+      const res: any = await api.post("/api/wallet/recharge", { amount });
+      const data = res?.data?.data || res?.data || res;
+      setUserIsSeized(false);
+      if (data?.kudos_balance !== undefined) {
+        setUserKudosBalance(data.kudos_balance);
+      }
+      setShowRechargeModal(false);
+      toast.success(`🎉 Recharged +${amount} coins! Your account is now unfrozen.`);
+      fetchHistory();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Recharge failed. Please try again.");
+    } finally {
+      setIsRecharging(false);
+    }
+  };
+
+  const handleTrigger21DayRewardPayout = async () => {
+    try {
+      const res: any = await api.post(`/api/arenas/${id}/distribute-21day-rewards`);
+      const data = res?.data?.data || res?.data || res;
+      if (data?.status === "success") {
+        toast.success(data.message || "21-Day Consistency Rewards distributed equally!");
+        fetchHistory();
+      } else {
+        toast.info(data.message || "Distribution complete.");
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to trigger 21-day reward distribution.");
+    }
+  };
+
   // Kudos Ecosystem States
   const [showKudosModal, setShowKudosModal] = useState(false);
   const [userKudosBalance, setUserKudosBalance] = useState<number | null>(null);
@@ -1756,6 +1798,15 @@ export default function ArenaRoomPage() {
           setMessages(payload.messages);
           dataCache.set(`/api/activity/arena/${id}/history`, payload);
         }
+        if (payload.user_is_seized !== undefined) {
+          setUserIsSeized(Boolean(payload.user_is_seized));
+        }
+        if (payload.twenty_one_day_stats) {
+          setTwentyOneDayStats(payload.twenty_one_day_stats);
+        }
+        if (payload.user_kudos_balance !== undefined) {
+          setUserKudosBalance(payload.user_kudos_balance);
+        }
         if (payload.active_call && (payload.active_call.active || payload.active_call.status === "IN_CALL" || payload.active_call.status === "RINGING")) {
           setActiveCallState(payload.active_call);
         } else {
@@ -2292,7 +2343,15 @@ export default function ArenaRoomPage() {
   const handleSendProof = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    if (userIsSeized) {
+      toast.error("🔒 Account Seized: Please recharge coins to unfreeze proof submissions.");
+      setShowRechargeModal(true);
+      return;
+    }
+
     if (hasUserSubmittedInActiveWindow()) {
+      toast.info("✓ Today's proof already verified! Resubmission unlocks for the next deadline.");
       setError("Proof already verified for the current active window.");
       return;
     }
@@ -2317,11 +2376,16 @@ export default function ArenaRoomPage() {
       setProofUrl("");
       setProofFileName("");
       setSelectedProofPreviewUrl(null);
+      toast.success("🚀 Daily proof submitted successfully!");
       fetchHistory();
     } catch (err: any) {
-      setError(formatErrorMessage(err.response?.data?.detail, "Proof submission failed."));
+      const errDetail = err.response?.data?.detail;
+      if (errDetail?.error_code === "ACCOUNT_SEIZED_INSUFFICIENT_FUNDS" || errDetail?.error_code === "USER_ACCOUNT_FROZEN") {
+        setUserIsSeized(true);
+        setShowRechargeModal(true);
+      }
+      setError(formatErrorMessage(errDetail, "Proof submission failed."));
     }
-
   };
 
   const handleVoteSubmission = async (
@@ -3619,144 +3683,341 @@ export default function ArenaRoomPage() {
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                   </svg>
-                  Proof Ledger
+                  Proof Ledger & Accountability Room
                 </h3>
                 <p className="text-[10px] mt-0.5 flex items-center gap-1.5" style={{ color: "var(--fg-muted)" }}>
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block" />
-                  {submissions.length} submission{submissions.length !== 1 ? "s" : ""} · {arenaMembers.length} members · peer-verified
+                  {submissions.length} submission{submissions.length !== 1 ? "s" : ""} today · {arenaMembers.length} members · 21-day cycle active
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {/* Rejection threshold info badge */}
-                <div
-                  className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-bold"
-                  style={{
-                    background: "rgba(239,68,68,0.08)",
-                    color: "var(--danger)",
-                    border: "1px solid rgba(239,68,68,0.18)",
-                  }}
+                <button
+                  type="button"
+                  onClick={() => setShowRechargeModal(true)}
+                  className="px-2.5 py-1 rounded-xl text-[10px] font-black bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-500/30 transition flex items-center gap-1 cursor-pointer"
                 >
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  Reject if dislikes &gt; {Math.floor(arenaMembers.length / 2)}
-                </div>
+                  <span>🪙</span>
+                  <span>{userKudosBalance !== null ? userKudosBalance : 1000} Coins</span>
+                </button>
               </div>
             </div>
 
-            {/* ── Proof Cards Feed (flex-1 scrollable with embedded composer) ── */}
-            <div className="flex-1 min-h-0 overflow-y-auto styled-scroll p-3 sm:p-4 pb-24 lg:pb-6 space-y-4">
-              {/* ── Compact Proof Submission Composer (scrolls upwards with feed) ── */}
-              <div
-                className="rounded-2xl p-3 shadow-sm transition-all"
-                style={{ border: "1px solid var(--border)", background: "var(--bg-card)" }}
+            {/* ── Sub-Tabs: Daily Proofs vs 21-Day Member Consistency Matrix ── */}
+            <div className="shrink-0 px-4 py-2 flex items-center gap-2 border-b border-[var(--border)] bg-[var(--bg-raised)]/50">
+              <button
+                type="button"
+                onClick={() => setLedgerSubTab("proofs")}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  ledgerSubTab === "proofs"
+                    ? "bg-[var(--accent)] text-white shadow-xs"
+                    : "text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--bg-card)]"
+                }`}
               >
-                {hasUserSubmittedInActiveWindow() ? (
-                  <div className="px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between gap-2 animate-fade-in">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span className="text-xs font-bold text-emerald-400 truncate">Today's Proof Verified! 🎉</span>
-                      <span className="text-[10px] text-emerald-300/80 hidden sm:inline truncate">Habit streak active</span>
+                <span>📋 Today's Proofs</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/20 font-mono">
+                  {submissions.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLedgerSubTab("consistency")}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  ledgerSubTab === "consistency"
+                    ? "bg-[var(--accent)] text-white shadow-xs"
+                    : "text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--bg-card)]"
+                }`}
+              >
+                <span>🏆 21-Day Consistency Matrix</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/20 font-mono">
+                  {arenaMembers.length}
+                </span>
+              </button>
+            </div>
+
+            {/* ── Scrollable Feed & Matrix Container ── */}
+            <div className="flex-1 min-h-0 overflow-y-auto styled-scroll p-3 sm:p-4 pb-24 lg:pb-6 space-y-4">
+              {/* ── Account Seized Banner (if applicable) ── */}
+              {userIsSeized && (
+                <div className="rounded-2xl p-3.5 bg-red-500/10 border border-red-500/30 flex items-center justify-between gap-3 animate-fade-in shadow-xs">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="text-2xl shrink-0">🔒</span>
+                    <div>
+                      <p className="text-xs font-black text-red-400">Account Seized for Daily Proofs</p>
+                      <p className="text-[11px] text-red-300/80 leading-snug">
+                        Your proof submission privileges are frozen due to an unpaid missed-deadline penalty. Recharge your wallet coins to instantly unfreeze your account.
+                      </p>
                     </div>
-                    <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30 shrink-0">✓ Verified</span>
                   </div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-[10px]">
-                      <span className="font-black uppercase tracking-wider text-[var(--fg-muted)] flex items-center gap-1.5">
-                        <span>Submit Today's Proof</span>
-                        {selectedProofPreviewUrl || proofFileName ? (
-                          <span className="text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded">✓ Media Attached</span>
-                        ) : null}
-                      </span>
-                      <span className="font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                        Due {arenaDeadlineTime}
-                      </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowRechargeModal(true)}
+                    className="px-3.5 py-1.5 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold text-xs shrink-0 shadow-md transition cursor-pointer active:scale-95"
+                  >
+                    ⚡ Recharge
+                  </button>
+                </div>
+              )}
+
+              {/* ── 21-Day Arena Treasury & Consistency Reward Pot Card ── */}
+              <div className="rounded-2xl p-3.5 border border-[var(--border)] bg-[var(--bg-card)] shadow-xs flex flex-col gap-3">
+                <div className="flex items-center justify-between border-b border-[var(--border)]/60 pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🏆</span>
+                    <div>
+                      <h4 className="text-xs font-black text-[var(--fg)]">21-Day Consistency Reward Pot</h4>
+                      <p className="text-[10px] text-[var(--fg-muted)]">Accumulated from missed deadline penalties — split equally among consistent members</p>
                     </div>
-
-                    <input ref={proofFileInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleProofFileSelect} />
-
-                    <form onSubmit={handleSendProof} className="flex flex-wrap sm:flex-nowrap items-center gap-2">
-                      {/* Compact Image File Picker Button / Preview Pill */}
-                      {arenaProofType === "image" && (
-                        <div className="shrink-0">
-                          {selectedProofPreviewUrl || proofFileName ? (
-                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[var(--bg-raised)] border border-[var(--accent)]/40 text-xs font-bold">
-                              {selectedProofPreviewUrl && (
-                                <img
-                                  src={selectedProofPreviewUrl}
-                                  alt="Preview"
-                                  className="w-5 h-5 rounded-md object-cover border border-[var(--border)] shrink-0"
-                                />
-                              )}
-                              <span className="text-[11px] font-bold text-[var(--fg)] max-w-[90px] truncate">
-                                {proofFileName || "Photo"}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => proofFileInputRef.current?.click()}
-                                className="text-[10px] text-[var(--accent)] hover:underline ml-1 cursor-pointer font-extrabold"
-                              >
-                                Change
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => proofFileInputRef.current?.click()}
-                              className="px-3 py-1.5 rounded-xl border border-dashed border-[var(--accent)]/50 hover:border-[var(--accent)] bg-[var(--accent)]/10 hover:bg-[var(--accent)]/20 transition flex items-center gap-1.5 text-xs font-bold text-[var(--accent)] cursor-pointer shadow-xs"
-                            >
-                              <Camera className="w-3.5 h-3.5" />
-                              <span>Select Photo/Video 📷</span>
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {/* URL or Text Proof Input */}
-                      <input
-                        type={arenaProofType === "link" ? "url" : "text"}
-                        required={arenaProofType !== "image"}
-                        placeholder={arenaProofType === "image" ? "Or paste image URL link…" : arenaProofType === "link" ? "https://example.com/proof" : "Describe your completed task…"}
-                        className="flex-1 min-w-[140px] bg-[var(--bg-raised)] border border-[var(--border)] rounded-xl px-3 py-1.5 text-xs outline-none focus:border-[var(--accent)] transition"
-                        style={{ color: "var(--fg)" }}
-                        value={proofUrl.startsWith("data:") ? "" : proofUrl}
-                        onChange={(e) => setProofUrl(e.target.value)}
-                      />
-
-                      {/* Submit Button */}
-                      <button
-                        type="submit"
-                        disabled={!proofUrl.trim()}
-                        className="px-3.5 py-1.5 rounded-xl text-xs font-bold text-white bg-[var(--accent)] hover:opacity-90 disabled:opacity-40 transition shadow-sm shrink-0 flex items-center gap-1 cursor-pointer"
-                      >
-                        <span>🚀 Submit</span>
-                      </button>
-                    </form>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-xs font-black text-emerald-400 block">
+                      🪙 {(twentyOneDayStats?.reward_pot_21_days ?? arenaVaultKudos ?? 0).toFixed(2)} Coins
+                    </span>
+                    <span className="text-[9px] font-bold text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20">
+                      Equal Split
+                    </span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
+                  <div className="p-2 rounded-xl bg-[var(--bg-raised)] border border-[var(--border)]">
+                    <span className="block text-[var(--fg-muted)] font-medium">Total Arena Revenue</span>
+                    <span className="font-black text-xs text-[var(--fg)]">
+                      🪙 {(twentyOneDayStats?.total_arena_revenue ?? arenaVaultKudos ?? 0).toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-[var(--bg-raised)] border border-[var(--border)]">
+                    <span className="block text-[var(--fg-muted)] font-medium">Consistent Qualifiers</span>
+                    <span className="font-black text-xs text-purple-400">
+                      {twentyOneDayStats?.qualifying_members_count ?? 0} members
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-[var(--bg-raised)] border border-[var(--border)]">
+                    <span className="block text-[var(--fg-muted)] font-medium">Est. Payout / Member</span>
+                    <span className="font-black text-xs text-emerald-400">
+                      🪙 {(twentyOneDayStats?.estimated_payout_per_user ?? 0).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+                {isAdmin && (twentyOneDayStats?.reward_pot_21_days > 0 || arenaVaultKudos > 0) && (
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={handleTrigger21DayRewardPayout}
+                      className="px-3 py-1 rounded-xl text-[10px] font-black bg-purple-500 hover:bg-purple-600 text-white transition shadow-sm cursor-pointer active:scale-95"
+                    >
+                      🚀 Distribute 21-Day Rewards to Qualifiers
+                    </button>
                   </div>
                 )}
               </div>
 
-              {submissions.length === 0 ? (
-                /* Empty State */
-                <div
-                  className="flex flex-col items-center justify-center py-20 text-center px-6 rounded-3xl mt-2 animate-fade-in"
-                  style={{ border: "2px dashed var(--border)", color: "var(--fg-subtle)" }}
-                >
-                  <div
-                    className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
-                    style={{ background: "var(--accent-light)" }}
-                  >
-                    <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "var(--accent)" }}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                    </svg>
+              {ledgerSubTab === "consistency" ? (
+                /* ── 21-Day Member Consistency Matrix View ── */
+                <div className="space-y-2 animate-fade-in max-w-4xl mx-auto">
+                  <div className="flex items-center justify-between px-1 text-xs font-black text-[var(--fg-muted)]">
+                    <span>Member Accountability Matrix</span>
+                    <span>21-Day Compliance</span>
                   </div>
-                  <p className="text-sm font-bold mb-1" style={{ color: "var(--fg)" }}>No proofs yet today</p>
-                  <p className="text-xs max-w-xs" style={{ color: "var(--fg-muted)" }}>Be the first to submit your daily proof above and start the accountability chain.</p>
+                  <div className="space-y-2">
+                    {(twentyOneDayStats?.members && Array.isArray(twentyOneDayStats.members) && twentyOneDayStats.members.length > 0
+                      ? twentyOneDayStats.members
+                      : arenaMembers.map((m) => ({
+                          user_id: m.user_id,
+                          user_name: m.full_name || m.user_name || `Member #${m.user_id}`,
+                          user_avatar_url: m.user_avatar_url,
+                          verified_days_21: 0,
+                          consistency_pct: 0.0,
+                          current_streak: 0,
+                          is_seized: false,
+                          kudos_balance: 1000.0,
+                        }))
+                    ).map((m: any) => {
+                      const hasSubToday = submissions.some((s) => s.user_id === m.user_id && !s.is_absent);
+                      return (
+                        <div
+                          key={m.user_id}
+                          className="p-3 rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] flex items-center justify-between gap-3 shadow-xs"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <Avatar name={m.user_name} imageUrl={m.user_avatar_url} size={9} />
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs font-black text-[var(--fg)] truncate">{m.user_name}</p>
+                                {m.user_id === userId && (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-md bg-[var(--accent-light)] text-[var(--accent)]">
+                                    You
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 mt-0.5 text-[10px]">
+                                <span className="text-amber-400 font-bold">🔥 {m.current_streak || 0} day streak</span>
+                                <span className="text-[var(--fg-muted)]">•</span>
+                                <span className="text-[var(--fg-muted)] font-mono">{m.verified_days_21 || 0}/21 days</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 shrink-0">
+                            {/* Today's Status Badge */}
+                            {m.is_seized ? (
+                              <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-red-500/15 text-red-400 border border-red-500/30">
+                                🔒 Seized
+                              </span>
+                            ) : hasSubToday ? (
+                              <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                ✓ Submitted Today
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                ⏳ Pending ({arenaDeadlineTime})
+                              </span>
+                            )}
+
+                            {/* Consistency Percentage Progress Bar */}
+                            <div className="hidden sm:flex flex-col items-end gap-1 w-20">
+                              <span className="text-[10px] font-mono font-bold text-[var(--fg)]">
+                                {m.consistency_pct || 0}%
+                              </span>
+                              <div className="w-full h-1.5 rounded-full bg-[var(--bg-raised)] overflow-hidden">
+                                <div
+                                  className="h-full rounded-full bg-gradient-to-r from-amber-400 to-emerald-400 transition-all"
+                                  style={{ width: `${m.consistency_pct || 0}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               ) : (
-                /* ── Instagram-Style Feed Cards ── */
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 max-w-4xl mx-auto">
+                /* ── Daily Proofs Feed & Composer ── */
+                <>
+                  {/* ── Compact Proof Submission Composer ── */}
+                  <div
+                    className="rounded-2xl p-3 shadow-sm transition-all"
+                    style={{ border: "1px solid var(--border)", background: "var(--bg-card)" }}
+                  >
+                    {userIsSeized ? (
+                      <div className="px-3 py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-base">🔒</span>
+                          <span className="text-xs font-bold text-red-400 truncate">Account Seized — Proof submissions locked</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowRechargeModal(true)}
+                          className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-red-500 text-white shrink-0 hover:bg-red-600 transition cursor-pointer"
+                        >
+                          Recharge Coins
+                        </button>
+                      </div>
+                    ) : hasUserSubmittedInActiveWindow() ? (
+                      <div className="px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between gap-2 animate-fade-in">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span className="text-xs font-bold text-emerald-400 truncate">Today's Proof Verified! 🎉</span>
+                          <span className="text-[10px] text-emerald-300/80 hidden sm:inline truncate">Resubmission unlocks after deadline reset ({arenaDeadlineTime})</span>
+                        </div>
+                        <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30 shrink-0">✓ Verified</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="font-black uppercase tracking-wider text-[var(--fg-muted)] flex items-center gap-1.5">
+                            <span>Submit Daily Proof ({arenaProofType.toUpperCase()})</span>
+                            {selectedProofPreviewUrl || proofFileName ? (
+                              <span className="text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded">✓ Media Attached</span>
+                            ) : null}
+                          </span>
+                          <span className="font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                            Due {arenaDeadlineTime}
+                          </span>
+                        </div>
+
+                        <input ref={proofFileInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleProofFileSelect} />
+
+                        <form onSubmit={handleSendProof} className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                          {/* Compact Image File Picker Button / Preview Pill */}
+                          {arenaProofType === "image" && (
+                            <div className="shrink-0">
+                              {selectedProofPreviewUrl || proofFileName ? (
+                                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[var(--bg-raised)] border border-[var(--accent)]/40 text-xs font-bold">
+                                  {selectedProofPreviewUrl && (
+                                    <img
+                                      src={selectedProofPreviewUrl}
+                                      alt="Preview"
+                                      className="w-5 h-5 rounded-md object-cover border border-[var(--border)] shrink-0"
+                                    />
+                                  )}
+                                  <span className="text-[11px] font-bold text-[var(--fg)] max-w-[90px] truncate">
+                                    {proofFileName || "Photo"}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => proofFileInputRef.current?.click()}
+                                    className="text-[10px] text-[var(--accent)] hover:underline ml-1 cursor-pointer font-extrabold"
+                                  >
+                                    Change
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => proofFileInputRef.current?.click()}
+                                  className="px-3 py-1.5 rounded-xl border border-dashed border-[var(--accent)]/50 hover:border-[var(--accent)] bg-[var(--accent)]/10 hover:bg-[var(--accent)]/20 transition flex items-center gap-1.5 text-xs font-bold text-[var(--accent)] cursor-pointer shadow-xs"
+                                >
+                                  <Camera className="w-3.5 h-3.5" />
+                                  <span>Select Photo/Video 📷</span>
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                          {/* URL or Text Proof Input */}
+                          <input
+                            type={arenaProofType === "link" ? "url" : "text"}
+                            required={arenaProofType !== "image"}
+                            placeholder={arenaProofType === "image" ? "Or paste image URL link…" : arenaProofType === "link" ? "https://example.com/proof" : "Describe your completed task…"}
+                            className="flex-1 min-w-[140px] bg-[var(--bg-raised)] border border-[var(--border)] rounded-xl px-3 py-1.5 text-xs outline-none focus:border-[var(--accent)] transition"
+                            style={{ color: "var(--fg)" }}
+                            value={proofUrl.startsWith("data:") ? "" : proofUrl}
+                            onChange={(e) => setProofUrl(e.target.value)}
+                          />
+
+                          {/* Submit Button */}
+                          <button
+                            type="submit"
+                            disabled={!proofUrl.trim()}
+                            className="px-3.5 py-1.5 rounded-xl text-xs font-bold text-white bg-[var(--accent)] hover:opacity-90 disabled:opacity-40 transition shadow-sm shrink-0 flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>🚀 Submit</span>
+                          </button>
+                        </form>
+                      </div>
+                    )}
+                  </div>
+
+                  {submissions.length === 0 ? (
+                    /* Empty State */
+                    <div
+                      className="flex flex-col items-center justify-center py-20 text-center px-6 rounded-3xl mt-2 animate-fade-in"
+                      style={{ border: "2px dashed var(--border)", color: "var(--fg-subtle)" }}
+                    >
+                      <div
+                        className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
+                        style={{ background: "var(--accent-light)" }}
+                      >
+                        <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "var(--accent)" }}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                        </svg>
+                      </div>
+                      <p className="text-sm font-bold mb-1" style={{ color: "var(--fg)" }}>No proofs yet today</p>
+                      <p className="text-xs max-w-xs" style={{ color: "var(--fg-muted)" }}>Be the first to submit your daily proof above and start the accountability chain.</p>
+                    </div>
+                  ) : (
+                    /* ── Instagram-Style Feed Cards ── */
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 max-w-4xl mx-auto">
                   {submissions.map((sub) => {
                     const memberCount = arenaMembers.length || 1;
                     const downvotes = sub.downvotes || 0;
@@ -3944,8 +4205,7 @@ export default function ArenaRoomPage() {
                                   ? `shared external proof link (${getDomainName(sub.proof_url)}).`
                                   : `submitted proof: "${sub.proof_url}"`}
                             </p>
-
-                            {/* Consensus status footer indicator */}
+                        {/* Consensus status footer indicator */}
                             <button
                               type="button"
                               onClick={() => openVotersModal(sub)}
@@ -3964,8 +4224,10 @@ export default function ArenaRoomPage() {
                   })}
                 </div>
               )}
-            </div>
-          </div>
+            </>
+          )}
+        </div>
+      </div>
         </div>
       </div>
 
@@ -5009,6 +5271,80 @@ export default function ArenaRoomPage() {
                 Close Log Book
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ACCOUNT SEIZED / RECHARGE COINS MODAL ── */}
+      {showRechargeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in">
+          <div
+            className="w-full max-w-sm rounded-3xl p-6 border shadow-2xl animate-scale-in flex flex-col gap-4"
+            style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">⚡</span>
+                <div>
+                  <h3 className="text-sm font-black text-[var(--fg)]">Recharge Wallet Coins</h3>
+                  <p className="text-[10px] text-[var(--fg-muted)]">Unfreeze account & activate proof submissions</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRechargeModal(false)}
+                className="w-7 h-7 rounded-full bg-[var(--bg-raised)] flex items-center justify-center text-xs font-bold text-[var(--fg-muted)] hover:text-[var(--fg)] cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs flex flex-col gap-1">
+              <span className="font-black text-amber-400 flex items-center gap-1">
+                <span>Account Status:</span>
+                <span className={userIsSeized ? "text-red-400" : "text-emerald-400"}>
+                  {userIsSeized ? "🔒 Seized for Proofs" : "✓ Active"}
+                </span>
+              </span>
+              <p className="text-[11px] text-[var(--fg-muted)]">
+                Maintaining a positive balance ensures you can submit your daily proof and qualify for the 21-day consistency reward pot.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-[var(--fg-muted)] mb-2 uppercase tracking-wider">
+                Select Coin Top-up
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {[100, 250, 500, 1000].map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => setRechargeAmount(amt)}
+                    className={`py-2.5 px-3 rounded-2xl text-xs font-black border transition cursor-pointer ${
+                      rechargeAmount === amt
+                        ? "bg-[var(--accent)] text-white border-[var(--accent)] shadow-md"
+                        : "bg-[var(--bg-raised)] text-[var(--fg)] border-[var(--border)] hover:border-[var(--accent)]/50"
+                    }`}
+                  >
+                    🪙 +{amt} Coins
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={isRecharging}
+              onClick={() => handleRechargeWallet(rechargeAmount)}
+              className="w-full py-3 rounded-2xl font-black text-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition cursor-pointer shadow-lg active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {isRecharging ? (
+                <span>Processing Recharge…</span>
+              ) : (
+                <span>⚡ Recharge +{rechargeAmount} Coins Now</span>
+              )}
+            </button>
           </div>
         </div>
       )}
