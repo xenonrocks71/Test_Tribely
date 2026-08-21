@@ -2108,22 +2108,6 @@ export default function ArenaRoomPage() {
             setShowVoiceCallModal(false);
             setShowVideoCallModal(false);
             stopLocalMediaStream();
-
-            // Real-time Call Ended Log in Chat Feed
-            const endCallMsg: Message = {
-              id: `call_end_${Date.now()}` as any,
-              user_id: 0,
-              sender_name: "System",
-              sender_avatar_url: null,
-              content: "📞 Call session ended.",
-              message_type: "call_ended",
-              created_at: new Date().toISOString(),
-            };
-            setMessages((prev) => {
-              const alreadyHas = prev.some((m) => m.message_type === "call_ended" && Date.now() - new Date(m.created_at).getTime() < 10000);
-              return alreadyHas ? prev : [endCallMsg, ...prev];
-            });
-
             toast.info("📞 The call has ended.");
             return;
           }
@@ -3226,28 +3210,42 @@ export default function ArenaRoomPage() {
               className="flex-1 min-h-0 px-3 sm:px-5 py-4 overflow-y-auto styled-scroll flex flex-col-reverse space-y-reverse space-y-1.5"
             >
               <div ref={chatBottomRef} />
-              {messages.length === 0 ? (
-                <div className="my-auto text-center py-16 px-4 animate-fade-in">
-                  <div
-                    className="w-16 h-16 rounded-full flex items-center justify-center text-2xl mx-auto mb-4"
-                    style={{ background: "var(--accent-light)" }}
-                  >
-                    💬
-                  </div>
-                  <h3
-                    className="text-sm font-bold mb-1"
-                    style={{ color: "var(--fg)" }}
-                  >
-                    No messages yet
-                  </h3>
-                  <p className="text-xs" style={{ color: "var(--fg-muted)" }}>
-                    Be the first to say something.
-                  </p>
-                </div>
-              ) : (
-                messages.map((msg, idx) => {
+              {(() => {
+                const visibleMessages = messages.filter((msg) => {
+                  if (msg.message_type === "call_ended") return false;
+                  if (typeof msg.content === "string" && (
+                    msg.content.includes("call session ended") ||
+                    msg.content.includes("Call session ended") ||
+                    msg.content.includes("Call ended by")
+                  )) return false;
+                  return true;
+                });
+
+                if (visibleMessages.length === 0) {
+                  return (
+                    <div className="my-auto text-center py-16 px-4 animate-fade-in">
+                      <div
+                        className="w-16 h-16 rounded-full flex items-center justify-center text-2xl mx-auto mb-4"
+                        style={{ background: "var(--accent-light)" }}
+                      >
+                        💬
+                      </div>
+                      <h3
+                        className="text-sm font-bold mb-1"
+                        style={{ color: "var(--fg)" }}
+                      >
+                        No messages yet
+                      </h3>
+                      <p className="text-xs" style={{ color: "var(--fg-muted)" }}>
+                        Be the first to say something.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return visibleMessages.map((msg, idx) => {
                   const isMe = msg.user_id === userId;
-                  const prevMsg = messages[idx + 1];
+                  const prevMsg = visibleMessages[idx + 1];
                   const isGroupStart =
                     !prevMsg || prevMsg.user_id !== msg.user_id;
                   const isFirstMsgOfDate =
@@ -3286,21 +3284,20 @@ export default function ArenaRoomPage() {
                             </span>
                           )}
 
-                          {/* 1. Instagram Call Log Pill (Preserving Original Design) */}
-                          {msg.message_type === "call_invite" || msg.message_type === "call_ended" || (typeof msg.content === "string" && (msg.content.startsWith("📞") || msg.content.startsWith("📹") || msg.content.includes("Voice Huddle") || msg.content.includes("Video Call") || msg.content.includes("call session ended") || msg.content.includes("Call session ended"))) ? (
+                          {/* 1. Instagram Call Log Pill (Single Call Start Log) */}
+                          {msg.message_type === "call_invite" || (typeof msg.content === "string" && (msg.content.startsWith("📞") || msg.content.startsWith("📹") || msg.content.includes("started the call") || msg.content.includes("Voice Huddle") || msg.content.includes("Video Call"))) ? (
                             (() => {
-                              const isEnded = msg.message_type === "call_ended" || (typeof msg.content === "string" && (msg.content.includes("ended") || msg.content.includes("Ended")));
-                              const callIsLive = !isEnded && isCallSessionLive(activeCallState);
+                              const callIsLive = isCallSessionLive(activeCallState);
                               const isVideo = (typeof msg.content === "string" && msg.content.toLowerCase().includes("video")) ||
                                 (activeCallState?.call_type === "video" && callIsLive);
-                              const callTitle = isVideo
-                                ? isEnded ? "Video call ended" : "Video call"
-                                : isEnded ? "Voice call ended" : "Voice Huddle";
+                              const callTitle = typeof msg.content === "string" && msg.content.length > 0
+                                ? msg.content
+                                : isVideo ? `📹 ${msg.sender_name} started a video call` : `📞 ${msg.sender_name} started the call`;
 
                               return (
                                 <div
                                   onClick={() => {
-                                    if (isEnded || !callIsLive) {
+                                    if (!callIsLive) {
                                       toast.info("📞 This call has already ended.");
                                       return;
                                     }
@@ -3315,7 +3312,7 @@ export default function ArenaRoomPage() {
                                       ? "bg-neutral-800 text-white border-neutral-700/40 hover:bg-neutral-700"
                                       : "bg-neutral-200 text-neutral-900 dark:bg-[#262626] dark:text-[#F5F5F5] border-neutral-300/30 dark:border-neutral-700/30 hover:bg-neutral-300 dark:hover:bg-[#303030]"
                                   }`}
-                                  title={isEnded ? "Call Ended" : callIsLive ? "Tap to Join Ongoing Call" : "No Active Call"}
+                                  title={callIsLive ? "Tap to Join Ongoing Call" : "Call Ended"}
                                 >
                                   <div className="w-8 h-8 rounded-full bg-neutral-500/30 dark:bg-neutral-700/60 flex items-center justify-center text-xs shrink-0">
                                     {isVideo ? "📹" : "📞"}
@@ -3329,7 +3326,10 @@ export default function ArenaRoomPage() {
                                         </span>
                                       )}
                                     </span>
-                                    <span className="text-[10px] opacity-60 mt-0.5 font-medium">
+                                    <span
+                                      className="text-[10px] opacity-70 mt-0.5 font-medium"
+                                      style={{ color: "inherit" }}
+                                    >
                                       <TimeOnlyStr iso={msg.created_at} />
                                     </span>
                                   </div>
@@ -3402,8 +3402,8 @@ export default function ArenaRoomPage() {
                       )}
                     </React.Fragment>
                   );
-                })
-              )}
+                });
+              })()}
 
             </div>
 

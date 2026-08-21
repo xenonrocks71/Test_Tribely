@@ -130,14 +130,16 @@ async def arena_websocket_endpoint(
                     payload["active_call"] = active_call
                     payload["event_type"] = "INCOMING_CALL"
 
-                    # Post call_invite message to chat DB
+                    # Post single call started message to chat DB
                     try:
                         with SessionLocal() as call_db:
                             from app.models.models import Message
+                            call_label = "video call" if call_type == "video" else "call"
+                            call_icon = "📹" if call_type == "video" else "📞"
                             invite_msg = Message(
                                 arena_id=arena_id,
                                 user_id=user_id,
-                                content=f"📞 Voice Huddle started by {caller_name}! Tap to join.",
+                                content=f"{call_icon} {caller_name} started the {call_label}",
                                 message_type="call_invite"
                             )
                             call_db.add(invite_msg)
@@ -156,30 +158,23 @@ async def arena_websocket_endpoint(
                                 arena_id=arena_id,
                                 sender_id=user_id,
                                 event_type="call_invite",
-                                title=f"🎙️ Audio Call in {arena_title}",
-                                body=f"{caller_name} started an audio call in {arena_title}",
-                                data_json={
-                                    "arena_id": arena_id,
-                                    "call_type": call_type,
-                                    "url": f"/arena/{arena_id}?action=join_call&call_type={call_type}"
-                                }
+                                title=f"🎙️ Call in {arena_title}",
+                                body=f"{caller_name} started the call in {arena_title}",
                             )
-                    except Exception as ne:
-                        print(f"Call notification dispatch error: {ne}")
+                    except Exception as pe:
+                        print(f"Call invite notification dispatch error: {pe}")
 
                     await manager.broadcast_to_arena(arena_id, payload)
                     continue
 
-                # ── 2. JOIN_CALL: Member explicitly joining an existing call ──
+                # ── 2. JOIN_CALL: Another member joins ongoing call ──
                 elif event_type in ["JOIN_CALL", "call_join"]:
                     existing_call = active_calls_registry.get_active_call(arena_id)
                     if not existing_call:
-                        # No active call to join — inform this user only
-                        await manager.broadcast_to_user(user_id, {
-                            "event_type": "NO_ACTIVE_CALL",
-                            "arena_id": arena_id,
+                        await websocket.send_text(json.dumps({
+                            "event_type": "CALL_ERROR",
                             "message": "No active call in this arena."
-                        })
+                        }))
                         continue
 
                     active_call = active_calls_registry.start_or_join_call(
@@ -201,54 +196,19 @@ async def arena_websocket_endpoint(
                         payload["active_call"] = active_call
                         payload["event_type"] = "USER_LEFT"
                     else:
-                        # Last participant left — call ended
+                        # Last participant left — call ended (no chat message)
                         payload["active_call"] = None
                         payload["event_type"] = "CALL_ENDED"
-                        try:
-                            with SessionLocal() as call_db:
-                                from app.models.models import Message
-                                end_msg = Message(
-                                    arena_id=arena_id,
-                                    user_id=user_id,
-                                    content="📞 Voice call session ended.",
-                                    message_type="call_ended"
-                                )
-                                call_db.add(end_msg)
-                                call_db.commit()
-                        except Exception as me:
-                            print(f"Call ended message post error: {me}")
 
                     await manager.broadcast_to_arena(arena_id, payload)
                     continue
 
                 # ── 4. FORCE_END_CALL: Call Host or Arena Admin ends call for everyone ──
                 elif event_type == "FORCE_END_CALL":
-                    existing_call = active_calls_registry.get_active_call(arena_id)
-                    # Allow force end if: user is call host OR call has only them left
-                    call_host_id = existing_call.get("caller_id") if existing_call else None
-                    if user_id != call_host_id:
-                        # Non-host trying to force end — silently ignore (or check arena admin separately via API)
-                        # We allow it anyway for now to not block the flow
-                        pass
-
                     active_calls_registry.force_end_call(arena_id=arena_id, admin_user_id=user_id)
                     payload["active_call"] = None
                     payload["event_type"] = "CALL_ENDED"
                     payload["ended_by"] = user_id
-
-                    try:
-                        with SessionLocal() as call_db:
-                            from app.models.models import Message
-                            end_msg = Message(
-                                arena_id=arena_id,
-                                user_id=user_id,
-                                content=f"🔴 Call ended by {caller_name}.",
-                                message_type="call_ended"
-                            )
-                            call_db.add(end_msg)
-                            call_db.commit()
-                    except Exception as me:
-                        print(f"Force end call message error: {me}")
 
                     await manager.broadcast_to_arena(arena_id, payload)
                     continue
