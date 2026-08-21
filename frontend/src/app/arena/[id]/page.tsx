@@ -1725,7 +1725,10 @@ export default function ArenaRoomPage() {
       if (payload) {
         if (Array.isArray(payload.submissions))
           setSubmissions(payload.submissions);
-        if (Array.isArray(payload.messages)) setMessages(payload.messages);
+        if (Array.isArray(payload.messages)) {
+          setMessages(payload.messages);
+          dataCache.set(`/api/activity/arena/${id}/history`, payload);
+        }
         if (payload.active_call && (payload.active_call.active || payload.active_call.status === "IN_CALL" || payload.active_call.status === "RINGING")) {
           setActiveCallState(payload.active_call);
         } else {
@@ -1773,12 +1776,12 @@ export default function ArenaRoomPage() {
       userIdRef.current = Number(localUserId); // Keep ref in sync for WS/WebRTC closures
     }
 
-    // Zero-delay instant cache pre-hydration
+    // Zero-delay instant cache pre-hydration (only if cache actually has items)
     const cachedHistory = dataCache.get(`/api/activity/arena/${id}/history`);
     if (cachedHistory) {
       const data = cachedHistory.data || cachedHistory;
-      if (Array.isArray(data.submissions)) setSubmissions(data.submissions);
-      if (Array.isArray(data.messages)) setMessages(data.messages);
+      if (Array.isArray(data.submissions) && data.submissions.length > 0) setSubmissions(data.submissions);
+      if (Array.isArray(data.messages) && data.messages.length > 0) setMessages(data.messages);
     }
     const cachedMembers = dataCache.get(`/api/arenas/${id}/members`);
     if (cachedMembers) {

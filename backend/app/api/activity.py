@@ -514,13 +514,8 @@ def get_arena_history(
             }
         )
 
+    formatted_messages = []
     try:
-        submissions = db.query(Submission)\
-            .filter(Submission.arena_id == arena_id)\
-            .options(joinedload(Submission.user).joinedload(User.profile))\
-            .order_by(Submission.submitted_at.desc())\
-            .all()
-            
         # 1. Fetch ground-truth persistent messages from database
         db_messages = db.query(Message)\
             .filter(Message.arena_id == arena_id)\
@@ -529,17 +524,45 @@ def get_arena_history(
             .limit(200)\
             .all()
 
-        formatted_messages = [
-            {
-                "id": msg.id,
-                "user_id": msg.user_id,
-                "content": str(msg.content),
-                "message_type": str(msg.message_type or "text"),
-                "created_at": msg.created_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if msg.created_at else "",
-                "sender_name": msg.user.full_name if (msg.user and getattr(msg.user, 'full_name', None)) else f"Member #{msg.user_id}",
-                "sender_avatar_url": (msg.user.profile.profile_image_url if (msg.user and msg.user.profile) else None)
-            } for msg in db_messages
-        ]
+        for msg in db_messages:
+            try:
+                # Safe sender name
+                sender_name = f"Member #{msg.user_id}"
+                sender_avatar = None
+                if msg.user:
+                    sender_name = getattr(msg.user, 'full_name', None) or sender_name
+                    if msg.user.profile:
+                        sender_avatar = getattr(msg.user.profile, 'profile_image_url', None)
+
+                # Safe created_at ISO string
+                created_at_str = ""
+                if msg.created_at:
+                    if isinstance(msg.created_at, str):
+                        created_at_str = msg.created_at
+                    elif hasattr(msg.created_at, 'strftime'):
+                        created_at_str = msg.created_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+                formatted_messages.append({
+                    "id": msg.id,
+                    "user_id": msg.user_id,
+                    "content": str(msg.content or ""),
+                    "message_type": str(msg.message_type or "text"),
+                    "created_at": created_at_str,
+                    "sender_name": sender_name,
+                    "sender_avatar_url": sender_avatar
+                })
+            except Exception as m_err:
+                print(f"Error formatting single message {getattr(msg, 'id', None)}: {m_err}")
+    except Exception as me:
+        print(f"Error querying messages for arena {arena_id}: {me}")
+
+    formatted_submissions = []
+    try:
+        submissions = db.query(Submission)\
+            .filter(Submission.arena_id == arena_id)\
+            .options(joinedload(Submission.user).joinedload(User.profile))\
+            .order_by(Submission.submitted_at.desc())\
+            .all()
 
         submission_ids = [sub.id for sub in submissions]
         user_votes_dict = {}
@@ -572,15 +595,22 @@ def get_arena_history(
             except Exception as ve:
                 print(f"Non-critical voters query error: {ve}")
 
-        return success_response({
-            "submissions": [
-                {
+        for sub in submissions:
+            try:
+                sub_user_name = f"Member #{sub.user_id}"
+                sub_user_avatar = None
+                if sub.user:
+                    sub_user_name = getattr(sub.user, 'full_name', None) or sub_user_name
+                    if sub.user.profile:
+                        sub_user_avatar = getattr(sub.user.profile, 'profile_image_url', None)
+
+                formatted_submissions.append({
                     "id": sub.id,
                     "user_id": sub.user_id,
                     "proof_url": sub.proof_url,
                     "submitted_at": str(sub.submitted_at),
-                    "user_name": sub.user.full_name if (sub.user and getattr(sub.user, 'full_name', None)) else f"Member #{sub.user_id}",
-                    "user_avatar_url": (sub.user.profile.profile_image_url if (sub.user and sub.user.profile) else None),
+                    "user_name": sub_user_name,
+                    "user_avatar_url": sub_user_avatar,
                     "upvotes": getattr(sub, 'upvotes', 0) or 0,
                     "downvotes": getattr(sub, 'downvotes', 0) or 0,
                     "is_absent": getattr(sub, 'is_absent', False) or False,
@@ -589,13 +619,23 @@ def get_arena_history(
                     "ai_confidence_score": getattr(sub, 'ai_confidence_score', 0.95) or 0.95,
                     "ai_status": getattr(sub, 'ai_status', 'verified') or 'verified',
                     "ai_audit_notes": getattr(sub, 'ai_audit_notes', None)
-                } for sub in submissions
-            ],
-            "messages": formatted_messages,
-            "active_call": active_calls_registry.get_active_call(arena_id)
-        })
-    except Exception as e:
-        return success_response({"submissions": [], "messages": [], "active_call": None, "error": str(e)})
+                })
+            except Exception as sub_err:
+                print(f"Error formatting single submission {getattr(sub, 'id', None)}: {sub_err}")
+    except Exception as se:
+        print(f"Error querying submissions for arena {arena_id}: {se}")
+
+    active_call = None
+    try:
+        active_call = active_calls_registry.get_active_call(arena_id)
+    except Exception as ce:
+        print(f"Error checking active call for arena {arena_id}: {ce}")
+
+    return success_response({
+        "submissions": formatted_submissions,
+        "messages": formatted_messages,
+        "active_call": active_call
+    })
 
 
 
