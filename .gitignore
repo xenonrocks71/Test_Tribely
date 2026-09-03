@@ -23,23 +23,14 @@ backend/venv/
 backend/scratch/
 backend/static/uploads/*
 !backend/static/uploads/.gitkeep
-static/uploads/*
-!static/uploads/.gitkeep
+
+# Testing & Cache
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Docker & logs
 *.log
 
-# Internal audit, interview, and handover markdown docs (ignore future local changes)
-ANTIGRAVITY_TASKS.md
-architectural_audit_and_roadmap.md
-CHANGELOG_RESPONSIVE_AND_THEME.md
-INTERVIEW_CROSS_QUESTIONS.md
-INTERVIEW_QA_AND_PITCH.md
-project_audit_and_evaluation.md
-PROJECT_FILE_WISE_SUMMARY.md
-PROJECT_HANDOVER_GUIDE.md
-resources.md
-TRIBELY_COMPLETE_PROJECT_GUIDE.md
-TRIBELY_END_USER_WORKFLOW_GUIDE.md
 
 

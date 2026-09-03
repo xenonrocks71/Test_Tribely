@@ -20,8 +20,6 @@ from app.api import (
     upload,
     streak,
     escrow,
-    huddle,
-    bot_webhook,
     ledger,
     kudos,
     notifications,
@@ -94,7 +92,6 @@ app.include_router(upload.router)
 app.include_router(upload.router, prefix="/api")
 app.include_router(streak.router)
 app.include_router(escrow.router)
-app.include_router(huddle.router)
 app.include_router(ledger.router)
 
 from fastapi import Request
