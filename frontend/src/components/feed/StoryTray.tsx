@@ -30,10 +30,18 @@ export const StoryTray: React.FC = () => {
   // Filter clean unviewed stories (always keep self so user can drop/view their own proof)
   const unviewedStories = React.useMemo(() => {
     return storyUsers.filter((s) => {
+      const u = (s.username || "").toLowerCase();
+      const n = (s.name || "").toLowerCase();
       const isClean =
-        !s.username?.toLowerCase().includes("phase4") &&
-        !s.username?.toLowerCase().includes("smoke") &&
-        !s.name?.toLowerCase().includes("smoke");
+        !u.includes("phase") &&
+        !u.includes("smoke") &&
+        !u.includes("test") &&
+        !u.startsWith("member_") &&
+        !u.startsWith("sub_") &&
+        !u.startsWith("creator_") &&
+        !n.includes("phase") &&
+        !n.includes("smoke") &&
+        !n.includes("test");
       if (!isClean) return false;
       if (s.id === "self") return true;
       return !viewedStoryUserIds.has(s.id);

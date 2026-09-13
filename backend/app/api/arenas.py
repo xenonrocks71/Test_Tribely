@@ -40,7 +40,10 @@ def discover_all_arenas(db: Session = Depends(get_db)):
         ).filter(ArenaMembership.status == "approved").group_by(ArenaMembership.arena_id).all()
         
         counts_map = {row.arena_id: row.total_members for row in counts_query}
-        test_patterns = ["%test%", "%keyset%", "%penalty arena%", "%escrow arena%", "%high roller%", "%phase 3%", "%sprint arena%", "%multiplier arena%"]
+        test_patterns = [
+            "%test%", "%keyset%", "%penalty arena%", "%escrow arena%",
+            "%high roller%", "%phase%", "%sprint arena%", "%multiplier arena%", "%smoke%"
+        ]
         arenas = db.query(Arena).filter(
             *[~Arena.name.ilike(p) for p in test_patterns]
         ).offset(0).limit(200).all()

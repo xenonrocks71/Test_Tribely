@@ -682,7 +682,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const { posts: apiFeed, has_more } = await tribelyService.fetchFeed(30, 0);
       setHasMoreFeed(has_more);
 
-      const mappedPosts: ProofPost[] = apiFeed.map(mapApiPostToProofPost);
+      const isTestEntity = (name?: string, handle?: string, arenaName?: string) => {
+        const n = (name || "").toLowerCase();
+        const h = (handle || "").toLowerCase();
+        const a = (arenaName || "").toLowerCase();
+        return (
+          n.includes("test") || n.includes("phase") || n.includes("smoke") ||
+          h.includes("test") || h.includes("phase") || h.includes("smoke") ||
+          h.startsWith("member_") || h.startsWith("sub_") || h.startsWith("creator_") ||
+          a.includes("test") || a.includes("phase") || a.includes("keyset") || a.includes("smoke")
+        );
+      };
+
+      const mappedPosts: ProofPost[] = apiFeed
+        .filter((p) => !isTestEntity(p.user_name, p.user_handle, p.arena_name))
+        .map(mapApiPostToProofPost);
 
       // Sort with latest posts strictly on top (newest submittedAt or ID first)
       const sorted = mappedPosts.sort((a, b) => {
@@ -753,6 +767,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const peerStories: StoryUser[] = [];
       for (const [peerUserId, proofs] of userProofsMap.entries()) {
         const sub = userMetaMap.get(peerUserId)!;
+        if (isTestEntity(sub.user_name, sub.user_handle, sub.arena_name)) continue;
         peerStories.push({
           id: String(peerUserId),
           name: sub.user_name || `Member #${peerUserId}`,

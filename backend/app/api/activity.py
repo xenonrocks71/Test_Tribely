@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import case, literal, or_, func
+from sqlalchemy import case, literal, or_, and_, func
 from pydantic import BaseModel
 from typing import Dict, Any, Tuple, Optional, List
 from datetime import datetime, time, timedelta, timezone
@@ -1570,12 +1570,34 @@ def get_user_social_feed(
             "next_offset": 0
         })
 
+    # Filter out any automated test patterns from public feed display
+    arena_test_patterns = [
+        "%test%", "%keyset%", "%penalty arena%", "%escrow arena%",
+        "%high roller%", "%phase%", "%sprint arena%", "%multiplier arena%", "%smoke%"
+    ]
+
+    # For joined arenas, members always see their squad submissions.
+    # For public discovery, strictly filter out test/synthetic arenas.
+    if joined_arena_ids:
+        feed_filter = or_(
+            Submission.arena_id.in_(joined_arena_ids),
+            and_(
+                Submission.arena_id.in_(public_arena_ids),
+                *[~Arena.name.ilike(p) for p in arena_test_patterns]
+            )
+        )
+    else:
+        feed_filter = and_(
+            Submission.arena_id.in_(public_arena_ids),
+            *[~Arena.name.ilike(p) for p in arena_test_patterns]
+        )
+
     # 4. Base query for all real verified habit submissions from database
     base_query = db.query(Submission)\
         .join(Arena, Submission.arena_id == Arena.id)\
         .join(User, Submission.user_id == User.id)\
         .filter(
-            Submission.arena_id.in_(allowed_arena_ids),
+            feed_filter,
             Submission.is_absent == False
         )
 
