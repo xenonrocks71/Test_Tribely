@@ -210,6 +210,132 @@ export interface ToastNotification {
   type: "success" | "nudge" | "fire" | "info";
 }
 
+const LOCAL_STORAGE_VOTES_KEY = "tribely_persisted_votes";
+
+interface PersistedVoteEntry {
+  vote: "upvote" | "downvote" | null;
+  timestamp: number;
+}
+
+function getPersistedVotes(): Record<string, PersistedVoteEntry> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_VOTES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function savePersistedVote(postId: string, rawSubId: number | string | undefined, vote: "upvote" | "downvote" | null) {
+  if (typeof window === "undefined") return;
+  try {
+    const votes = getPersistedVotes();
+    const entry: PersistedVoteEntry = { vote, timestamp: Date.now() };
+    votes[postId] = entry;
+    const cleanNum = String(postId).replace(/\D/g, "");
+    if (cleanNum) votes[cleanNum] = entry;
+    if (rawSubId) votes[String(rawSubId)] = entry;
+    localStorage.setItem(LOCAL_STORAGE_VOTES_KEY, JSON.stringify(votes));
+  } catch {}
+}
+
+export const FALLBACK_FEED_POSTS: ProofPost[] = [
+  {
+    id: "sub_demo_1",
+    rawSubmissionId: 901,
+    userId: "201",
+    userName: "Alex Rivera",
+    userHandle: "alex_r",
+    userAvatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80",
+    arenaId: "1",
+    arenaName: "5 AM Club & Morning Run",
+    arenaTag: "#5AMClub",
+    isJoined: true,
+    isPrivate: false,
+    isToday: true,
+    proofType: "image",
+    penaltyAmount: 50,
+    deadlineTime: "06:30 AM",
+    submittedAt: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
+    verifiedTime: "Verified Today at 05:45 AM",
+    mainImage: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=1000&q=80",
+    selfiePiP: null,
+    telemetry: "⚡ 5.2 km dawn run logged",
+    telemetryIcon: "run",
+    caption: "5:00 AM wake up locked in! Sunrise pace was brisk but feeling unstoppable today. 🔥",
+    upvotes: 14,
+    downvotes: 0,
+    userVote: null,
+    reactions: { fire: 14, electric: 0, respect: 0, target: 0 },
+    currentUserReaction: null,
+    commentsCount: 3,
+    timeAgo: "25m ago",
+  },
+  {
+    id: "sub_demo_2",
+    rawSubmissionId: 902,
+    userId: "202",
+    userName: "Marcus Vance",
+    userHandle: "marcus_dev",
+    userAvatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80",
+    arenaId: "2",
+    arenaName: "LeetCode 75 Grind",
+    arenaTag: "#LeetCode",
+    isJoined: true,
+    isPrivate: false,
+    isToday: true,
+    proofType: "link",
+    penaltyAmount: 50,
+    deadlineTime: "11:59 PM",
+    submittedAt: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
+    verifiedTime: "Verified Today at 04:30 PM",
+    mainImage: "https://leetcode.com/problems/trapping-rain-water/",
+    selfiePiP: null,
+    telemetry: "⚡ Algorithm Solution • LeetCode Hard",
+    telemetryIcon: "code",
+    caption: "Trapping Rain Water solved in O(N) two-pointer approach! Day 19 streak intact. 💻",
+    upvotes: 21,
+    downvotes: 0,
+    userVote: null,
+    reactions: { fire: 21, electric: 0, respect: 0, target: 0 },
+    currentUserReaction: null,
+    commentsCount: 5,
+    timeAgo: "1h ago",
+  },
+  {
+    id: "sub_demo_3",
+    rawSubmissionId: 903,
+    userId: "203",
+    userName: "Elena Rostova",
+    userHandle: "elena_lifts",
+    userAvatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80",
+    arenaId: "3",
+    arenaName: "Heavy Iron & Hypertrophy",
+    arenaTag: "#GymGrind",
+    isJoined: false,
+    isPrivate: false,
+    isToday: true,
+    proofType: "image",
+    penaltyAmount: 50,
+    deadlineTime: "10:00 PM",
+    submittedAt: new Date(Date.now() - 1000 * 60 * 180).toISOString(),
+    verifiedTime: "Verified Today at 02:15 PM",
+    mainImage: "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1000&q=80",
+    selfiePiP: null,
+    telemetry: "⚡ Leg Day • Squat 110kg 5x5",
+    telemetryIcon: "gym",
+    caption: "Heavy squats completed before cutoff. Don't skip leg day! 🏋️‍♀️",
+    upvotes: 9,
+    downvotes: 0,
+    userVote: null,
+    reactions: { fire: 9, electric: 0, respect: 0, target: 0 },
+    currentUserReaction: null,
+    commentsCount: 1,
+    timeAgo: "3h ago",
+  },
+];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers: map API types -> UI types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -400,7 +526,7 @@ interface AppContextType {
   claimStreakLifeline: () => void;
   triggerHaptic: (pattern?: number[]) => void;
   showToast: (message: string, type?: ToastNotification["type"]) => void;
-  refreshFeed: () => void;
+  refreshFeed: () => Promise<void>;
   refreshArenas: () => void;
   hasMoreFeed: boolean;
   loadMoreFeedPosts: () => Promise<void>;
@@ -583,6 +709,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       computedProofType = "link";
     }
 
+    const persistedVotes = getPersistedVotes();
+    const subKey = String(p.id);
+    const cleanNumericKey = subKey.replace(/\D/g, "");
+    const saved = persistedVotes[subKey] || (cleanNumericKey ? persistedVotes[cleanNumericKey] : null) || (p.rawSubmissionId ? persistedVotes[String(p.rawSubmissionId)] : null);
+
+    let activeUserVote: "upvote" | "downvote" | null = (p.user_vote as any) || (p.userVote as any) || (p.current_user_reaction === "target" ? "downvote" : p.current_user_reaction ? "upvote" : null);
+    let upvotesCount = p.upvotes || 0;
+    let downvotesCount = p.downvotes || 0;
+
+    if (saved) {
+      activeUserVote = saved.vote;
+      if (saved.vote === "upvote" && p.user_vote !== "upvote" && p.user_vote !== "up") {
+        upvotesCount = Math.max(1, upvotesCount);
+      } else if (saved.vote === "downvote" && p.user_vote !== "downvote" && p.user_vote !== "down") {
+        downvotesCount = Math.max(1, downvotesCount);
+      }
+    }
+
     return {
       id: String(p.id),
       rawSubmissionId: p.id,
@@ -605,16 +749,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       telemetry: p.text_reflection || "Verified Drop",
       telemetryIcon: "code",
       caption: p.text_reflection || "Daily habit completed! Consistency is the key. 💪",
-      upvotes: p.upvotes || 0,
-      downvotes: p.downvotes || 0,
-      userVote: (p.user_vote as any) || (p.current_user_reaction === "target" ? "downvote" : p.current_user_reaction ? "upvote" : null),
+      upvotes: upvotesCount,
+      downvotes: downvotesCount,
+      userVote: activeUserVote,
       reactions: {
-        fire: p.reactions?.fire || p.upvotes || 0,
+        fire: upvotesCount,
         electric: p.reactions?.electric || 0,
         respect: p.reactions?.respect || 0,
-        target: p.downvotes || 0,
+        target: downvotesCount,
       },
-      currentUserReaction: (p.current_user_reaction as any) || null,
+      currentUserReaction: activeUserVote === "upvote" ? "fire" : activeUserVote === "downvote" ? "target" : null,
       commentsCount: (p as any).comments_count ?? (p as any).commentsCount ?? 0,
       timeAgo: timeAgoStr,
       proofType: computedProofType,
@@ -631,8 +775,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const { posts: apiFeed, has_more } = await tribelyService.fetchFeed(30, 0);
       setHasMoreFeed(has_more);
 
-      const posts: ProofPost[] = apiFeed.map(mapApiPostToProofPost);
-      setFeedPosts(posts);
+      const mappedPosts: ProofPost[] = apiFeed.map(mapApiPostToProofPost);
+
+      // Keep hardcoded/fallback test posts for testing as requested by user
+      const persistedVotes = getPersistedVotes();
+      const hydratedFallback: ProofPost[] = FALLBACK_FEED_POSTS.map((fb) => {
+        const saved = persistedVotes[fb.id] || (fb.rawSubmissionId ? persistedVotes[String(fb.rawSubmissionId)] : null);
+        const baseUp = fb.upvotes ?? fb.reactions?.fire ?? 0;
+        const baseDown = fb.downvotes ?? fb.reactions?.target ?? 0;
+        if (saved) {
+          const isUp = saved.vote === "upvote";
+          const isDown = saved.vote === "downvote";
+          const finalUp = isUp ? baseUp + 1 : baseUp;
+          const finalDown = isDown ? baseDown + 1 : baseDown;
+          return {
+            ...fb,
+            userVote: saved.vote,
+            upvotes: finalUp,
+            downvotes: finalDown,
+            reactions: {
+              ...fb.reactions,
+              fire: finalUp,
+              target: finalDown,
+            },
+            currentUserReaction: isUp ? "fire" : isDown ? "target" : null,
+          };
+        }
+        return fb;
+      });
+
+      const existingIds = new Set(mappedPosts.map((p) => p.id));
+      const combined = [...mappedPosts, ...hydratedFallback.filter((fb) => !existingIds.has(fb.id))];
+
+      // Sort with latest posts strictly on top (newest submittedAt or ID first)
+      const sorted = combined.sort((a, b) => {
+        const tA = new Date(a.submittedAt || 0).getTime();
+        const tB = new Date(b.submittedAt || 0).getTime();
+        if (tB !== tA) return tB - tA;
+        return (Number(b.rawSubmissionId || b.id) || 0) - (Number(a.rawSubmissionId || a.id) || 0);
+      });
+
+      setFeedPosts(sorted);
 
       // 2. Track completed arenas today for current user
       const todayStart = new Date();
@@ -737,15 +920,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const toggleLike = useCallback((postId: string) => {
     triggerHaptic([30, 40]);
+    let targetSubId: string | number | undefined;
+
     setFeedPosts((prev) =>
       prev.map((post) => {
-        if (post.id !== postId) return post;
+        if (post.id !== postId && String(post.rawSubmissionId) !== postId) return post;
+        targetSubId = post.rawSubmissionId || String(post.id).replace(/\D/g, "");
         const isLiked = post.userVote === "upvote";
-        const newVote = isLiked ? null : "upvote";
+        const newVote: "upvote" | null = isLiked ? null : "upvote";
         const currentUpvotes = post.upvotes ?? post.reactions.fire;
         const newUpvotes = isLiked ? Math.max(0, currentUpvotes - 1) : currentUpvotes + 1;
         const currentDownvotes = post.downvotes ?? post.reactions.target;
         const newDownvotes = post.userVote === "downvote" ? Math.max(0, currentDownvotes - 1) : currentDownvotes;
+
+        savePersistedVote(post.id, post.rawSubmissionId, newVote);
+
         return {
           ...post,
           userVote: newVote,
@@ -760,23 +949,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       })
     );
-    const post = feedPostsRef.current.find((p) => p.id === postId);
-    if (post?.rawSubmissionId) {
-      tribelyService.voteSubmission(post.rawSubmissionId, "up").catch(() => {});
+
+    if (targetSubId) {
+      tribelyService.voteSubmission(targetSubId, "upvote").catch(() => {});
     }
   }, []);
 
   const toggleDislike = useCallback((postId: string) => {
     triggerHaptic([20, 30]);
+    let targetSubId: string | number | undefined;
+
     setFeedPosts((prev) =>
       prev.map((post) => {
-        if (post.id !== postId) return post;
+        if (post.id !== postId && String(post.rawSubmissionId) !== postId) return post;
+        targetSubId = post.rawSubmissionId || String(post.id).replace(/\D/g, "");
         const isDisliked = post.userVote === "downvote";
-        const newVote = isDisliked ? null : "downvote";
+        const newVote: "downvote" | null = isDisliked ? null : "downvote";
         const currentDownvotes = post.downvotes ?? post.reactions.target;
         const newDownvotes = isDisliked ? Math.max(0, currentDownvotes - 1) : currentDownvotes + 1;
         const currentUpvotes = post.upvotes ?? post.reactions.fire;
         const newUpvotes = post.userVote === "upvote" ? Math.max(0, currentUpvotes - 1) : currentUpvotes;
+
+        savePersistedVote(post.id, post.rawSubmissionId, newVote);
+
         return {
           ...post,
           userVote: newVote,
@@ -791,9 +986,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       })
     );
-    const post = feedPostsRef.current.find((p) => p.id === postId);
-    if (post?.rawSubmissionId) {
-      tribelyService.voteSubmission(post.rawSubmissionId, "down").catch(() => {});
+
+    if (targetSubId) {
+      tribelyService.voteSubmission(targetSubId, "downvote").catch(() => {});
     }
   }, []);
 

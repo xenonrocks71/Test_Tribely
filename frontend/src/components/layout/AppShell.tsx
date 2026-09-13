@@ -44,6 +44,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     triggerHaptic,
     showToast,
     refreshArenas,
+    refreshFeed,
   } = useApp();
 
   // Modals state for Instagram Header actions
@@ -62,14 +63,24 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [inviteCodeInput, setInviteCodeInput] = useState("");
   const [isJoiningCode, setIsJoiningCode] = useState(false);
 
-  const handleTabClick = (tab: NavTab) => {
+  const handleTabClick = async (tab: NavTab) => {
     triggerHaptic([15]);
     if (tab === "camera") {
       openCamera();
     } else {
-      setActiveTab(tab);
-      if (typeof window !== "undefined") {
-        window.scrollTo({ top: 0, behavior: "smooth" });
+      if (tab === "feed") {
+        setActiveTab("feed");
+        if (typeof window !== "undefined") {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }
+        triggerHaptic([20, 30]);
+        showToast("🔄 Refreshing squad drops...", "info");
+        await Promise.all([refreshFeed(), refreshArenas()]);
+      } else {
+        setActiveTab(tab);
+        if (typeof window !== "undefined") {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }
       }
     }
   };

@@ -523,12 +523,25 @@ class TribelyService {
     return { ...result, proofUrl: imageDataUrl };
   }
 
-  async voteSubmission(submissionId: number, voteType: "up" | "down"): Promise<boolean> {
+  async voteSubmission(
+    submissionId: string | number,
+    voteType: "up" | "down" | "upvote" | "downvote"
+  ): Promise<any> {
+    const cleanId = String(submissionId).replace(/\D/g, "");
+    if (!cleanId) return false;
+    const normVote = voteType === "up" || voteType === "upvote" ? "upvote" : "downvote";
     try {
-      await apiClient.post(`/api/activity/submission/${submissionId}/vote`, { vote_type: voteType });
-      return true;
+      const res = await apiClient.post(`/api/activity/submission/${cleanId}/vote`, { vote_type: normVote });
+      return (res as any)?.data ?? true;
     } catch {
-      return false;
+      try {
+        const reactRes = await apiClient.post(`/api/activity/submissions/${cleanId}/react`, {
+          reaction_type: normVote === "upvote" ? "fire" : "target",
+        });
+        return (reactRes as any)?.data ?? true;
+      } catch {
+        return false;
+      }
     }
   }
 
