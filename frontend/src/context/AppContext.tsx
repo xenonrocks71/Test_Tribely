@@ -240,101 +240,7 @@ function savePersistedVote(postId: string, rawSubId: number | string | undefined
   } catch {}
 }
 
-export const FALLBACK_FEED_POSTS: ProofPost[] = [
-  {
-    id: "sub_demo_1",
-    rawSubmissionId: 901,
-    userId: "201",
-    userName: "Alex Rivera",
-    userHandle: "alex_r",
-    userAvatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80",
-    arenaId: "1",
-    arenaName: "5 AM Club & Morning Run",
-    arenaTag: "#5AMClub",
-    isJoined: true,
-    isPrivate: false,
-    isToday: true,
-    proofType: "image",
-    penaltyAmount: 50,
-    deadlineTime: "06:30 AM",
-    submittedAt: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
-    verifiedTime: "Verified Today at 05:45 AM",
-    mainImage: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=1000&q=80",
-    selfiePiP: null,
-    telemetry: "⚡ 5.2 km dawn run logged",
-    telemetryIcon: "run",
-    caption: "5:00 AM wake up locked in! Sunrise pace was brisk but feeling unstoppable today. 🔥",
-    upvotes: 14,
-    downvotes: 0,
-    userVote: null,
-    reactions: { fire: 14, electric: 0, respect: 0, target: 0 },
-    currentUserReaction: null,
-    commentsCount: 3,
-    timeAgo: "25m ago",
-  },
-  {
-    id: "sub_demo_2",
-    rawSubmissionId: 902,
-    userId: "202",
-    userName: "Marcus Vance",
-    userHandle: "marcus_dev",
-    userAvatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80",
-    arenaId: "2",
-    arenaName: "LeetCode 75 Grind",
-    arenaTag: "#LeetCode",
-    isJoined: true,
-    isPrivate: false,
-    isToday: true,
-    proofType: "link",
-    penaltyAmount: 50,
-    deadlineTime: "11:59 PM",
-    submittedAt: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
-    verifiedTime: "Verified Today at 04:30 PM",
-    mainImage: "https://leetcode.com/problems/trapping-rain-water/",
-    selfiePiP: null,
-    telemetry: "⚡ Algorithm Solution • LeetCode Hard",
-    telemetryIcon: "code",
-    caption: "Trapping Rain Water solved in O(N) two-pointer approach! Day 19 streak intact. 💻",
-    upvotes: 21,
-    downvotes: 0,
-    userVote: null,
-    reactions: { fire: 21, electric: 0, respect: 0, target: 0 },
-    currentUserReaction: null,
-    commentsCount: 5,
-    timeAgo: "1h ago",
-  },
-  {
-    id: "sub_demo_3",
-    rawSubmissionId: 903,
-    userId: "203",
-    userName: "Elena Rostova",
-    userHandle: "elena_lifts",
-    userAvatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80",
-    arenaId: "3",
-    arenaName: "Heavy Iron & Hypertrophy",
-    arenaTag: "#GymGrind",
-    isJoined: false,
-    isPrivate: false,
-    isToday: true,
-    proofType: "image",
-    penaltyAmount: 50,
-    deadlineTime: "10:00 PM",
-    submittedAt: new Date(Date.now() - 1000 * 60 * 180).toISOString(),
-    verifiedTime: "Verified Today at 02:15 PM",
-    mainImage: "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1000&q=80",
-    selfiePiP: null,
-    telemetry: "⚡ Leg Day • Squat 110kg 5x5",
-    telemetryIcon: "gym",
-    caption: "Heavy squats completed before cutoff. Don't skip leg day! 🏋️‍♀️",
-    upvotes: 9,
-    downvotes: 0,
-    userVote: null,
-    reactions: { fire: 9, electric: 0, respect: 0, target: 0 },
-    currentUserReaction: null,
-    commentsCount: 1,
-    timeAgo: "3h ago",
-  },
-];
+export const FALLBACK_FEED_POSTS: ProofPost[] = [];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers: map API types -> UI types
@@ -465,7 +371,8 @@ function generate30DayFallback(): HeatmapTile[] {
     result.push({
       date: d.toISOString().split("T")[0],
       dayOfMonth: d.getDate(),
-      status: i === 0 ? "today_pending" : Math.random() > 0.2 ? "verified" : "absent",
+      status: i === 0 ? "today_pending" : "absent",
+      proofTitle: i === 0 ? "Today: Awaiting Proof" : "Missed / No Proof",
     });
   }
   return result;
@@ -777,38 +684,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const mappedPosts: ProofPost[] = apiFeed.map(mapApiPostToProofPost);
 
-      // Keep hardcoded/fallback test posts for testing as requested by user
-      const persistedVotes = getPersistedVotes();
-      const hydratedFallback: ProofPost[] = FALLBACK_FEED_POSTS.map((fb) => {
-        const saved = persistedVotes[fb.id] || (fb.rawSubmissionId ? persistedVotes[String(fb.rawSubmissionId)] : null);
-        const baseUp = fb.upvotes ?? fb.reactions?.fire ?? 0;
-        const baseDown = fb.downvotes ?? fb.reactions?.target ?? 0;
-        if (saved) {
-          const isUp = saved.vote === "upvote";
-          const isDown = saved.vote === "downvote";
-          const finalUp = isUp ? baseUp + 1 : baseUp;
-          const finalDown = isDown ? baseDown + 1 : baseDown;
-          return {
-            ...fb,
-            userVote: saved.vote,
-            upvotes: finalUp,
-            downvotes: finalDown,
-            reactions: {
-              ...fb.reactions,
-              fire: finalUp,
-              target: finalDown,
-            },
-            currentUserReaction: isUp ? "fire" : isDown ? "target" : null,
-          };
-        }
-        return fb;
-      });
-
-      const existingIds = new Set(mappedPosts.map((p) => p.id));
-      const combined = [...mappedPosts, ...hydratedFallback.filter((fb) => !existingIds.has(fb.id))];
-
       // Sort with latest posts strictly on top (newest submittedAt or ID first)
-      const sorted = combined.sort((a, b) => {
+      const sorted = mappedPosts.sort((a, b) => {
         const tA = new Date(a.submittedAt || 0).getTime();
         const tB = new Date(b.submittedAt || 0).getTime();
         if (tB !== tA) return tB - tA;

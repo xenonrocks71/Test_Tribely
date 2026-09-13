@@ -706,10 +706,14 @@ export const ArenasView: React.FC<ArenasViewProps> = ({ viewMode = "all" }) => {
             ) : filteredSquads.length === 0 ? (
               <div className="py-10 px-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-center space-y-2">
                 <p className="text-xs font-bold text-neutral-700 dark:text-neutral-300">
-                  You&apos;ve joined all suggested Habit Tribes in this category! 🎉
+                  {discoveryArenas.length === 0
+                    ? "No Habit Tribes created yet. Launch your first Habit Tribe to get started! 🚀"
+                    : "You've joined all suggested Habit Tribes in this category! 🎉"}
                 </p>
                 <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                  Switch categories above or launch a custom Habit Tribe.
+                  {discoveryArenas.length === 0
+                    ? "Click the '+' button above to create a new habit tribe."
+                    : "Switch categories above or launch a custom Habit Tribe."}
                 </p>
               </div>
             ) : (

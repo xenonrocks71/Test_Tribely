@@ -17,34 +17,7 @@ interface ChatMessage {
 export const DmDrawer: React.FC = () => {
   const { isDmDrawerOpen, closeDm, activeDmArena, user, triggerHaptic } = useApp();
 
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "msg_1",
-      senderName: "Elena Rostova",
-      senderAvatar:
-        "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80",
-      isSelf: false,
-      message: "Hey team! Dropped my morning run proof early to protect our 1.5x Multiplier 🔥",
-      timestamp: "05:42 AM",
-    },
-    {
-      id: "msg_2",
-      senderName: "Marcus Vance",
-      senderAvatar:
-        "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80",
-      isSelf: false,
-      message: "Sprint pace is looking strong! @alex_rivers you're 45 mins from deadline, don't snooze!",
-      timestamp: "06:15 AM",
-    },
-    {
-      id: "msg_3",
-      senderName: "Alex Rivers",
-      senderAvatar: user.avatar,
-      isSelf: true,
-      message: "Lacing up right now! Running 5K with telemetry. Shielding this streak no matter what ⚡",
-      timestamp: "06:20 AM",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   const [inputVal, setInputVal] = useState("");
 
@@ -111,11 +84,22 @@ export const DmDrawer: React.FC = () => {
 
           {/* Messages List */}
           <div className="flex-1 p-4 overflow-y-auto space-y-4 no-scrollbar">
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex items-end gap-2.5 ${msg.isSelf ? "justify-end" : "justify-start"}`}
-              >
+            {messages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center p-6 text-neutral-500 space-y-2">
+                <div className="w-12 h-12 rounded-2xl bg-neutral-900 border border-neutral-800 flex items-center justify-center text-xl">
+                  💬
+                </div>
+                <p className="text-xs font-bold text-neutral-300">No messages in this habit squad yet</p>
+                <p className="text-[11px] text-neutral-500 max-w-xs">
+                  Be the first to say hello, discuss daily habits, and keep your squad accountable!
+                </p>
+              </div>
+            ) : (
+              messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex items-end gap-2.5 ${msg.isSelf ? "justify-end" : "justify-start"}`}
+                >
                 {!msg.isSelf && (
                   <img
                     src={msg.senderAvatar}
@@ -146,7 +130,7 @@ export const DmDrawer: React.FC = () => {
                   </div>
                 </div>
               </div>
-            ))}
+            )))}
           </div>
 
           {/* Quick Reaction Pill Bar & Input Footer */}

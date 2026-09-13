@@ -64,57 +64,6 @@ export function mapDiscoveryArena(arena: DiscoveryArena): LandingArena {
   };
 }
 
-export const FALLBACK_ARENAS: LandingArena[] = [
-  {
-    id: 101,
-    name: "The 5AM Club",
-    description:
-      "Zero tolerance early rising. Geo-verify out of bed by 5:00 AM local time, every day, no exceptions.",
-    icon: "⏰",
-    is_live: true,
-    member_count: 1200,
-    stake_at_risk: 1500,
-    is_private: false,
-    avg_streak_days: 42,
-  },
-  {
-    id: 102,
-    name: "Savage Athletics",
-    description:
-      "Daily training log, no skipped days. Post your workout summary before midnight or forfeit your stake.",
-    icon: "🗡️",
-    is_live: true,
-    member_count: 842,
-    stake_at_risk: 5000,
-    is_private: false,
-    avg_streak_days: 28,
-  },
-  {
-    id: 103,
-    name: "Deep Work Club",
-    description:
-      "Four uninterrupted hours, screen-time verified. Submit your focus block report before the daily cutoff.",
-    icon: "🧠",
-    is_live: true,
-    member_count: 615,
-    stake_at_risk: 800,
-    is_private: false,
-    avg_streak_days: 19,
-  },
-  {
-    id: 104,
-    name: "LeetCode Grind",
-    description:
-      "One medium or hard problem, every day. Submit a verified solution link before the pool closes.",
-    icon: "⌨️",
-    is_live: false,
-    member_count: 389,
-    stake_at_risk: 250,
-    is_private: true,
-    avg_streak_days: 11,
-  },
-];
-
 export function storePendingArenaJoin(arenaId: number, isPrivate: boolean) {
   if (typeof window === "undefined") return;
   sessionStorage.setItem("pending_join_arena_id", String(arenaId));

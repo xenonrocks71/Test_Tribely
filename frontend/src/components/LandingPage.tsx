@@ -33,49 +33,13 @@ const LIVE_TICKER_ITEMS = [
   "🏆 LeetCode, 5 AM Club & Deep Work squads live",
 ];
 
-const DEFAULT_ARENAS = [
-  {
-    id: 4,
-    name: "LeetCode 75 Grind",
-    tag: "#LeetCode",
-    description: "Daily coding problem solved before midnight. Link or screenshot verified.",
-    deadline_time: "23:59",
-    penalty_amount: 100,
-    member_count: 38,
-    proof_type: "link",
-    emoji: "💻",
-  },
-  {
-    id: 5,
-    name: "5 AM Club & Morning Run",
-    tag: "#5AMClub",
-    description: "Up and active before sunrise. Drop your GPS run or morning setup.",
-    deadline_time: "06:00",
-    penalty_amount: 150,
-    member_count: 52,
-    proof_type: "image",
-    emoji: "🌅",
-  },
-  {
-    id: 6,
-    name: "Deep Work (2 Hours)",
-    tag: "#DeepWork",
-    description: "Uninterrupted focus sessions daily. Lock in your session log.",
-    deadline_time: "21:00",
-    penalty_amount: 50,
-    member_count: 29,
-    proof_type: "link",
-    emoji: "🧠",
-  },
-];
-
 export default function LandingPage() {
   const router = useRouter();
   const { theme, toggleTheme, isMounted } = useTheme();
   const isDark = theme === "dark";
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [arenas, setArenas] = useState(DEFAULT_ARENAS);
+  const [arenas, setArenas] = useState<any[]>([]);
   const [doubleTapped, setDoubleTapped] = useState(false);
   const [heartCount, setHeartCount] = useState(48);
   const [joinedArenas, setJoinedArenas] = useState<Record<number, boolean>>({});
@@ -411,7 +375,24 @@ export default function LandingPage() {
 
         {/* Arenas Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {arenas.map((arena: any) => {
+          {arenas.length === 0 ? (
+            <div className="col-span-full py-12 px-4 text-center rounded-3xl bg-neutral-50 dark:bg-neutral-900/50 border border-neutral-200 dark:border-neutral-800 space-y-2">
+              <p className="text-sm font-bold text-neutral-600 dark:text-neutral-400">
+                No active public habit arenas yet.
+              </p>
+              <p className="text-xs text-neutral-400 dark:text-neutral-500">
+                Be the first to create an accountability tribe and invite your peers!
+              </p>
+              <Link
+                href={isLoggedIn ? "/dashboard" : "/register"}
+                className="inline-flex items-center gap-1.5 mt-3 px-5 py-2.5 rounded-full bg-[#FF5E00] text-white text-xs font-black shadow-md hover:bg-[#e05200] transition cursor-pointer"
+              >
+                <span>Launch First Habit Tribe</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+            </div>
+          ) : (
+            arenas.map((arena: any) => {
             const isJoined = Boolean(joinedArenas[arena.id]);
             return (
               <div
@@ -470,7 +451,7 @@ export default function LandingPage() {
                 </div>
               </div>
             );
-          })}
+          }))}
         </div>
       </section>
 
