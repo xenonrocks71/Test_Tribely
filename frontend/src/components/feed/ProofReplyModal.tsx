@@ -12,8 +12,13 @@ export const ProofReplyModal: React.FC = () => {
   const [commentInput, setCommentInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const commentsEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const currentComments = activeProofForReply ? proofComments[activeProofForReply.id] || [] : [];
+  const targetKey = activeProofForReply?.id || "";
+  const rawSubKey = activeProofForReply?.rawSubmissionId ? String(activeProofForReply.rawSubmissionId) : "";
+  const currentComments = (targetKey && proofComments[targetKey]) ||
+    (rawSubKey && proofComments[rawSubKey]) ||
+    [];
 
   useEffect(() => {
     if (currentComments.length > 0) {
@@ -38,7 +43,8 @@ export const ProofReplyModal: React.FC = () => {
 
   const handleEmojiChip = (emojiText: string) => {
     triggerHaptic([10]);
-    setCommentInput((prev) => (prev ? `${prev} ${emojiText}` : emojiText));
+    setCommentInput(emojiText);
+    setTimeout(() => inputRef.current?.focus(), 50);
   };
 
   return (
@@ -158,6 +164,7 @@ export const ProofReplyModal: React.FC = () => {
 
             <form onSubmit={handleSend} className="flex items-center gap-2">
               <input
+                ref={inputRef}
                 type="text"
                 value={commentInput}
                 onChange={(e) => setCommentInput(e.target.value)}
@@ -168,8 +175,10 @@ export const ProofReplyModal: React.FC = () => {
 
               <button
                 type="submit"
+                onClick={handleSend}
                 disabled={!commentInput.trim() || isSubmitting}
-                className="p-2.5 rounded-2xl bg-emerald-500 text-neutral-950 font-bold disabled:opacity-40 hover:brightness-110 active:scale-95 transition cursor-pointer"
+                className="p-2.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold disabled:opacity-40 disabled:hover:bg-emerald-500 active:scale-95 transition cursor-pointer flex items-center justify-center shrink-0 shadow-sm"
+                aria-label="Send reply"
               >
                 <Send className="w-4 h-4" />
               </button>

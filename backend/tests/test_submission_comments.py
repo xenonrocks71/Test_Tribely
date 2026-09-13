@@ -8,7 +8,7 @@ import uuid
 from fastapi.testclient import TestClient
 from main import app
 from app.core.database import SessionLocal
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_user_optional
 from app.models.models import User, Arena, ArenaMembership, Submission, SubmissionComment
 
 client = TestClient(app)
@@ -94,6 +94,7 @@ def get_or_create_comment_test_entities():
 def setup_comment_users():
     u_a, _, _, _ = get_or_create_comment_test_entities()
     app.dependency_overrides[get_current_user] = lambda: u_a
+    app.dependency_overrides[get_current_user_optional] = lambda: u_a
     yield
     app.dependency_overrides.clear()
 
@@ -103,6 +104,7 @@ def test_post_and_get_submission_comments():
 
     # 1. Post comment as User A
     app.dependency_overrides[get_current_user] = lambda: u_a
+    app.dependency_overrides[get_current_user_optional] = lambda: u_a
     resp1 = client.post(
         f"/api/activity/submissions/{sub.id}/comments",
         json={"content": "Crushed 10k steps before sunset!"}
@@ -115,6 +117,7 @@ def test_post_and_get_submission_comments():
 
     # 2. Post comment as User B
     app.dependency_overrides[get_current_user] = lambda: u_b
+    app.dependency_overrides[get_current_user_optional] = lambda: u_b
     resp2 = client.post(
         f"/api/activity/submissions/{sub.id}/comments",
         json={"text": "Savage pace! Keep it locked in 🔥"}

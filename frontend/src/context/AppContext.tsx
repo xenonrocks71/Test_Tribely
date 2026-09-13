@@ -904,14 +904,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const openProofReply = (post: ProofPost) => {
     triggerHaptic([15]);
     setActiveProofForReply(post);
-    const subId = post.rawSubmissionId || post.id;
+    const subId = post.rawSubmissionId ? String(post.rawSubmissionId) : (String(post.id).replace(/\D/g, "") || post.id);
     if (subId) {
       tribelyService.fetchProofComments(subId).then((comments) => {
         if (comments) {
-          setProofComments((prev) => ({ ...prev, [post.id]: comments }));
+          setProofComments((prev) => ({
+            ...prev,
+            [post.id]: comments,
+            [subId]: comments,
+          }));
           setFeedPosts((prev) =>
             prev.map((p) =>
-              p.id === post.id ? { ...p, commentsCount: comments.length } : p
+              p.id === post.id || String(p.rawSubmissionId) === subId
+                ? { ...p, commentsCount: comments.length }
+                : p
             )
           );
         }
@@ -1084,6 +1090,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     triggerHaptic([20]);
     const cleanText = text.trim();
     const tempId = `c_temp_${Date.now()}`;
+    const cleanNumericId = String(proofId).replace(/\D/g, "") || proofId;
     const optimisticComment: ProofComment = {
       id: tempId,
       proofId,
@@ -1094,20 +1101,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       timeAgo: "Just now",
       likes: 0,
     };
-    setProofComments((prev) => ({ ...prev, [proofId]: [...(prev[proofId] || []), optimisticComment] }));
+    setProofComments((prev) => {
+      const list = prev[proofId] || prev[cleanNumericId] || [];
+      return {
+        ...prev,
+        [proofId]: [...list, optimisticComment],
+        [cleanNumericId]: [...list, optimisticComment],
+      };
+    });
     setFeedPosts((prev) =>
-      prev.map((p) => (p.id === proofId ? { ...p, commentsCount: (p.commentsCount || 0) + 1 } : p))
+      prev.map((p) =>
+        p.id === proofId || p.id === cleanNumericId
+          ? { ...p, commentsCount: (p.commentsCount || 0) + 1 }
+          : p
+      )
     );
     showToast("💬 Comment posted to habit thread!", "success");
 
     try {
-      const serverComment = await tribelyService.postProofComment(proofId, cleanText);
+      const serverComment = await tribelyService.postProofComment(cleanNumericId, cleanText);
       if (serverComment) {
         setProofComments((prev) => {
-          const currentList = prev[proofId] || [];
+          const list = prev[proofId] || prev[cleanNumericId] || [];
+          const updated = list.map((c) => (c.id === tempId ? serverComment : c));
           return {
             ...prev,
-            [proofId]: currentList.map((c) => (c.id === tempId ? serverComment : c)),
+            [proofId]: updated,
+            [cleanNumericId]: updated,
           };
         });
       }

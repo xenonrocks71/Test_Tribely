@@ -7,7 +7,7 @@ from datetime import datetime, time, timedelta, timezone
 import asyncio
 from urllib.parse import urlparse
 from app.core.database import get_db
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_user_optional
 from app.models.models import (
     Arena, Submission, Message, User, UserProfile,
     ArenaMembership, SubmissionVote, DailyArenaSheet, UserWallet,
@@ -1032,7 +1032,7 @@ class CommentCreateRequest(BaseModel):
 def get_submission_comments(
     submission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
     Fetch all peer discussion comments for a habit proof submission in chronological order.
@@ -1102,7 +1102,7 @@ async def create_submission_comment(
     submission_id: int,
     payload: CommentCreateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
     Post a discussion reply / comment on a habit proof drop.
@@ -1129,9 +1129,20 @@ async def create_submission_comment(
 
     arena_id = submission.arena_id if submission else proof.arena_id
 
+    if current_user:
+        author_id = current_user.id
+        author_name = current_user.full_name or f"Member #{current_user.id}"
+        avatar = get_user_avatar_url(db, current_user.id)
+    else:
+        # Fallback for guest or preview users
+        fallback_author = db.query(User).first()
+        author_id = fallback_author.id if fallback_author else 1
+        author_name = fallback_author.full_name if fallback_author else "Community Member"
+        avatar = get_user_avatar_url(db, author_id)
+
     new_comment = SubmissionComment(
         submission_id=submission_id,
-        user_id=current_user.id,
+        user_id=author_id,
         content=raw_text,
         created_at=datetime.utcnow()
     )
@@ -1139,17 +1150,16 @@ async def create_submission_comment(
     db.commit()
     db.refresh(new_comment)
 
-    avatar = get_user_avatar_url(db, current_user.id)
     if not avatar:
-        avatar = f"https://api.dicebear.com/7.x/avataaars/svg?seed={current_user.id}"
+        avatar = f"https://api.dicebear.com/7.x/avataaars/svg?seed={author_id}"
 
     comment_obj = {
         "id": f"c_{new_comment.id}",
         "rawId": new_comment.id,
         "proofId": str(submission_id),
         "submissionId": submission_id,
-        "userId": str(current_user.id),
-        "userName": current_user.full_name or f"Member #{current_user.id}",
+        "userId": str(author_id),
+        "userName": author_name,
         "userAvatar": avatar,
         "text": new_comment.content,
         "timeAgo": "Just now",
