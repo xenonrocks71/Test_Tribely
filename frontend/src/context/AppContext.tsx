@@ -41,6 +41,8 @@ export interface HabitArena {
   bannerImage: string;
   rawId: number;   // actual numeric ID for API calls
   proofType?: string;
+  inviteCode?: string;
+  isPrivate?: boolean;
 }
 
 export interface StorySlide {
@@ -273,6 +275,8 @@ function mapApiArena(arena: ApiArena): HabitArena {
     multiplierValue: 1.0,
     bannerImage: arenaBannerImage(arena.name, arena.proof_type),
     proofType: arena.proof_type,
+    inviteCode: arena.invite_code || "",
+    isPrivate: Boolean(arena.is_private),
   };
 }
 
