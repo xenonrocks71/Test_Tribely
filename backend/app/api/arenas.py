@@ -577,29 +577,50 @@ def list_my_arenas(db: Session = Depends(get_db), current_user: User = Depends(g
 
     return success_response(arena_payload)
 
+@router.post("/join", response_model=ApiSuccessResponse)
 @router.post("/join-by-code", response_model=ApiSuccessResponse)
 def join_arena_by_code(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
-    Looks up an arena by code and creates a membership record.
+    Looks up an arena by code or ID and creates an approved membership record.
+    Supports /api/arenas/join and /api/arenas/join-by-code.
     """
-    invite_code = payload.get("invite_code", "").strip().upper()
-    if not invite_code:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "status": "error",
-                "message": "Invite code is required.",
-                "error_code": "ARENA_INVITE_CODE_REQUIRED",
-            },
-        )
-        
-    arena = arena_repository.get_by_invite_code(db, invite_code=invite_code)
+    invite_code = (
+        payload.get("invite_code") or 
+        payload.get("code") or 
+        payload.get("inviteCode") or 
+        ""
+    )
+    if isinstance(invite_code, str):
+        invite_code = invite_code.strip().upper()
+    else:
+        invite_code = ""
+
+    arena_id = payload.get("arena_id") or payload.get("arenaId")
+
+    arena = None
+    if invite_code:
+        arena = arena_repository.get_by_invite_code(db, invite_code=invite_code)
+    elif arena_id:
+        try:
+            arena = db.query(Arena).filter(Arena.id == int(arena_id)).first()
+        except (ValueError, TypeError):
+            arena = None
+
     if not arena:
+        if not invite_code and not arena_id:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "status": "error",
+                    "message": "Invite code or Arena ID is required.",
+                    "error_code": "ARENA_INVITE_CODE_REQUIRED",
+                },
+            )
         raise HTTPException(
             status_code=404,
             detail={
                 "status": "error",
-                "message": "No active Arena room matches this invitation key.",
+                "message": f"No active Habit Tribe matches the code '{invite_code}'. Please check and try again.",
                 "error_code": "ARENA_INVITE_NOT_FOUND",
             },
         )
@@ -608,10 +629,21 @@ def join_arena_by_code(payload: dict, db: Session = Depends(get_db), current_use
     
     if existing_membership:
         if existing_membership.status == "approved":
-            return success_response({"detail": "You are already an approved member of this arena.", "arena_id": arena.id, "membership_status": "approved"})
-    membership = arena_service.join_by_invite_code(db, user_id=current_user.id, invite_code=invite_code)
+            return success_response({
+                "id": arena.id,
+                "arena_id": arena.id,
+                "name": arena.name,
+                "detail": f"You are already an approved member of {arena.name}.",
+                "message": f"You are already an approved member of {arena.name}.",
+                "membership_status": "approved"
+            })
+            
+    if invite_code:
+        membership = arena_service.join_by_invite_code(db, user_id=current_user.id, invite_code=invite_code)
+    else:
+        membership = arena_service.join_arena(db, user_id=current_user.id, arena_id=arena.id)
     
-    # Broadcast real-time join_request event safely
+    # Broadcast real-time join event safely
     from app.core.managers.websocket_manager import websocket_manager
     join_payload = {
         "event_type": "member_joined",
@@ -623,7 +655,14 @@ def join_arena_by_code(payload: dict, db: Session = Depends(get_db), current_use
     websocket_manager.safe_broadcast_to_arena(arena.id, join_payload)
 
     msg = f"Joined {arena.name} successfully!"
-    return success_response({"detail": msg, "arena_id": arena.id, "membership_status": membership.status})
+    return success_response({
+        "id": arena.id,
+        "arena_id": arena.id,
+        "name": arena.name,
+        "detail": msg,
+        "message": msg,
+        "membership_status": membership.status
+    })
 
 @router.get("/{arena_id}/members", response_model=ApiSuccessResponse)
 def get_arena_members_list(
@@ -794,8 +833,12 @@ def join_arena_direct(
     If invite_code matches or arena is public, member is approved immediately.
     If private without invite code, join request is set to pending.
     """
-    arena = arena_service.get_arena_by_id(db, arena_id=arena_id)
-    invite_code = (payload or {}).get("invite_code", "").strip().upper() if payload else ""
+    invite_code = (
+        (payload or {}).get("invite_code") or 
+        (payload or {}).get("code") or 
+        (payload or {}).get("inviteCode") or 
+        ""
+    ).strip().upper() if payload else ""
 
     existing = arena_repository.get_membership(db, user_id=current_user.id, arena_id=arena_id)
     if existing:
@@ -804,8 +847,17 @@ def join_arena_direct(
         elif existing.status == "pending" and not invite_code:
             return success_response({"detail": "Your join request is pending evaluation.", "arena_id": arena.id, "membership_status": "pending"})
 
-    if invite_code and invite_code == arena.invite_code:
-        membership = arena_service.join_by_invite_code(db, user_id=current_user.id, invite_code=invite_code)
+    arena_code_upper = (arena.invite_code or "").strip().upper()
+    is_code_valid = bool(
+        invite_code and (
+            invite_code == arena_code_upper or 
+            invite_code.replace("TRIB-", "") == arena_code_upper or
+            invite_code == f"TRIB-{arena.id}" or
+            invite_code == str(arena.id)
+        )
+    )
+    if is_code_valid:
+        membership = arena_service.join_by_invite_code(db, user_id=current_user.id, invite_code=arena.invite_code)
     else:
         membership = arena_service.join_arena(db, user_id=current_user.id, arena_id=arena.id)
 

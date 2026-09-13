@@ -80,15 +80,40 @@ class ArenaRepository(BaseRepository[Arena, ArenaCreate, ArenaCreate]):
     def get_by_invite_code(self, db: Session, invite_code: str) -> Optional[Arena]:
         """
         Lookup Arena by its unique invite code.
+        Supports standard 6-character code, case-insensitive match,
+        TRIB-{code} or TRIB-{id} prefix variants, and raw numeric ID fallback.
 
         :param db: Active database session.
-        :param invite_code: 6-character uppercase string code.
+        :param invite_code: Code string or ID.
         :return: Optional Arena entity.
         """
         if not invite_code or not isinstance(invite_code, str):
             return None
         code_clean = invite_code.strip().upper()
-        return db.query(Arena).filter(func.upper(Arena.invite_code) == code_clean).first()
+
+        # 1. Direct match
+        arena = db.query(Arena).filter(func.upper(Arena.invite_code) == code_clean).first()
+        if arena:
+            return arena
+
+        # 2. If code has "TRIB-" prefix, strip it and check invite_code or ID
+        if code_clean.startswith("TRIB-"):
+            raw_part = code_clean.replace("TRIB-", "").strip()
+            arena = db.query(Arena).filter(func.upper(Arena.invite_code) == raw_part).first()
+            if arena:
+                return arena
+            if raw_part.isdigit():
+                arena = db.query(Arena).filter(Arena.id == int(raw_part)).first()
+                if arena:
+                    return arena
+
+        # 3. Direct numeric ID fallback
+        if code_clean.isdigit():
+            arena = db.query(Arena).filter(Arena.id == int(code_clean)).first()
+            if arena:
+                return arena
+
+        return None
 
 
     def get_membership(self, db: Session, *, user_id: int, arena_id: int) -> Optional[ArenaMembership]:

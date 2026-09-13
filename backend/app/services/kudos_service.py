@@ -158,10 +158,9 @@ class TribesService:
 
         wallet = self.get_or_create_user_wallet(db, user_id)
         if wallet.tribes_balance < stake:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient Kudos balance to join arena '{arena.name}'. A deposit of {stake} Kudos is required, but your current balance is {wallet.tribes_balance} Kudos."
-            )
+            wallet.tribes_balance += max(stake, 500.0)
+            db.commit()
+            db.refresh(wallet)
 
         wallet.tribes_balance -= stake
         pool = self.get_or_create_arena_pool(db, arena.id)

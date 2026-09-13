@@ -43,6 +43,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     toast,
     triggerHaptic,
     showToast,
+    refreshArenas,
   } = useApp();
 
   // Modals state for Instagram Header actions
@@ -152,10 +153,11 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     setIsJoiningCode(false);
 
     if (res.success) {
-      showToast(`Joined squad successfully! 🔥`, "success");
+      showToast(res.message || `Joined Habit Tribe successfully! 🔥`, "success");
       setIsCreateJoinModalOpen(false);
       setCreateJoinTab("choose");
       setInviteCodeInput("");
+      await refreshArenas();
       setActiveTab("explore");
     } else {
       showToast(res.message || "Invalid invite code", "fire");

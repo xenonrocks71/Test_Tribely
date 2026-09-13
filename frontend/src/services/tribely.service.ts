@@ -291,15 +291,40 @@ class TribelyService {
   }
 
   async joinByInviteCode(invite_code: string): Promise<{ success: boolean; arena_id?: number; message?: string }> {
+    const cleanCode = (invite_code || "").trim().toUpperCase();
     try {
-      const res = await apiClient.post<{ status: string; data: { id: number; detail: string } }>(
-        "/api/arenas/join",
-        { invite_code }
+      const res = await apiClient.post<any>(
+        "/api/arenas/join-by-code",
+        { invite_code: cleanCode, code: cleanCode }
       );
-      return { success: true, arena_id: res.data?.id, message: res.data?.detail };
+      const payload = res?.data || res;
+      return {
+        success: true,
+        arena_id: payload?.arena_id || payload?.id,
+        message: payload?.detail || payload?.message || "Joined Habit Tribe successfully!"
+      };
     } catch (err: any) {
-      const message = err?.response?.data?.detail?.message || err?.response?.data?.message || "Failed to join arena";
-      return { success: false, message };
+      try {
+        const res = await apiClient.post<any>(
+          "/api/arenas/join",
+          { invite_code: cleanCode, code: cleanCode }
+        );
+        const payload = res?.data || res;
+        return {
+          success: true,
+          arena_id: payload?.arena_id || payload?.id,
+          message: payload?.detail || payload?.message || "Joined Habit Tribe successfully!"
+        };
+      } catch (err2: any) {
+        const rawError =
+          err?.response?.data?.detail?.message ||
+          err?.response?.data?.detail ||
+          err?.response?.data?.message ||
+          err?.message ||
+          "Failed to join Habit Tribe";
+        const message = typeof rawError === "string" ? rawError : JSON.stringify(rawError);
+        return { success: false, message };
+      }
     }
   }
 

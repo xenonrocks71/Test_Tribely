@@ -308,15 +308,19 @@ export const ArenasView: React.FC<ArenasViewProps> = ({ viewMode = "all" }) => {
 
   const handleJoinByCodeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (inviteCode.length < 4) return;
+    const cleanCode = inviteCode.trim().toUpperCase();
+    if (!cleanCode) return;
     triggerHaptic([30, 50]);
-    showToast(`🔑 Verifying Tribe Code ${inviteCode.toUpperCase()}...`, "info");
-    const result = await tribelyService.joinByInviteCode(inviteCode.trim().toUpperCase());
+    showToast(`🔑 Verifying Tribe Code ${cleanCode}...`, "info");
+    const result = await tribelyService.joinByInviteCode(cleanCode);
     if (result.success) {
-      showToast(`✅ Joined Habit Tribe successfully!`, "success");
+      showToast(result.message || `✅ Joined Habit Tribe successfully!`, "success");
       setIsActionCenterOpen(false);
       setInviteCode("");
       await refreshArenas();
+      if (result.arena_id) {
+        router.push(`/arenas/${result.arena_id}`);
+      }
     } else {
       showToast(result.message || "Invalid Tribe Code.", "info");
     }
@@ -1341,7 +1345,7 @@ export const ArenasView: React.FC<ArenasViewProps> = ({ viewMode = "all" }) => {
 
                   <button
                     type="submit"
-                    disabled={inviteCode.length < 4}
+                    disabled={!inviteCode.trim()}
                     className="w-full py-3 rounded-2xl bg-emerald-500 text-neutral-950 font-black text-xs hover:brightness-110 disabled:opacity-40 shadow-md shadow-emerald-500/20 transition cursor-pointer"
                   >
                     Unlock & Join Habit Tribe 🔑
