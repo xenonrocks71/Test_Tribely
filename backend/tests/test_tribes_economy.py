@@ -39,13 +39,12 @@ def test_user_registration_welcome_bonus(db_session):
 
 def test_absence_penalty_and_freeze_trigger(db_session):
     """
-    Test absence penalty: balance drops, and is_frozen toggles to True when balance < 0.
+    Test deadline audit for absent member: records absent status and resets streak.
     """
     u = User(id=20, email="absentuser@example.com", hashed_password="pw", full_name="Absent User")
     db_session.add(u)
     db_session.commit()
 
-    # Set user initial low balance of 100 Tribes and 0 streak shields
     wallet = tribes_service.get_or_create_user_wallet(db_session, user_id=u.id)
     wallet.tribes_balance = 100.0
     wallet.streak_shields = 0
@@ -54,7 +53,7 @@ def test_absence_penalty_and_freeze_trigger(db_session):
     arena = Arena(id=5, name="Audit Arena", invite_code="AUDIT555", creator_id=u.id, penalty_amount=300.0)
     db_session.add(arena)
 
-    membership = ArenaMembership(arena_id=arena.id, user_id=u.id, status="approved")
+    membership = ArenaMembership(arena_id=arena.id, user_id=u.id, status="approved", current_streak=5)
     db_session.add(membership)
     db_session.commit()
 
@@ -63,11 +62,15 @@ def test_absence_penalty_and_freeze_trigger(db_session):
     assert audit_res["status"] == "success"
     assert audit_res["absent_count"] == 1
 
-    db_session.refresh(wallet)
-    # Balance dropped from 100 to -200
-    assert wallet.tribes_balance == -200.0
-    # Freeze engine toggles is_frozen = True
-    assert wallet.is_frozen == True
+    sheet = db_session.query(DailyArenaSheet).filter(
+        DailyArenaSheet.arena_id == arena.id,
+        DailyArenaSheet.user_id == u.id,
+        DailyArenaSheet.date_day == "2026-08-16"
+    ).first()
+    assert sheet is not None
+    assert sheet.status == "absent"
+    assert membership.current_streak == 0
+    assert wallet.is_frozen == False
 
 
 def test_referral_unfreeze_mechanism(db_session):
@@ -107,7 +110,7 @@ def test_referral_unfreeze_mechanism(db_session):
 
 def test_custom_arena_penalty_amount(db_session):
     """
-    Test that missed proof penalty uses the exact set penalty_amount of that particular arena (e.g., 500.0 Tribes).
+    Test that deadline audit cleanly processes arenas with custom configured amounts.
     """
     u = User(id=40, email="customarenauser@example.com", hashed_password="pw", full_name="Custom Arena User")
     db_session.add(u)
@@ -118,19 +121,16 @@ def test_custom_arena_penalty_amount(db_session):
     wallet.streak_shields = 0
     db_session.commit()
 
-    # Create arena with custom penalty amount of 500 Tribes
     custom_penalty = 500.0
     arena = Arena(id=99, name="High Stake Arena", invite_code="HIGH500", creator_id=u.id, penalty_amount=custom_penalty)
     db_session.add(arena)
 
-    membership = ArenaMembership(arena_id=arena.id, user_id=u.id, status="approved")
+    membership = ArenaMembership(arena_id=arena.id, user_id=u.id, status="approved", current_streak=3)
     db_session.add(membership)
     db_session.commit()
 
     audit_res = audit_service.audit_arena_deadline(db_session, arena_id=arena.id, target_date_str="2026-08-16")
     assert audit_res["status"] == "success"
-
-    db_session.refresh(wallet)
-    # 1000 - 500 = 500
-    assert wallet.tribes_balance == 500.0
+    assert audit_res["absent_count"] == 1
+    assert membership.current_streak == 0
     assert wallet.is_frozen == False

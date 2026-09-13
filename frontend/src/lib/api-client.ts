@@ -44,11 +44,11 @@ class ApiClient {
    * Configure Axios request and response interceptors.
    */
   private initializeInterceptors(): void {
-    // Request Interceptor: Attach JWT Bearer token from localStorage (checking both key variants)
+    // Request Interceptor: Attach JWT Bearer token from localStorage (checking all token key variants)
     this.instance.interceptors.request.use(
       (config: InternalAxiosRequestConfig) => {
         if (typeof window !== 'undefined') {
-          const token = localStorage.getItem('tribely_token') || localStorage.getItem('token');
+          const token = localStorage.getItem('tribely_token') || localStorage.getItem('token') || localStorage.getItem('access_token');
           if (token && config.headers) {
             if (typeof config.headers.set === 'function') {
               config.headers.set('Authorization', `Bearer ${token}`);
@@ -69,7 +69,12 @@ class ApiClient {
         if (error.response?.status === 401 && typeof window !== 'undefined') {
           localStorage.removeItem('tribely_token');
           localStorage.removeItem('token');
+          localStorage.removeItem('access_token');
           localStorage.removeItem('user');
+          const path = window.location.pathname;
+          if (!path.startsWith('/login') && !path.startsWith('/register') && !path.startsWith('/forgot-password') && !path.startsWith('/reset-password')) {
+            window.location.href = '/login';
+          }
         }
         return Promise.reject(error);
       }

@@ -52,9 +52,12 @@ def test_atomic_ledger_and_outbox_creation(db_session):
     assert event.event_type == "member_absent_penalty"
     assert event.processed == False
 
-    # Verify EscrowLedger entries created in same transaction
-    ledger_entries = db_session.query(EscrowLedger).filter(EscrowLedger.arena_id == arena.id).all()
-    assert len(ledger_entries) == 3
+    # Verify DailyArenaSheet status marked absent and streak reset in same transaction
+    from app.models.models import DailyArenaSheet
+    sheet = db_session.query(DailyArenaSheet).filter(DailyArenaSheet.arena_id == arena.id, DailyArenaSheet.user_id == u.id).first()
+    assert sheet is not None
+    assert sheet.status == "absent"
+    assert membership.current_streak == 0
 
 
 def test_redis_distributed_lock_prevents_double_audits():

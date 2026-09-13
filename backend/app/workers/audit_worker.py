@@ -1,12 +1,16 @@
 """
-Distributed Arq Async Task Worker for Tribely Background Deadline Audits.
-Handles scheduled cron triggers, Redis Redlock acquisition, idempotent penalty logging,
-and non-blocking lock retention across distributed worker pods.
+Timezone-Aware Distributed Task Worker for Tribely Background Deadline Audits.
+Handles:
+1. Scheduled cron triggers evaluating cutoff deadlines converted from UTC to arena local IANA timezones.
+2. Redis Redlock acquisition preventing concurrent executions.
+3. Member absence penalty deduction via wallet_service into weekly arena vault.
+4. Sunday midnight dividend distribution to consistent finishers.
 """
 
 import os
 import sys
 import datetime
+import zoneinfo
 import logging
 from typing import Dict, Any, Optional
 
@@ -18,16 +22,37 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.models.models import Arena
+from app.models.models import Arena, ArenaMembership, UserWallet, DailyArenaSheet
 from app.core.redis import get_redis_client, close_redis_client
 from app.workers.locks import RedisDistributedLock
 from app.services.audit_service import audit_service
+from app.services.wallet_service import wallet_service
+from app.services.ledger_service import ledger_service
 from app.workers.outbox_worker import process_outbox_events_job
 from app.workers.media_worker import process_proof_image_task
 from app.workers.reminder_worker import send_deadline_warning_reminders_task
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def get_arena_timezone(tz_name: Optional[str]) -> zoneinfo.ZoneInfo:
+    try:
+        return zoneinfo.ZoneInfo(tz_name or "UTC")
+    except Exception:
+        return zoneinfo.ZoneInfo("UTC")
+
+
+def parse_cutoff_time(cutoff_str: Optional[str]) -> datetime.time:
+    if not cutoff_str:
+        return datetime.time(23, 59, 59)
+    normalized = cutoff_str.strip().upper()
+    for fmt in ("%H:%M", "%H:%M:%S", "%I:%M %p"):
+        try:
+            return datetime.datetime.strptime(normalized, fmt).time()
+        except ValueError:
+            continue
+    return datetime.time(23, 59, 59)
 
 
 async def run_arena_deadline_audit(
@@ -37,11 +62,6 @@ async def run_arena_deadline_audit(
 ) -> Dict[str, Any]:
     """
     Execute deadline audit for a single arena with non-blocking Redis Redlock protection.
-
-    :param ctx: Arq context dictionary.
-    :param arena_id: Target arena ID.
-    :param target_date_str: YYYY-MM-DD date string. Defaults to today's UTC date.
-    :return: Audit execution summary or lock yield status.
     """
     if not target_date_str:
         target_date_str = datetime.datetime.utcnow().strftime("%Y-%m-%d")
@@ -66,46 +86,64 @@ async def run_arena_deadline_audit(
 
 async def cron_global_deadline_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Scheduled cron job executing every 15 minutes to evaluate cutoff deadlines across active arenas.
-
-    :param ctx: Arq context dictionary.
-    :return: Dict summary of audited arenas.
+    Timezone-aware audit worker running periodically.
+    Converts server UTC time to each arena's IANA timezone and executes audits
+    only for arenas where current local time has crossed the daily_cutoff_time.
     """
-    now = datetime.datetime.utcnow()
-    target_date_str = now.strftime("%Y-%m-%d")
-    current_time_str = now.strftime("%H:%M")
-
-    logger.info(f"[CronAudit] Checking cutoff deadlines at UTC time {current_time_str}...")
+    logger.info("[CronAudit] Evaluating timezone-aware cutoff deadlines across all active arenas...")
 
     audited_arenas = []
     with SessionLocal() as db:
         arenas = db.query(Arena).all()
         for arena in arenas:
-            # Enqueue audit task for each active arena
-            await run_arena_deadline_audit(ctx, arena_id=arena.id, target_date_str=target_date_str)
-            audited_arenas.append(arena.id)
+            tz = get_arena_timezone(arena.timezone)
+            now_local = datetime.datetime.now(tz)
+            cutoff_time = parse_cutoff_time(arena.daily_cutoff_time or arena.deadline_time)
+
+            # Trigger audit if local time has passed cutoff time
+            if now_local.time() >= cutoff_time:
+                target_date_str = now_local.date().isoformat()
+                await run_arena_deadline_audit(ctx, arena_id=arena.id, target_date_str=target_date_str)
+                audited_arenas.append({"arena_id": arena.id, "timezone": str(tz), "local_date": target_date_str})
 
     return {
         "status": "completed",
         "audited_count": len(audited_arenas),
-        "arena_ids": audited_arenas
+        "audited_arenas": audited_arenas
     }
 
 
+async def cron_sunday_vault_distribution(ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Weekly consistency dividend orchestrator:
+    Runs on Sunday midnight to distribute accumulated vault penalties to consistent finishers.
+    """
+    logger.info("[SundayVault] Running weekly consistency dividend distribution...")
+    distributed_arenas = []
+    with SessionLocal() as db:
+        arenas = db.query(Arena).all()
+        for arena in arenas:
+            try:
+                # Distribute weekly vault rewards
+                res = ledger_service.distribute_consistency_rewards(db, arena_id=arena.id)
+                distributed_arenas.append({"arena_id": arena.id, "result": res})
+            except Exception as e:
+                logger.error(f"[SundayVault] Error distributing vault for arena #{arena.id}: {e}")
+
+    return {"status": "completed", "distributed_arenas": distributed_arenas}
+
+
 async def startup(ctx: Dict[str, Any]) -> None:
-    """Worker startup hook initializing Redis client pool."""
     logger.info("[ArqWorker] Launching Tribely Distributed Task Worker...")
     ctx["redis"] = await get_redis_client()
 
 
 async def shutdown(ctx: Dict[str, Any]) -> None:
-    """Worker shutdown hook closing Redis connections."""
     logger.info("[ArqWorker] Shutting down Tribely Task Worker...")
     await close_redis_client()
 
 
 class WorkerSettings:
-    """Arq Worker Settings configuration class."""
     functions = [
         run_arena_deadline_audit,
         process_outbox_events_job,
@@ -113,6 +151,7 @@ class WorkerSettings:
     ]
     cron_jobs = [
         cron(cron_global_deadline_audit, minute={0, 15, 30, 45}),
+        cron(cron_sunday_vault_distribution, weekday="sun", hour=23, minute=59),
         cron(process_outbox_events_job, second={0, 10, 20, 30, 40, 50}),
         cron(send_deadline_warning_reminders_task, minute={50}),
     ]

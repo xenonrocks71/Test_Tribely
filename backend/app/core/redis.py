@@ -70,3 +70,92 @@ async def close_redis_client() -> None:
         await _redis_pool.disconnect()
         _redis_pool = None
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Synchronous Redis Client & Distributed Lock Management (Google / Meta SRE Standard)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_sync_redis_pool = None
+_sync_redis_client = None
+
+# Atomic Lua release script to ensure token ownership (Redlock protection)
+LUA_RELEASE_LOCK_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
+
+
+def get_sync_redis_client():
+    """
+    Get or initialize thread-safe synchronous Redis client backed by a ConnectionPool.
+    Returns None gracefully if Redis is unavailable (circuit-breaker fallback).
+    """
+    global _sync_redis_pool, _sync_redis_client
+    if _sync_redis_client is not None:
+        return _sync_redis_client
+
+    try:
+        import redis
+        if _sync_redis_pool is None:
+            if settings.REDIS_URL:
+                _sync_redis_pool = redis.ConnectionPool.from_url(
+                    settings.REDIS_URL,
+                    decode_responses=True,
+                    socket_timeout=2.0,
+                    socket_connect_timeout=2.0,
+                    retry_on_timeout=True,
+                    max_connections=50,
+                )
+            else:
+                is_ssl = (
+                    "upstash.io" in settings.REDIS_HOST
+                    or settings.REDIS_HOST.startswith("rediss://")
+                    or getattr(settings, "REDIS_SSL", False)
+                )
+                _sync_redis_pool = redis.ConnectionPool(
+                    host=settings.REDIS_HOST,
+                    port=settings.REDIS_PORT,
+                    password=settings.REDIS_PASSWORD or None,
+                    decode_responses=True,
+                    ssl=is_ssl,
+                    socket_timeout=2.0,
+                    socket_connect_timeout=2.0,
+                    retry_on_timeout=True,
+                    max_connections=50,
+                )
+        client = redis.Redis(connection_pool=_sync_redis_pool)
+        client.ping()
+        _sync_redis_client = client
+        return _sync_redis_client
+    except Exception:
+        return None
+
+
+def acquire_distributed_lock(redis_client, lock_key: str, lock_token: str, ttl_seconds: int = 5) -> bool:
+    """
+    Acquire an atomic distributed lock with a unique token and expiry TTL.
+    """
+    if not redis_client:
+        return False
+    try:
+        return bool(redis_client.set(lock_key, lock_token, nx=True, ex=ttl_seconds))
+    except Exception:
+        return False
+
+
+def release_distributed_lock(redis_client, lock_key: str, lock_token: str) -> bool:
+    """
+    Safely release a distributed lock using an atomic Lua script.
+    Guarantees that a process NEVER deletes a lock acquired by another request (Redlock pattern).
+    """
+    if not redis_client or not lock_token:
+        return False
+    try:
+        result = redis_client.eval(LUA_RELEASE_LOCK_SCRIPT, 1, lock_key, lock_token)
+        return bool(result)
+    except Exception:
+        return False
+

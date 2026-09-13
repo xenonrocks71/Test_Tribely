@@ -72,5 +72,25 @@ class AIVerificationService:
         return submission
 
 
-# Global Singleton Instance
+    def audit_submission(self, proof_type: str, proof_url: str) -> Dict[str, Any]:
+        """
+        Perform automated algorithmic & heuristic audit on a submitted habit proof.
+        """
+        from app.core.verifiers.proof_verifier import ProofVerifierFactory, ProofVerificationResult
+        verifier = ProofVerifierFactory.get_verifier(proof_type)
+        result: ProofVerificationResult = verifier.verify(proof_url)
+        anti_cheat_passed = result.confidence_score >= 0.70
+
+        return {
+            "is_valid": result.is_valid,
+            "anti_cheat_passed": anti_cheat_passed,
+            "confidence_score": round(result.confidence_score, 2),
+            "audit_message": result.reason,
+            "verifier_type": verifier.__class__.__name__,
+        }
+
+
+# Global Singleton Instances
 ai_verification_service = AIVerificationService()
+ai_proof_auditor = ai_verification_service
+AIProofAuditorService = AIVerificationService

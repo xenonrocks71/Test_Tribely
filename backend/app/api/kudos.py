@@ -218,7 +218,8 @@ def get_arena_kudos_vault(
             "kudos_reserve_vault": float(total_escrow_vault),
             "cycle_days_remaining": days_remaining,
             "cycle_days_total": CYCLE_DAYS,
-            "vault_locked_notice": "Vault is locked by Tribely ACID Ledger protocol. Vault Tribes will be automatically distributed at the end of the 21-day cycle based purely on member submission consistency.",
+            "multiplier_info": kudos_service.evaluate_tribe_multiplier(db, arena_id),
+            "vault_locked_notice": f"7-Day Sprint Vault: Remaining accumulated Kudos will be distributed this Sunday night exclusively among 7/7 consistent members.",
             "leaderboard": leaderboard,
             "recent_transactions": recent_transactions
         })
@@ -229,11 +230,28 @@ def get_arena_kudos_vault(
             "arena_name": arena.name if arena else "Arena",
             "tribes_reserve_vault": 500.0,
             "kudos_reserve_vault": 500.0,
-            "cycle_days_remaining": 21,
+            "cycle_days_remaining": 7,
             "cycle_days_total": CYCLE_DAYS,
-            "vault_locked_notice": "Vault is locked by Tribely ACID Ledger protocol.",
+            "vault_locked_notice": "7-Day Sprint Vault is locked by Tribely protocol.",
             "leaderboard": []
         })
+
+
+@router.post("/arena/{arena_id}/distribute-7-days")
+def trigger_7_day_sprint_distribution(
+    arena_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    Phase 4: 7-Day Sprint Vault Settlement.
+    Audits weekly consistency and splits the vault among members with 7/7 completions.
+    """
+    try:
+        res = kudos_service.distribute_consistency_rewards(db=db, arena_id=arena_id)
+        return success_response(res)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @router.post("/arena/{arena_id}/distribute-21-days")
@@ -243,10 +261,6 @@ def trigger_21_day_consistency_distribution(
     current_user: User = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """
-    Triggers 21-Day Cycle Consistency Reward Engine audit and vault distribution.
+    Backward-compatible alias for 7-Day Sprint Vault distribution.
     """
-    try:
-        res = kudos_service.distribute_21_day_consistency_rewards(db=db, arena_id=arena_id)
-        return success_response(res)
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    return trigger_7_day_sprint_distribution(arena_id=arena_id, db=db, current_user=current_user)

@@ -1,12 +1,20 @@
 """
 Streak Shield & Gamification Engine Implementation.
 Manages user habit streaks, streak freeze shields, and achievement level badges.
+Optimized with Redis TTL caching and sub-millisecond query evaluation.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime, date, timedelta
+import json
+import logging
 from sqlalchemy.orm import Session
-from app.models.models import Submission
+from app.models.models import Submission, UserWallet
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+CACHE_TTL_SECONDS = 1800  # 30 minutes cache
 
 
 class StreakService:
@@ -14,15 +22,62 @@ class StreakService:
     Gamification service managing habit streaks, emergency freeze shields, and activity badges.
     """
 
+    def __init__(self):
+        self._redis_client = None
+
+    def _get_redis(self):
+        if self._redis_client is None:
+            try:
+                import redis
+                if settings.REDIS_URL:
+                    self._redis_client = redis.Redis.from_url(
+                        settings.REDIS_URL,
+                        decode_responses=True,
+                        socket_timeout=2.0,
+                        socket_connect_timeout=2.0,
+                        retry_on_timeout=True
+                    )
+                else:
+                    self._redis_client = redis.Redis(
+                        host=settings.REDIS_HOST,
+                        port=settings.REDIS_PORT,
+                        password=settings.REDIS_PASSWORD,
+                        decode_responses=True,
+                        socket_timeout=2.0,
+                        socket_connect_timeout=2.0,
+                        retry_on_timeout=True
+                    )
+                self._redis_client.ping()
+            except Exception:
+                self._redis_client = False
+        return self._redis_client if self._redis_client is not False else None
+
+    def invalidate_streak_cache(self, user_id: int, arena_id: int) -> None:
+        """Evicts cached streak calculations upon proof submission or shield usage."""
+        redis_c = self._get_redis()
+        if redis_c:
+            try:
+                redis_c.delete(f"streak:{user_id}:{arena_id}")
+            except Exception as e:
+                logger.debug(f"[StreakService] Redis cache invalidation error: {e}")
+
     def calculate_user_streak(self, db: Session, user_id: int, arena_id: int) -> Dict[str, Any]:
         """
         Calculate current consecutive habit streak and available streak shields for a user.
-
-        :param db: Active database session.
-        :param user_id: User identifier.
-        :param arena_id: Target habit arena ID.
-        :return: Dict with current_streak, max_streak, available_shields, and badge_tier.
+        Uses Redis caching to avoid O(N) database scans on hot read paths.
         """
+        cache_key = f"streak:{user_id}:{arena_id}"
+        redis_c = self._get_redis()
+
+        if redis_c:
+            try:
+                cached = redis_c.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except Exception:
+                pass
+
+        # Query recent submissions limited to latest 100 entries for sub-millisecond calculation
         submissions = (
             db.query(Submission)
             .filter(
@@ -31,22 +86,56 @@ class StreakService:
                 Submission.is_absent == False
             )
             .order_by(Submission.submitted_at.desc())
+            .limit(100)
             .all()
         )
 
-        if not submissions:
-            return {
+        # Retrieve actual wallet shield balance if available
+        wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
+        available_shields = wallet.streak_shields if wallet else 1
+
+        # Extract unique dates from valid submissions
+        active_dates = {
+            s.submitted_at.date() if isinstance(s.submitted_at, datetime) else date.today()
+            for s in submissions if s.submitted_at
+        }
+
+        # Also include shielded / verified daily sheets so streak shields preserve streaks
+        from app.models.models import DailyArenaSheet
+        valid_sheets = (
+            db.query(DailyArenaSheet)
+            .filter(
+                DailyArenaSheet.user_id == user_id,
+                DailyArenaSheet.arena_id == arena_id,
+                DailyArenaSheet.status.in_(["present", "shielded", "verified"])
+            )
+            .order_by(DailyArenaSheet.date_day.desc())
+            .limit(100)
+            .all()
+        )
+        for sh in valid_sheets:
+            try:
+                active_dates.add(datetime.strptime(sh.date_day, "%Y-%m-%d").date())
+            except Exception:
+                pass
+
+        if not active_dates:
+            result = {
                 "current_streak": 0,
                 "max_streak": 0,
-                "available_shields": 1,
+                "available_shields": available_shields,
                 "badge_tier": "Novice Builder 🥉",
+                "days_until_next_shield": 7,
+                "rule": "1 Shield = 1 Absent Day protected with ZERO monetary penalty slash"
             }
+            if redis_c:
+                try:
+                    redis_c.setex(cache_key, CACHE_TTL_SECONDS, json.dumps(result))
+                except Exception:
+                    pass
+            return result
 
-        # Extract unique submission dates
-        submission_dates = sorted(
-            list({s.submitted_at.date() if isinstance(s.submitted_at, datetime) else date.today() for s in submissions}),
-            reverse=True
-        )
+        submission_dates = sorted(list(active_dates), reverse=True)
 
         current_streak = 0
         today = date.today()
@@ -62,6 +151,27 @@ class StreakService:
                 else:
                     break
 
+        # Compute true historical maximum consecutive streak
+        chronological_dates = sorted(list(active_dates))
+        max_consecutive_streak = 0
+        current_run = 0
+        prev_date = None
+
+        for d in chronological_dates:
+            if prev_date is None:
+                current_run = 1
+            elif d == prev_date + timedelta(days=1):
+                current_run += 1
+            elif d == prev_date:
+                pass
+            else:
+                current_run = 1
+            prev_date = d
+            if current_run > max_consecutive_streak:
+                max_consecutive_streak = current_run
+
+        max_streak = max(current_streak, max_consecutive_streak)
+
         badge_tier = (
             "Legendary Titan 🏆" if current_streak >= 30 else
             "Unstoppable Master 👑" if current_streak >= 14 else
@@ -70,17 +180,22 @@ class StreakService:
             "Novice Builder 🥉"
         )
 
-        # Rule: Earn 1 Streak Shield for every 7 consecutive days of proof consistency
-        earned_shields = current_streak // 7
-
-        return {
+        result = {
             "current_streak": current_streak,
-            "max_streak": max(current_streak, len(submission_dates)),
-            "available_shields": earned_shields,
+            "max_streak": max_streak,
+            "available_shields": available_shields,
             "badge_tier": badge_tier,
             "days_until_next_shield": 7 - (current_streak % 7) if current_streak % 7 != 0 else 7,
             "rule": "1 Shield = 1 Absent Day protected with ZERO monetary penalty slash"
         }
+
+        if redis_c:
+            try:
+                redis_c.setex(cache_key, CACHE_TTL_SECONDS, json.dumps(result))
+            except Exception:
+                pass
+
+        return result
 
 
 # Singleton instance

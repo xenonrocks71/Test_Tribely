@@ -19,7 +19,6 @@ from app.api import (
     profile,
     upload,
     streak,
-    escrow,
     ledger,
     kudos,
     notifications,
@@ -91,7 +90,6 @@ app.include_router(profile.router, prefix="/api")
 app.include_router(upload.router)
 app.include_router(upload.router, prefix="/api")
 app.include_router(streak.router)
-app.include_router(escrow.router)
 app.include_router(ledger.router)
 
 from fastapi import Request

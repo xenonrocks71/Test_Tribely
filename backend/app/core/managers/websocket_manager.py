@@ -51,46 +51,58 @@ class RoomConnectionPool:
         """Check whether room pool has zero active connections."""
         return len(self.active_connections) == 0
 
+    async def _safe_send(self, ws: WebSocket, payload: str) -> Optional[WebSocket]:
+        """
+        Send payload to a single WebSocket client with strict timeout isolation.
+        Returns the WebSocket instance if sending failed or timed out (for automatic pruning).
+        """
+        try:
+            await asyncio.wait_for(ws.send_text(payload), timeout=1.5)
+            return None
+        except Exception:
+            return ws
+
     async def broadcast(self, message: Dict[str, Any]) -> None:
         """
-        Broadcast JSON payload to all active client connections in this room pool.
-        Isolates client send exceptions so dead sockets are cleaned up without interrupting active clients.
+        Broadcast JSON payload concurrently to all active client connections using scatter-gather.
+        Eliminates head-of-line blocking: slow or dead clients time out in 1.5s and are pruned immediately.
 
         :param message: Dict message payload to serialize.
         """
-        payload = json.dumps(message)
-        stale_connections = []
-        
-        # Take a snapshot list copy to prevent Set size modification during iteration
-        connections_snapshot = list(self.active_connections)
-        for connection in connections_snapshot:
-            try:
-                await connection.send_text(payload)
-            except Exception as e:
-                # Capture closed or dead client socket for immediate cleanup
-                stale_connections.append(connection)
+        if not self.active_connections:
+            return
 
-        # Cleanup stale/broken connections immediately
-        for stale in stale_connections:
-            self.remove(stale)
+        payload = json.dumps(message)
+        connections_snapshot = list(self.active_connections)
+        results = await asyncio.gather(
+            *[self._safe_send(ws, payload) for ws in connections_snapshot],
+            return_exceptions=True
+        )
+
+        for res in results:
+            if res is not None and not isinstance(res, BaseException):
+                self.remove(res)
 
     async def broadcast_except(self, exclude_ws: Optional[WebSocket], message: Dict[str, Any]) -> None:
         """
-        Broadcast JSON payload to all room connections EXCEPT the specified sender socket.
+        Broadcast JSON payload concurrently to all room connections EXCEPT the specified sender socket.
         """
-        payload = json.dumps(message)
-        stale_connections = []
-        connections_snapshot = list(self.active_connections)
-        for connection in connections_snapshot:
-            if exclude_ws and connection == exclude_ws:
-                continue
-            try:
-                await connection.send_text(payload)
-            except Exception:
-                stale_connections.append(connection)
+        if not self.active_connections:
+            return
 
-        for stale in stale_connections:
-            self.remove(stale)
+        payload = json.dumps(message)
+        connections_snapshot = [ws for ws in self.active_connections if not (exclude_ws and ws == exclude_ws)]
+        if not connections_snapshot:
+            return
+
+        results = await asyncio.gather(
+            *[self._safe_send(ws, payload) for ws in connections_snapshot],
+            return_exceptions=True
+        )
+
+        for res in results:
+            if res is not None and not isinstance(res, BaseException):
+                self.remove(res)
 
 
 

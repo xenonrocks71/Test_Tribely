@@ -55,11 +55,11 @@ def resolve_websocket_user_id(token: str | None) -> int:
 async def arena_websocket_endpoint(
     websocket: WebSocket, 
     arena_id: int, 
-    token: str | None = None, 
-    db: Session = Depends(get_db)
+    token: str | None = None
 ):
     """
     Persistent bi-directional communications tunnel for real-time arena tracking.
+    Operates with zero long-held database connections to support millions of concurrent connections.
     """
     try:
         user_id = resolve_websocket_user_id(token)

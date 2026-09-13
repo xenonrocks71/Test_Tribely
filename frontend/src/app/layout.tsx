@@ -44,12 +44,10 @@ export const viewport: Viewport = {
 
 import { ThemeProvider } from "./context/ThemeContext";
 import { ToastProvider } from "./context/ToastContext";
-import { CallProvider } from "./context/CallContext";
 import { NotificationProvider } from "./context/NotificationContext";
-import { ArenaCallNotch } from "./components/ArenaCallNotch";
 import SplashScreen from "@/components/SplashScreen";
 
-import Script from "next/script";
+import { ServiceWorkerRegister } from "@/components/common/ServiceWorkerRegister";
 
 export default function RootLayout({
   children,
@@ -60,31 +58,15 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Tribely" />
-        <Script
-          id="theme-init"
-          strategy="beforeInteractive"
-          dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("tribely_theme")||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");if(t==="dark"){document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark";}else{document.documentElement.classList.remove("dark");document.documentElement.style.colorScheme="light";}}catch(e){}})()`,
-          }}
-        />
-        <Script
-          id="sw-register"
-          strategy="afterInteractive"
-          dangerouslySetInnerHTML={{
-            __html: `if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(e){console.warn('SW reg error:',e);});});}`,
-          }}
-        />
       </head>
       <body className="antialiased selection:bg-[#FF5E00]/20 selection:text-[#FF5E00]">
         <ThemeProvider>
           <ToastProvider>
-            <CallProvider>
-              <NotificationProvider>
-                <SplashScreen />
-                <ArenaCallNotch />
-                {children}
-              </NotificationProvider>
-            </CallProvider>
+            <NotificationProvider>
+              <SplashScreen />
+              <ServiceWorkerRegister />
+              {children}
+            </NotificationProvider>
           </ToastProvider>
         </ThemeProvider>
       </body>

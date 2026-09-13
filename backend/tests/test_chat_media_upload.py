@@ -14,7 +14,11 @@ client = TestClient(app)
 def mock_get_current_user():
     return User(id=1, email="testmediauser@example.com", full_name="Test Media User")
 
-app.dependency_overrides[get_current_user] = mock_get_current_user
+@pytest.fixture(autouse=True)
+def setup_teardown_media_user():
+    app.dependency_overrides[get_current_user] = mock_get_current_user
+    yield
+    app.dependency_overrides.clear()
 
 
 def test_image_file_binary_upload():

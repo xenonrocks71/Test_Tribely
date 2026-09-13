@@ -1,17 +1,18 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { authService } from "@/services/auth.service";
-import { formatErrorMessage } from "@/app/utils/api";
-import { Eye, EyeOff, Trophy, Zap, DollarSign } from "lucide-react";
-import Image from "next/image";
-
 import { dataCache } from "@/app/utils/dataCache";
+import { useTheme } from "@/context/ThemeContext";
+import { Eye, EyeOff, Flame, Sun, Moon, Sparkles, Coins, Check, ArrowRight } from "lucide-react";
 
-function RegisterPage() {
+function RegisterContent() {
   const router = useRouter();
+  const { theme, toggleTheme, isMounted } = useTheme();
+  const isDark = theme === "dark";
+
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -32,7 +33,11 @@ function RegisterPage() {
 
     setLoading(true);
     try {
-      await authService.register({ email: cleanEmail, password, full_name: cleanName });
+      await authService.register({
+        email: cleanEmail,
+        password,
+        full_name: cleanName,
+      });
       dataCache.prefetch("/api/arenas/").catch(() => {});
       router.prefetch("/dashboard");
       router.push("/dashboard");
@@ -56,144 +61,130 @@ function RegisterPage() {
     }
   };
 
-
-  const features = [
-    { icon: <Trophy className="w-4 h-4" />, text: "Earn streak rewards & consistency badges" },
-    { icon: <Zap className="w-4 h-4" />, text: "Never miss a deadline again" },
-    { icon: <DollarSign className="w-4 h-4" />, text: "Real financial stakes keep you honest" },
-  ];
-
   return (
-    <div className="min-h-screen flex" style={{ background: "var(--bg)" }}>
-      {/* ── LEFT FIERY BRAND PANEL ── */}
-      <div
-        className="hidden lg:flex flex-col justify-between w-[46%] relative overflow-hidden p-12"
-        style={{ background: "linear-gradient(135deg, #0B0E14 0%, #190F0B 50%, #0D0604 100%)" }}
-      >
-        <div
-          className="absolute top-[-100px] left-[-100px] w-[500px] h-[500px] rounded-full pointer-events-none opacity-30 blur-3xl animate-pulse-glow"
-          style={{ background: "radial-gradient(circle, #FF5E00 0%, transparent 70%)" }}
-        />
-        <div
-          className="absolute bottom-[-100px] right-[-100px] w-[400px] h-[400px] rounded-full pointer-events-none opacity-20 blur-3xl"
-          style={{ background: "radial-gradient(circle, #FF2E00 0%, transparent 70%)" }}
-        />
-
-        <div className="relative z-10">
-          <Link href="/" className="flex items-center gap-3 group w-fit">
-            <div
-              className="w-11 h-11 rounded-2xl flex items-center justify-center shadow-lg transition transform group-hover:scale-105 overflow-hidden border border-white/20 relative"
-              style={{ background: "#FFFFFF" }}
-            >
-              <Image src="/logo.png" alt="Tribely" fill priority sizes="44px" style={{ objectFit: "contain" }} />
+    <div className="min-h-screen w-full bg-white dark:bg-[#0A0A0A] text-neutral-900 dark:text-neutral-100 flex flex-col justify-between transition-colors duration-200">
+      {/* ── TOP 56PX INSTAGRAM/THREADS HEADER ── */}
+      <header className="sticky top-0 z-40 h-14 w-full border-b border-neutral-200/80 dark:border-neutral-800/80 bg-white/85 dark:bg-[#0A0A0A]/85 backdrop-blur-xl">
+        <div className="max-w-5xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-2 group cursor-pointer">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#FF5E00] to-[#FF2E00] flex items-center justify-center shadow-[0_0_16px_rgba(255,94,0,0.4)] group-hover:scale-105 transition-transform">
+              <Flame className="w-5 h-5 text-white fill-white" />
             </div>
-            <span
-              className="font-black text-2xl text-white tracking-tight"
-              style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}
-            >
+            <span className="font-black text-lg tracking-tight text-neutral-900 dark:text-white">
               TRIBELY
             </span>
           </Link>
-        </div>
 
-        <div className="relative z-10 space-y-6">
-          <h2
-            className="text-4xl sm:text-5xl font-black text-white leading-tight tracking-tight"
-            style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}
-          >
-            Your tribe is<br />
-            <span className="bg-clip-text text-transparent bg-gradient-to-r from-orange-400 via-red-500 to-amber-500">
-              waiting for you.
-            </span>
-          </h2>
-          <p className="text-sm font-medium" style={{ color: "rgba(248,250,252,0.7)", lineHeight: "1.8" }}>
-            Create your account in seconds. Join or create arenas, set your daily habit goals, and start building streaks with real accountability.
-          </p>
-          <div className="space-y-3">
-            {features.map((f, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(255,94,0,0.18)", color: "#FF7A30" }}>
-                  {f.icon}
-                </div>
-                <span className="text-xs font-semibold" style={{ color: "rgba(248,250,252,0.75)" }}>{f.text}</span>
-              </div>
-            ))}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="p-2 rounded-full bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white transition cursor-pointer"
+              title="Switch Appearance"
+              aria-label="Toggle theme"
+            >
+              {isMounted && isDark ? (
+                <Sun className="w-4 h-4 text-amber-400" />
+              ) : (
+                <Moon className="w-4 h-4 text-neutral-600" />
+              )}
+            </button>
+
+            <Link
+              href="/login"
+              className="px-3.5 py-1.5 rounded-full text-xs font-bold text-neutral-700 dark:text-neutral-300 hover:text-neutral-950 dark:hover:text-white bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 transition cursor-pointer"
+            >
+              Sign In
+            </Link>
           </div>
         </div>
+      </header>
 
-        <p className="relative z-10 text-[11px] font-medium" style={{ color: "rgba(248,250,252,0.35)" }}>
-          © {new Date().getFullYear()} Tribely Technologies. All rights reserved.
-        </p>
-      </div>
-
-      {/* ── RIGHT FORM PANEL ── */}
-      <div className="flex-1 flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-md animate-fade-in-up">
-          {/* mobile logo */}
-          <Link href="/" className="lg:hidden flex items-center gap-2.5 mb-8 w-fit">
-            <div className="w-9 h-9 rounded-2xl flex items-center justify-center shadow-md overflow-hidden border border-[var(--border)] relative" style={{ background: "#FFFFFF" }}>
-              <Image src="/logo.png" alt="Tribely" fill priority sizes="36px" style={{ objectFit: "contain" }} />
+      {/* ── CENTERED REGISTRATION CARD ── */}
+      <main className="flex-1 flex items-center justify-center px-4 py-10 sm:py-14">
+        <div className="w-full max-w-[420px] bg-white dark:bg-[#121212] border border-neutral-200/90 dark:border-neutral-800/90 rounded-[28px] sm:rounded-[32px] p-6 sm:p-8 shadow-2xl space-y-5">
+          {/* Header */}
+          <div className="space-y-1.5 text-center">
+            <div className="inline-flex p-3 rounded-2xl bg-amber-500/10 dark:bg-amber-500/15 border border-amber-500/30 text-amber-500 mb-1">
+              <Sparkles className="w-6 h-6" />
             </div>
-            <span
-              className="font-black text-xl tracking-tight"
-              style={{ color: "var(--fg)", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}
-            >
-              TRIBELY
-            </span>
-          </Link>
-
-          <div className="mb-8">
-            <h1
-              className="text-3xl font-black tracking-tight"
-              style={{ color: "var(--fg)", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}
-            >
-              Join Tribely
+            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-neutral-900 dark:text-white">
+              Create Account
             </h1>
-            <p className="mt-2 text-sm font-medium" style={{ color: "var(--fg-muted)" }}>
-              Create an account to join arenas with your group.
+            <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400">
+              Join accountability squads with real stakes and proof drops.
             </p>
           </div>
 
+          {/* 1,000 Kudos Welcome Bonus Callout */}
+          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/15 to-orange-500/10 border border-amber-500/30 flex items-start gap-2.5">
+            <div className="p-1 rounded-lg bg-amber-500/20 text-amber-500 shrink-0 mt-0.5">
+              <Coins className="w-4 h-4" />
+            </div>
+            <div className="space-y-0.5 text-left">
+              <div className="text-xs font-black text-amber-600 dark:text-amber-400">
+                1,000 Kudos Welcome Bonus
+              </div>
+              <p className="text-[11px] text-neutral-600 dark:text-neutral-300 leading-snug">
+                Instantly credited to your wallet upon registration to stake in your first squads.
+              </p>
+            </div>
+          </div>
+
+          {/* Error Banner */}
           {error && (
-            <div
-              className="mb-5 px-4 py-3 rounded-2xl text-xs font-semibold text-center animate-fade-in"
-              style={{ background: "var(--danger-light)", border: "1px solid rgba(239,68,68,0.25)", color: "var(--danger)" }}
-            >
+            <div className="p-3.5 rounded-2xl text-xs font-bold bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-center">
               {error}
             </div>
           )}
 
-          <form onSubmit={handleRegister} className="space-y-5">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--fg-muted)" }}>Full Name</label>
+          {/* Form */}
+          <form onSubmit={handleRegister} className="space-y-3.5">
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                Full Name
+              </label>
               <input
-                type="text" required placeholder="Alex Kumar"
-                className="input-base focus-accent font-medium"
-                value={fullName} onChange={(e) => setFullName(e.target.value)}
+                type="text"
+                required
+                placeholder="Alex Mercer"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                className="w-full px-4 py-3 rounded-2xl bg-neutral-50 dark:bg-[#1A1A1A] border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium transition"
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--fg-muted)" }}>Email</label>
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                Email Address
+              </label>
               <input
-                type="email" required placeholder="you@example.com"
-                className="input-base focus-accent font-medium"
-                value={email} onChange={(e) => setEmail(e.target.value)}
+                type="email"
+                required
+                placeholder="alex@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-4 py-3 rounded-2xl bg-neutral-50 dark:bg-[#1A1A1A] border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium transition"
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--fg-muted)" }}>Password</label>
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                Password
+              </label>
               <div className="relative">
                 <input
-                  type={showPw ? "text" : "password"} required placeholder="••••••••"
-                  className="input-base focus-accent pr-12 font-medium"
-                  value={password} onChange={(e) => setPassword(e.target.value)}
+                  type={showPw ? "text" : "password"}
+                  required
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-4 py-3 pr-11 rounded-2xl bg-neutral-50 dark:bg-[#1A1A1A] border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium transition"
                 />
                 <button
-                  type="button" onClick={() => setShowPw(!showPw)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 transition-opacity hover:opacity-70"
-                  style={{ color: "var(--fg-muted)" }}
+                  type="button"
+                  onClick={() => setShowPw(!showPw)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-white transition cursor-pointer"
                 >
                   {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -201,31 +192,56 @@ function RegisterPage() {
             </div>
 
             <button
-              type="submit" disabled={loading}
-              className="btn-accent w-full py-3.5 rounded-2xl text-sm font-extrabold mt-2 disabled:opacity-50 flex items-center justify-center gap-2 shadow-md"
+              type="submit"
+              disabled={loading}
+              className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-black text-sm transition shadow-lg shadow-emerald-500/25 active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
             >
               {loading ? (
                 <>
-                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Creating account…
+                  <div className="w-4 h-4 border-2 border-neutral-950 border-t-transparent rounded-full animate-spin" />
+                  <span>Creating Account...</span>
                 </>
-              ) : "Create account"}
+              ) : (
+                <span>Claim 1,000 Kudos & Start →</span>
+              )}
             </button>
           </form>
 
-          <p className="mt-8 text-center text-xs font-medium" style={{ color: "var(--fg-muted)" }}>
-            Already have an account?{" "}
-            <Link href="/login" className="font-bold hover:opacity-80 transition" style={{ color: "var(--accent)" }}>
-              Sign in
-            </Link>
-          </p>
+          {/* Switcher to Login */}
+          <div className="pt-2 text-center border-t border-neutral-100 dark:border-neutral-800/80">
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              Already have an account?{" "}
+              <Link
+                href="/login"
+                className="font-bold text-emerald-600 dark:text-emerald-400 hover:underline"
+              >
+                Sign in here →
+              </Link>
+            </p>
+          </div>
         </div>
-      </div>
+      </main>
+
+      {/* ── FOOTER ── */}
+      <footer className="py-6 text-center border-t border-neutral-200/60 dark:border-neutral-900">
+        <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
+          © {new Date().getFullYear()} Tribely Technologies • Where habits become social status.
+        </p>
+      </footer>
     </div>
   );
 }
 
-export default RegisterPage;
+export default function RegisterPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center text-xs font-semibold bg-white dark:bg-[#0A0A0A] text-neutral-500">
+          Loading Tribely...
+        </div>
+      }
+    >
+      <RegisterContent />
+    </Suspense>
+  );
+}

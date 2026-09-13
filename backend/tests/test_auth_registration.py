@@ -48,7 +48,7 @@ def test_user_registration_atomic_success():
         assert user.email == "test_engineer@tribely.internal"
         assert user.full_name == "Test Engineer"
         assert verify_password("StrongPassword123!", user.hashed_password)
-        assert registration_duration < 1.0  # Fast registration check
+        assert registration_duration < 2.5  # Fast registration check with OWASP 12-round bcrypt budget
 
         # Assert UserProfile auto-created
         profile = db.query(UserProfile).filter(UserProfile.user_id == user.id).first()

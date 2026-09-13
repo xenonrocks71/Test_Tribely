@@ -19,7 +19,7 @@ WELCOME_BONUS_TRIBES = 1000.0
 DEFAULT_ABSENCE_PENALTY_TRIBES = 300.0
 REFERRAL_UNFREEZE_THRESHOLD = 3
 REFERRAL_BONUS_TRIBES = 200.0
-CYCLE_DAYS = 21
+CYCLE_DAYS = 7  # 7-Day Sprint Vault replaces 21-day cycles (Monday to Sunday)
 
 
 class TribesService:
@@ -94,11 +94,6 @@ class TribesService:
             return {"status": "skipped", "staked_amount": 0.0}
 
         wallet = self.get_or_create_user_wallet(db, user_id)
-        if wallet.is_frozen:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is frozen due to negative balance. Perform 3 referrals to unfreeze your account."
-            )
         if wallet.tribes_balance < stake:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -135,9 +130,15 @@ class TribesService:
 
     def deduct_arena_join_stake(self, db: Session, user_id: int, arena: Arena) -> Dict[str, Any]:
         """
-        Deducts entry stake from joining user's wallet and credits to ArenaPool.tribes_reserve_vault.
+        Deducts entry escrow deposit from joining user's wallet when enrolling in an arena.
+        For private arenas with monetary policy, takes agreed fine (penalty_amount, default 50.0 Kudos)
+        as deposit and locks it into the arena's escrow vault (ArenaPool.tribes_reserve_vault).
+        Public arenas with 0 stake are free.
         """
-        stake = float(arena.penalty_amount or 0.0)
+        stake = float(arena.penalty_amount if arena.penalty_amount is not None else 0.0)
+        if arena.is_private and stake <= 0:
+            stake = 50.0
+
         if stake <= 0:
             return {"status": "skipped", "staked_amount": 0.0}
 
@@ -156,15 +157,10 @@ class TribesService:
             }
 
         wallet = self.get_or_create_user_wallet(db, user_id)
-        if wallet.is_frozen:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is frozen due to negative balance. Perform 3 referrals to unfreeze your account."
-            )
         if wallet.tribes_balance < stake:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient Tribes balance to join arena '{arena.name}'. Required entry stake is {stake} Tribes, but your current balance is {wallet.tribes_balance} Tribes."
+                detail=f"Insufficient Kudos balance to join arena '{arena.name}'. A deposit of {stake} Kudos is required, but your current balance is {wallet.tribes_balance} Kudos."
             )
 
         wallet.tribes_balance -= stake
@@ -176,12 +172,12 @@ class TribesService:
             db=db,
             user_id=user_id,
             arena_id=arena.id,
-            transaction_type="ARENA_JOIN_STAKE",
+            transaction_type="ARENA_JOIN_ESCROW_DEPOSIT",
             amount_kudos=stake,
             debit_account=f"user:{user_id}:tribes",
             credit_account=f"arena:{arena.id}:tribes_vault",
             idempotency_key=idempotency_key,
-            description=f"Entry stake deposit of {stake} Tribes for joining arena '{arena.name}'"
+            description=f"Escrow deposit of {stake} Kudos for joining arena '{arena.name}'"
         )
         db.commit()
         db.refresh(wallet)
@@ -229,10 +225,9 @@ class TribesService:
         wallet = self.get_or_create_user_wallet(db, user_id)
         pool = self.get_or_create_arena_pool(db, arena_id)
 
-        # Deduct penalty directly from wallet balance (allowing negative balance for freeze engine)
+        # Deduct penalty directly from wallet balance
         wallet.tribes_balance -= penalty_kudos
-        if wallet.tribes_balance < 0:
-            wallet.is_frozen = True
+        wallet.is_frozen = False  # Users are never locked out of posting proofs
 
         # Deposit penalty into arena reserve vault
         pool.tribes_reserve_vault += penalty_kudos
@@ -403,6 +398,88 @@ class TribesService:
         start = pool.cycle_start_date or datetime.utcnow()
         elapsed = (datetime.utcnow() - start.replace(tzinfo=None)).days
         return max(0, CYCLE_DAYS - elapsed)
+
+    def unlock_daily_stake_return(self, db: Session, user_id: int, arena_id: int) -> Dict[str, Any]:
+        """
+        Phase 4 7-Day Sprint Vault:
+        Every completed daily check-in unlocks a fraction (1/7th) of their weekly locked stake
+        back to their wallet immediately for instant gratification.
+        """
+        arena = db.query(Arena).filter(Arena.id == arena_id).first()
+        stake = float(arena.penalty_amount or 0.0) if arena else 0.0
+        daily_return = round(stake / 7.0, 2)
+        if daily_return <= 0:
+            return {"status": "skipped", "unlocked_amount": 0.0}
+
+        wallet = self.get_or_create_user_wallet(db, user_id)
+        wallet.tribes_balance += daily_return
+        
+        now_str = datetime.utcnow().strftime("%Y-%m-%d")
+        idempotency_key = f"stake_unlock:arena:{arena_id}:user:{user_id}:{now_str}"
+        existing = db.query(KudosLedger).filter(KudosLedger.idempotency_key == idempotency_key).first()
+        if existing:
+            return {"status": "already_unlocked", "unlocked_amount": 0.0, "new_balance": wallet.tribes_balance}
+
+        self._log_tribes_ledger(
+            db=db,
+            user_id=user_id,
+            arena_id=arena_id,
+            transaction_type="SPRINT_STAKE_UNLOCK",
+            amount_kudos=daily_return,
+            debit_account=f"arena:{arena_id}:tribes_vault",
+            credit_account=f"user:{user_id}:tribes",
+            idempotency_key=idempotency_key,
+            description=f"7-Day Sprint daily check-in unlocked {daily_return} Kudos back to wallet"
+        )
+        db.commit()
+        db.refresh(wallet)
+        return {"status": "success", "unlocked_amount": daily_return, "new_balance": wallet.tribes_balance}
+
+    def evaluate_tribe_multiplier(self, db: Session, arena_id: int) -> Dict[str, Any]:
+        """
+        Phase 4 Tribe Multiplier & Social Loss Aversion:
+        If 100% of Tribe members submit proof before the daily deadline, the entire cohort
+        earns a 1.5x Kudos Streak Multiplier.
+        """
+        memberships = db.query(ArenaMembership).filter(
+            ArenaMembership.arena_id == arena_id,
+            ArenaMembership.status == "approved"
+        ).all()
+        total_members = len(memberships)
+        if total_members == 0:
+            return {"multiplier_active": False, "multiplier": 1.0, "completed": 0, "total": 0, "at_risk_users": []}
+
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        submitted_user_ids = set()
+        subs = db.query(Submission.user_id).filter(
+            Submission.arena_id == arena_id,
+            Submission.submitted_at >= today_start,
+            Submission.is_absent == False
+        ).all()
+        for s in subs:
+            submitted_user_ids.add(s[0])
+
+        sheets = db.query(DailyArenaSheet.user_id).filter(
+            DailyArenaSheet.arena_id == arena_id,
+            DailyArenaSheet.date_day >= today_start.strftime("%Y-%m-%d"),
+            DailyArenaSheet.status.in_(["submitted", "verified", "shielded"])
+        ).all()
+        for sh in sheets:
+            submitted_user_ids.add(sh[0])
+
+        at_risk_users = []
+        for m in memberships:
+            if m.user_id not in submitted_user_ids:
+                at_risk_users.append(m.user_id)
+
+        all_completed = len(at_risk_users) == 0 and total_members > 0
+        return {
+            "multiplier_active": all_completed,
+            "multiplier": 1.5 if all_completed else 1.0,
+            "completed": len(submitted_user_ids),
+            "total": total_members,
+            "at_risk_users": at_risk_users
+        }
 
     def _log_tribes_ledger(
         self,

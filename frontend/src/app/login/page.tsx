@@ -5,16 +5,17 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { authService } from "@/services/auth.service";
 import { dataCache } from "@/app/utils/dataCache";
-import { formatErrorMessage } from "@/app/utils/api";
 import { apiClient } from "@/lib/api-client";
-import { Eye, EyeOff, BookOpen, MessageCircle, Lock } from "lucide-react";
-
-import Image from "next/image";
+import { useTheme } from "@/context/ThemeContext";
+import { Eye, EyeOff, Flame, Sun, Moon, Sparkles, ArrowRight, X, Lock, Check } from "lucide-react";
 
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams?.get("redirect") || "/dashboard";
+  const { theme, toggleTheme, isMounted } = useTheme();
+  const isDark = theme === "dark";
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -33,35 +34,55 @@ function LoginContent() {
     setResetError("");
     setResetLoading(true);
     try {
-      const res = await apiClient.post<any>("/api/auth/reset-password", {
-        email: resetEmail.trim(),
-        new_password: resetNewPassword,
+      const cleanEmail = resetEmail.trim().toLowerCase();
+      const forgotRes = await apiClient.post<any>("/api/auth/forgot-password", {
+        email: cleanEmail,
       });
+
+      const resetToken = forgotRes?.reset_token;
+      if (!resetToken) {
+        setResetError("No active account found with this email address.");
+        setResetLoading(false);
+        return;
+      }
+
+      const res = await apiClient.post<any>("/api/auth/reset-password", {
+        email: cleanEmail,
+        new_password: resetNewPassword,
+        reset_token: resetToken,
+      });
+
       if (res?.access_token) {
         localStorage.setItem("tribely_token", res.access_token);
         localStorage.setItem("token", res.access_token);
         localStorage.setItem("tribely_user_id", String(res.user_id));
         localStorage.setItem("tribely_user_name", res.full_name || "");
-        localStorage.setItem("user", JSON.stringify({
-          id: res.user_id,
-          full_name: res.full_name,
-          email: resetEmail.trim()
-        }));
+        localStorage.setItem(
+          "user",
+          JSON.stringify({
+            id: res.user_id,
+            full_name: res.full_name,
+            email: cleanEmail,
+          })
+        );
         dataCache.prefetch("/api/arenas/").catch(() => {});
         router.push("/dashboard");
       }
     } catch (err: any) {
       const detail = err.response?.data?.detail;
-      setResetError(typeof detail === "string" ? detail : "Failed to reset password. Please check your email.");
+      setResetError(
+        typeof detail === "string"
+          ? detail
+          : "Failed to reset password. Please verify your details."
+      );
       setResetLoading(false);
     }
   };
 
   useEffect(() => {
-    // Prefetch dashboard route on login page load
     router.prefetch("/dashboard");
     if (searchParams?.get("registered") === "true") {
-      setSuccess("Account created — you can sign in now.");
+      setSuccess("Account created successfully! Sign in below to enter your squads.");
     }
   }, [searchParams, router]);
 
@@ -72,10 +93,11 @@ function LoginContent() {
       setError("Please enter your email and password.");
       return;
     }
-    setError(""); setSuccess(""); setLoading(true);
+    setError("");
+    setSuccess("");
+    setLoading(true);
     try {
       await authService.login(cleanEmail, password);
-      // Immediately prefetch Arenas data into memory cache
       dataCache.prefetch("/api/arenas/").catch(() => {});
       const target = redirectTo.startsWith("/") ? redirectTo : "/dashboard";
       router.prefetch(target);
@@ -89,7 +111,7 @@ function LoginContent() {
       } else if (Array.isArray(detail) && detail[0]?.msg) {
         message = detail[0].msg;
       } else if (status === 502 || status === 503) {
-        message = "Server is temporarily waking up or unavailable (502). Please retry in a few seconds.";
+        message = "Server is temporarily waking up (502). Please retry in a few seconds.";
       } else if (status === 500) {
         message = "Server encountered an internal error. Please try again.";
       } else if (!err.response) {
@@ -100,154 +122,93 @@ function LoginContent() {
     }
   };
 
-  const features = [
-    { icon: <BookOpen className="w-4 h-4" />, text: "Live proof ledger with peer verification" },
-    { icon: <MessageCircle className="w-4 h-4" />, text: "Real-time group room chat" },
-    { icon: <Lock className="w-4 h-4" />, text: "Private arenas with admin controls" },
-  ];
-
   return (
-    <div className="min-h-screen flex" style={{ background: "var(--bg)" }}>
-      {/* ── LEFT FIERY BRAND PANEL ── */}
-      <div
-        className="hidden lg:flex flex-col justify-between w-[46%] relative overflow-hidden p-12"
-        style={{
-          background: "linear-gradient(135deg, #0B0E14 0%, #190F0B 50%, #0D0604 100%)",
-        }}
-      >
-        {/* Animated Orbs */}
-        <div
-          className="absolute top-[-100px] left-[-100px] w-[500px] h-[500px] rounded-full pointer-events-none opacity-30 blur-3xl animate-pulse-glow"
-          style={{
-            background: "radial-gradient(circle, #FF5E00 0%, transparent 70%)",
-          }}
-        />
-        <div
-          className="absolute bottom-[-100px] right-[-100px] w-[400px] h-[400px] rounded-full pointer-events-none opacity-20 blur-3xl"
-          style={{
-            background: "radial-gradient(circle, #FF2E00 0%, transparent 70%)",
-          }}
-        />
-
-        {/* Logo */}
-        <div className="relative z-10">
-          <Link href="/" className="flex items-center gap-3 group w-fit">
-            <div
-              className="w-11 h-11 rounded-2xl flex items-center justify-center shadow-lg transition transform group-hover:scale-105 overflow-hidden border border-white/20 relative"
-              style={{ background: "#FFFFFF" }}
-            >
-              <Image src="/logo.png" alt="Tribely" fill priority sizes="44px" style={{ objectFit: "contain" }} />
+    <div className="min-h-screen w-full bg-white dark:bg-[#0A0A0A] text-neutral-900 dark:text-neutral-100 flex flex-col justify-between transition-colors duration-200">
+      {/* ── TOP 56PX INSTAGRAM/THREADS HEADER ── */}
+      <header className="sticky top-0 z-40 h-14 w-full border-b border-neutral-200/80 dark:border-neutral-800/80 bg-white/85 dark:bg-[#0A0A0A]/85 backdrop-blur-xl">
+        <div className="max-w-5xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-2 group cursor-pointer">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#FF5E00] to-[#FF2E00] flex items-center justify-center shadow-[0_0_16px_rgba(255,94,0,0.4)] group-hover:scale-105 transition-transform">
+              <Flame className="w-5 h-5 text-white fill-white" />
             </div>
-            <span
-              className="font-black text-2xl text-white tracking-tight"
-              style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}
-            >
+            <span className="font-black text-lg tracking-tight text-neutral-900 dark:text-white">
               TRIBELY
             </span>
           </Link>
-        </div>
 
-        {/* Headline */}
-        <div className="relative z-10 space-y-6">
-          <h2
-            className="text-4xl sm:text-5xl font-black text-white leading-tight tracking-tight"
-            style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}
-          >
-            Build habits that<br />
-            <span className="bg-clip-text text-transparent bg-gradient-to-r from-orange-400 via-red-500 to-amber-500">
-              actually stick.
-            </span>
-          </h2>
-          <p className="text-sm font-medium" style={{ color: "rgba(248,250,252,0.7)", lineHeight: "1.8" }}>
-            Join accountability arenas. Submit daily proof before strict deadlines.
-            Stay consistent with real stakes on the line.
-          </p>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="p-2 rounded-full bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white transition cursor-pointer"
+              title="Switch Appearance"
+              aria-label="Toggle theme"
+            >
+              {isMounted && isDark ? (
+                <Sun className="w-4 h-4 text-amber-400" />
+              ) : (
+                <Moon className="w-4 h-4 text-neutral-600" />
+              )}
+            </button>
 
-          {/* Feature Bullets */}
-          <div className="space-y-3">
-            {features.map((f, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(255,94,0,0.18)", color: "#FF7A30" }}>
-                  {f.icon}
-                </div>
-                <span className="text-xs font-semibold" style={{ color: "rgba(248,250,252,0.75)" }}>{f.text}</span>
-              </div>
-            ))}
+            <Link
+              href="/register"
+              className="px-3.5 py-1.5 rounded-full text-xs font-bold text-neutral-700 dark:text-neutral-300 hover:text-neutral-950 dark:hover:text-white bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 transition cursor-pointer"
+            >
+              Sign Up
+            </Link>
           </div>
         </div>
+      </header>
 
-        {/* Bottom Tagline */}
-        <p className="relative z-10 text-[11px] font-medium" style={{ color: "rgba(248,250,252,0.35)" }}>
-          © {new Date().getFullYear()} Tribely Technologies. All rights reserved.
-        </p>
-      </div>
-
-      {/* ── RIGHT FORM PANEL ── */}
-      <div className="flex-1 flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-md animate-fade-in-up">
-          {/* Mobile Logo */}
-          <Link href="/" className="lg:hidden flex items-center gap-2.5 mb-8 w-fit">
-            <div
-              className="w-9 h-9 rounded-2xl flex items-center justify-center shadow-md overflow-hidden border border-[var(--border)] relative"
-              style={{ background: "#FFFFFF" }}
-            >
-              <Image src="/logo.png" alt="Tribely" fill priority sizes="36px" style={{ objectFit: "contain" }} />
+      {/* ── CENTERED AUTH FORM ── */}
+      <main className="flex-1 flex items-center justify-center px-4 py-10 sm:py-16">
+        <div className="w-full max-w-[420px] bg-white dark:bg-[#121212] border border-neutral-200/90 dark:border-neutral-800/90 rounded-[28px] sm:rounded-[32px] p-6 sm:p-8 shadow-2xl space-y-6">
+          {/* Header */}
+          <div className="space-y-2 text-center">
+            <div className="inline-flex p-3 rounded-2xl bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/30 text-emerald-500 mb-1">
+              <Flame className="w-6 h-6 fill-emerald-500" />
             </div>
-            <span
-              className="font-black text-xl tracking-tight"
-              style={{ color: "var(--fg)", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}
-            >
-              TRIBELY
-            </span>
-          </Link>
-
-          <div className="mb-8">
-            <h1
-              className="text-3xl font-black tracking-tight"
-              style={{ color: "var(--fg)", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif' }}
-            >
+            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-neutral-900 dark:text-white">
               Welcome back
             </h1>
-            <p className="mt-2 text-sm font-medium" style={{ color: "var(--fg-muted)" }}>
-              Sign in to check your arenas and drop your daily proof.
+            <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400">
+              Sign in to check your squads and drop your daily proof.
             </p>
           </div>
 
+          {/* Alert Banners */}
           {success && (
-            <div
-              className="mb-5 px-4 py-3 rounded-2xl text-xs font-semibold text-center animate-fade-in"
-              style={{ background: "var(--success-light)", border: "1px solid rgba(16,185,129,0.25)", color: "var(--success)" }}
-            >
-              {success}
+            <div className="p-3.5 rounded-2xl text-xs font-bold bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-center flex items-center justify-center gap-2">
+              <Check className="w-4 h-4" />
+              <span>{success}</span>
             </div>
           )}
           {error && (
-            <div
-              className="mb-5 px-4 py-3 rounded-2xl text-xs font-semibold text-center animate-fade-in"
-              style={{ background: "var(--danger-light)", border: "1px solid rgba(239,68,68,0.25)", color: "var(--danger)" }}
-            >
+            <div className="p-3.5 rounded-2xl text-xs font-bold bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-center">
               {error}
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-5">
+          {/* Form */}
+          <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--fg-muted)" }}>
-                Email
+              <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                Email Address
               </label>
               <input
                 type="email"
                 required
-                placeholder="you@example.com"
-                className="input-base focus-accent font-medium"
+                placeholder="alex@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-4 py-3 rounded-2xl bg-neutral-50 dark:bg-[#1A1A1A] border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium transition"
               />
             </div>
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--fg-muted)" }}>
+                <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
                   Password
                 </label>
                 <button
@@ -256,26 +217,25 @@ function LoginContent() {
                     setResetEmail(email.trim());
                     setShowResetModal(true);
                   }}
-                  className="text-xs font-semibold hover:underline"
-                  style={{ color: "var(--accent)" }}
+                  className="text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
                 >
-                  Forgot / Set new password?
+                  Forgot?
                 </button>
               </div>
+
               <div className="relative">
                 <input
                   type={showPw ? "text" : "password"}
                   required
                   placeholder="••••••••"
-                  className="input-base focus-accent pr-12 font-medium"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-4 py-3 pr-11 rounded-2xl bg-neutral-50 dark:bg-[#1A1A1A] border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-sm font-medium transition"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPw(!showPw)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 transition-opacity hover:opacity-70"
-                  style={{ color: "var(--fg-muted)" }}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-white transition cursor-pointer"
                 >
                   {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -285,93 +245,119 @@ function LoginContent() {
             <button
               type="submit"
               disabled={loading}
-              className="btn-accent w-full py-3.5 rounded-2xl text-sm font-extrabold mt-2 disabled:opacity-50 flex items-center justify-center gap-2 shadow-md"
+              className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-black text-sm transition shadow-lg shadow-emerald-500/25 active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
             >
               {loading ? (
                 <>
-                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Signing in…
+                  <div className="w-4 h-4 border-2 border-neutral-950 border-t-transparent rounded-full animate-spin" />
+                  <span>Signing In...</span>
                 </>
-              ) : "Sign in"}
+              ) : (
+                <span>Sign In to Tribely</span>
+              )}
             </button>
           </form>
 
-          {/* Quick Password Reset Modal */}
-          {showResetModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-              <div
-                className="w-full max-w-md rounded-2xl p-6 shadow-2xl border space-y-4 animate-in fade-in zoom-in-95 duration-150"
-                style={{ background: "var(--bg-raised)", borderColor: "var(--border)" }}
+          {/* Footer Switcher */}
+          <div className="pt-2 text-center border-t border-neutral-100 dark:border-neutral-800/80">
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              Don't have an account?{" "}
+              <Link
+                href="/register"
+                className="font-bold text-emerald-600 dark:text-emerald-400 hover:underline"
               >
-                <div className="flex items-center justify-between">
-                  <h3 className="text-base font-extrabold" style={{ color: "var(--fg)" }}>Set New Password</h3>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowResetModal(false);
-                      setResetError("");
-                    }}
-                    className="text-xs font-bold text-neutral-400 hover:text-white"
-                  >
-                    ✕ Close
-                  </button>
-                </div>
-                <p className="text-xs" style={{ color: "var(--fg-muted)" }}>
-                  Enter your email and a new password to update your credentials and sign in immediately.
-                </p>
-
-                {resetError && (
-                  <div className="p-3 rounded-xl text-xs font-semibold bg-rose-500/10 border border-rose-500/30 text-rose-400">
-                    {resetError}
-                  </div>
-                )}
-
-                <form onSubmit={handleResetPassword} className="space-y-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold" style={{ color: "var(--fg-muted)" }}>Your Email</label>
-                    <input
-                      type="email"
-                      required
-                      value={resetEmail}
-                      onChange={(e) => setResetEmail(e.target.value)}
-                      className="input-base focus-accent font-medium w-full"
-                      placeholder="you@example.com"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold" style={{ color: "var(--fg-muted)" }}>New Password</label>
-                    <input
-                      type="password"
-                      required
-                      value={resetNewPassword}
-                      onChange={(e) => setResetNewPassword(e.target.value)}
-                      className="input-base focus-accent font-medium w-full"
-                      placeholder="Enter new password"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={resetLoading}
-                    className="btn-accent w-full py-3 rounded-xl text-xs font-extrabold disabled:opacity-50"
-                  >
-                    {resetLoading ? "Updating Password…" : "Update & Sign In"}
-                  </button>
-                </form>
-              </div>
-            </div>
-          )}
-
-          <p className="mt-8 text-center text-xs font-medium" style={{ color: "var(--fg-muted)" }}>
-            No account?{" "}
-            <Link href="/register" className="font-bold hover:opacity-80 transition" style={{ color: "var(--accent)" }}>
-              Create one free
-            </Link>
-          </p>
+                Create one free →
+              </Link>
+            </p>
+          </div>
         </div>
-      </div>
+      </main>
+
+      {/* ── PASSWORD RESET MODAL ── */}
+      {showResetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-white dark:bg-[#141414] border border-neutral-200 dark:border-neutral-800 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-neutral-200 dark:border-neutral-800">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-xl bg-amber-500/10 text-amber-500">
+                  <Lock className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-black text-neutral-900 dark:text-white">
+                  Reset Password
+                </h3>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowResetModal(false);
+                  setResetError("");
+                }}
+                className="p-1.5 rounded-full text-neutral-400 hover:text-neutral-900 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+              Enter your account email and a new password to immediately update your credentials and sign in.
+            </p>
+
+            {resetError && (
+              <div className="p-3 rounded-xl text-xs font-semibold bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400">
+                {resetError}
+              </div>
+            )}
+
+            <form onSubmit={handleResetPassword} className="space-y-3.5">
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                  Account Email
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  placeholder="alex@example.com"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50 dark:bg-[#1A1A1A] border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-white text-xs font-medium focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                  New Password
+                </label>
+                <input
+                  type="password"
+                  required
+                  value={resetNewPassword}
+                  onChange={(e) => setResetNewPassword(e.target.value)}
+                  placeholder="Enter new password"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50 dark:bg-[#1A1A1A] border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-white text-xs font-medium focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={resetLoading}
+                  className="w-full py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-black text-xs transition cursor-pointer shadow-md shadow-emerald-500/20 disabled:opacity-50"
+                >
+                  {resetLoading ? "Updating Password..." : "Update Password & Sign In"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── FOOTER ── */}
+      <footer className="py-6 text-center border-t border-neutral-200/60 dark:border-neutral-900">
+        <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
+          © {new Date().getFullYear()} Tribely Technologies • Where habits become social status.
+        </p>
+      </footer>
     </div>
   );
 }
@@ -380,8 +366,8 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center text-xs font-semibold" style={{ background: "var(--bg)", color: "var(--fg-muted)" }}>
-          Loading Login Workspace…
+        <div className="min-h-screen flex items-center justify-center text-xs font-semibold bg-white dark:bg-[#0A0A0A] text-neutral-500">
+          Loading Tribely...
         </div>
       }
     >

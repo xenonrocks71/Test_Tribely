@@ -109,6 +109,8 @@ class AuditService:
                     has_shield = user_wallet and getattr(user_wallet, 'streak_shields', 0) > 0
 
                     if has_shield:
+                        sheet.status = "shielded"
+                        sheet.proof_type = "shield"
                         user_wallet.streak_shields -= 1
                         logbook_entry = ArenaLogbook(
                             arena_id=arena_id,
@@ -118,33 +120,29 @@ class AuditService:
                             description=f"Cutoff deadline missed — Protected by Streak Freeze Shield! (1 shield consumed for {target_date_str})"
                         )
                         db.add(logbook_entry)
+                        try:
+                            from app.services.streak_service import streak_service
+                            streak_service.invalidate_streak_cache(user_id, arena_id)
+                        except Exception:
+                            pass
                     else:
-                        # Record 60/30/10 ledger splits
-                        ledger_service.record_penalty_accrual(
-                            db=db,
-                            arena_id=arena_id,
-                            user_id=user_id,
-                            penalty_amount_inr=penalty_amount,
-                            target_date_str=target_date_str,
-                        )
+                        # Reset streak to 0 on unshielded absence
+                        mem.current_streak = 0
 
                         logbook_entry = ArenaLogbook(
                             arena_id=arena_id,
                             user_id=user_id,
-                            entry_type="penalty",
-                            amount=penalty_amount,
-                            description=f"Cutoff deadline missed penalty of {penalty_amount} Tribes for date {target_date_str}"
+                            entry_type="deadline_missed",
+                            amount=0.0,
+                            description=f"Cutoff deadline missed for date {target_date_str}. Active streak reset to 0."
                         )
                         db.add(logbook_entry)
 
-                        # Deduct Tribes penalty & trigger negative balance freeze if balance < 0
-                        kudos_service.deduct_absent_penalty(
-                            db=db,
-                            arena_id=arena_id,
-                            user_id=user_id,
-                            penalty_kudos=penalty_amount,
-                            target_date_str=target_date_str
-                        )
+                        try:
+                            from app.services.streak_service import streak_service
+                            streak_service.invalidate_streak_cache(user_id, arena_id)
+                        except Exception:
+                            pass
 
                     # Transactional Outbox Event record
                     broadcast_payload = {

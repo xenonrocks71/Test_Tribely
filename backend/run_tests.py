@@ -23,5 +23,6 @@ pluggy.PluginManager.load_setuptools_entrypoints = safe_load_setuptools_entrypoi
 import pytest
 
 if __name__ == "__main__":
-    exit_code = pytest.main(["tests/", "-v"])
+    args = sys.argv[1:] if len(sys.argv) > 1 else ["tests/", "-v"]
+    exit_code = pytest.main(args)
     sys.exit(exit_code)

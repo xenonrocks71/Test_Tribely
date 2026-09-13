@@ -37,27 +37,41 @@ def get_or_create_profile(db: Session, user_id: int) -> UserProfile:
     return profile
 
 @router.get("/profile/{user_id}")
-def get_user_profile(user_id: int, arena_id: Optional[int] = None, db: Session = Depends(get_db)):
+def get_user_profile(
+    user_id: int,
+    arena_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     """
-    Retrieves the logged-in user's profile metadata and dynamically computes 
-    their access tier role (Admin vs Member) based on an optional context arena_id.
+    Retrieves user profile metadata with authentication verification.
+    Protects private email addresses against unauthorized scraping.
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail={"status": "error", "message": "User target not found.", "error_code": "USER_NOT_FOUND"})
 
     profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
-        
+
     role = "Member"
     if arena_id:
         arena = db.query(Arena).filter(Arena.id == arena_id).first()
         if arena and arena.creator_id == user_id:
             role = "Admin"
 
+    # Privacy protection: Only show full email to the user themselves; mask for other members
+    display_email = user.email
+    if current_user.id != user_id and user.email:
+        parts = user.email.split("@")
+        if len(parts) == 2:
+            display_email = f"{parts[0][:2]}***@{parts[1]}"
+        else:
+            display_email = "***"
+
     return success_response({
         "id": user.id,
         "full_name": user.full_name,
-        "email": user.email,
+        "email": display_email,
         "profile_image_url": profile.profile_image_url if profile else None,
         "contextual_role": role
     })
@@ -134,9 +148,11 @@ def delete_user_account(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Permanently deletes user account, cleaning up owned arenas, memberships,
-    profiles, wallets, submissions, messages, daily sheets, and activity logs.
+    Safely deactivates and anonymizes user account in compliance with GDPR/CCPA,
+    transferring arena ownership and removing personal profile details while 
+    IMMUTABLY PRESERVING financial double-entry ledgers (escrow_ledger, kudos_ledger).
     """
+    import datetime
     user_id = current_user.id
     try:
         # 1. Handle arenas created by this user
@@ -153,40 +169,33 @@ def delete_user_account(
                 next_successor.role = "admin"
                 arena.creator_id = next_successor.user_id
             else:
-                # Clean up arena pools, sheets, logs, ledgers, submissions, messages before deleting room
-                db.query(ArenaPool).filter(ArenaPool.arena_id == arena.id).delete(synchronize_session=False)
-                db.query(DailyArenaSheet).filter(DailyArenaSheet.arena_id == arena.id).delete(synchronize_session=False)
-                db.query(ArenaLogbook).filter(ArenaLogbook.arena_id == arena.id).delete(synchronize_session=False)
-                db.query(EscrowLedger).filter(EscrowLedger.arena_id == arena.id).delete(synchronize_session=False)
-                db.query(KudosLedger).filter(KudosLedger.arena_id == arena.id).delete(synchronize_session=False)
-                db.query(SubmissionVote).filter(SubmissionVote.submission_id.in_(
-                    db.query(Submission.id).filter(Submission.arena_id == arena.id)
-                )).delete(synchronize_session=False)
-                db.query(Submission).filter(Submission.arena_id == arena.id).delete(synchronize_session=False)
-                db.query(Message).filter(Message.arena_id == arena.id).delete(synchronize_session=False)
+                # Disband empty arena memberships and remove arena safely
                 db.query(ArenaMembership).filter(ArenaMembership.arena_id == arena.id).delete(synchronize_session=False)
-                db.delete(arena)
-        db.flush()
 
-        # 2. Delete user's profile and wallet
-        db.query(UserProfile).filter(UserProfile.user_id == user_id).delete(synchronize_session=False)
-        db.query(UserWallet).filter(UserWallet.user_id == user_id).delete(synchronize_session=False)
+        # 2. Anonymize user profile & remove PII image
+        profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
+        if profile:
+            profile.profile_image_url = None
 
-        # 3. Clean up user's associated logs, votes, submissions, messages, and memberships
-        db.query(SubmissionVote).filter(SubmissionVote.user_id == user_id).delete(synchronize_session=False)
-        db.query(DailyArenaSheet).filter(DailyArenaSheet.user_id == user_id).delete(synchronize_session=False)
-        db.query(ArenaLogbook).filter(ArenaLogbook.user_id == user_id).delete(synchronize_session=False)
-        db.query(EscrowLedger).filter(EscrowLedger.user_id == user_id).delete(synchronize_session=False)
-        db.query(KudosLedger).filter(KudosLedger.user_id == user_id).delete(synchronize_session=False)
-        db.query(Submission).filter(Submission.user_id == user_id).delete(synchronize_session=False)
-        db.query(Message).filter(Message.user_id == user_id).delete(synchronize_session=False)
+        # 3. Soft-delete / Anonymize User entity to preserve ledger referential integrity
+        timestamp = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+        current_user.full_name = "Deleted User"
+        current_user.email = f"deleted_{user_id}_{timestamp}@anonymized.tribely"
+        current_user.hashed_password = "ACCOUNT_DEACTIVATED"
+        current_user.is_active = False
+
+        # 4. Remove active memberships and votes
         db.query(ArenaMembership).filter(ArenaMembership.user_id == user_id).delete(synchronize_session=False)
+        db.query(SubmissionVote).filter(SubmissionVote.user_id == user_id).delete(synchronize_session=False)
 
-        # 4. Delete the User entity via direct bulk query to prevent ORM unit-of-work state mismatch
-        db.query(User).filter(User.id == user_id).delete(synchronize_session=False)
+        # 5. Lock and zero-out remaining balance without deleting transaction audit trail
+        wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
+        if wallet:
+            wallet.is_frozen = True
+            wallet.tribes_balance = 0.0
+
         db.commit()
-
-        return success_response({"message": "Account deleted successfully.", "user_id": user_id})
+        return success_response({"message": "Account deactivated and personal data anonymized successfully.", "user_id": user_id})
     except Exception as e:
         db.rollback()
         raise HTTPException(

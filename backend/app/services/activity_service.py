@@ -11,7 +11,7 @@ from app.schemas.schemas import SubmissionCreate, MessageCreate
 from app.repositories.activity_repository import activity_repository, ActivityRepository
 from app.repositories.arena_repository import arena_repository, ArenaRepository
 from app.core.verifiers.proof_verifier import ProofVerifierFactory
-from app.services.ai_verifier import ai_proof_auditor
+from app.services.ai_verification_service import ai_proof_auditor
 from app.core.events.domain_events import domain_event_publisher, ProofSubmittedEvent
 
 

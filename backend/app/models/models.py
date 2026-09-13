@@ -1,6 +1,6 @@
 import datetime
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, Numeric, ForeignKey, Text, UniqueConstraint, MetaData, Float, Index
+    Column, Integer, String, Boolean, DateTime, Numeric, ForeignKey, Text, UniqueConstraint, MetaData, Float, Index, Date, JSON
 )
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -22,7 +22,9 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(100), unique=True, index=True, nullable=True)
     email = Column(String, unique=True, index=True, nullable=False)
+    avatar_url = Column(Text, nullable=True)
     hashed_password = Column(String, nullable=False)
     full_name = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
@@ -32,7 +34,15 @@ class User(Base):
     wallet = relationship("UserWallet", back_populates="user", uselist=False, cascade="all, delete-orphan")
     memberships = relationship("ArenaMembership", back_populates="user", cascade="all, delete-orphan")
     submissions = relationship("Submission", back_populates="user", cascade="all, delete-orphan")
+    proofs = relationship("Proof", back_populates="user", cascade="all, delete-orphan")
+    reactions = relationship("ProofReaction", back_populates="user", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="user", cascade="all, delete-orphan")
+
+
+    def __init__(self, **kwargs):
+        if ("username" not in kwargs or not kwargs.get("username")) and kwargs.get("email"):
+            kwargs["username"] = kwargs["email"].split("@")[0]
+        super().__init__(**kwargs)
 
 
 class UserProfile(Base):
@@ -53,21 +63,40 @@ class Arena(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
+    title = Column(String, nullable=True)
     description = Column(Text, nullable=True)
+    category = Column(String, default="Habit", nullable=False)
     invite_code = Column(String, unique=True, index=True, nullable=False)
     creator_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     
     proof_type = Column(String, default="image") 
+    entry_deposit = Column(Numeric(10, 2), default=0.00)
     penalty_amount = Column(Numeric(10, 2), default=0.00)
-    deadline_time = Column(String, default="00:00") 
+    daily_penalty = Column(Numeric(10, 2), default=0.00)
+    deadline_time = Column(String, default="00:00")
+    daily_cutoff_time = Column(String, default="00:00")
+    timezone = Column(String, default="UTC", nullable=False)
     is_private = Column(Boolean, default=False)
     icon_url = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
 
     memberships = relationship("ArenaMembership", back_populates="arena", cascade="all, delete-orphan")
     submissions = relationship("Submission", back_populates="arena", cascade="all, delete-orphan")
+    proofs = relationship("Proof", back_populates="arena", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="arena", cascade="all, delete-orphan")
     logbook_entries = relationship("ArenaLogbook", back_populates="arena", cascade="all, delete-orphan")
+
+    def __init__(self, **kwargs):
+        if "title" not in kwargs and "name" in kwargs:
+            kwargs["title"] = kwargs["name"]
+        if "created_by" not in kwargs and "creator_id" in kwargs:
+            kwargs["created_by"] = kwargs["creator_id"]
+        if "daily_penalty" not in kwargs and "penalty_amount" in kwargs:
+            kwargs["daily_penalty"] = kwargs["penalty_amount"]
+        if "daily_cutoff_time" not in kwargs and "deadline_time" in kwargs:
+            kwargs["daily_cutoff_time"] = kwargs["deadline_time"]
+        super().__init__(**kwargs)
 
 
 class ArenaMembership(Base):
@@ -79,10 +108,16 @@ class ArenaMembership(Base):
     
     status = Column(String, default="approved", index=True) 
     role = Column(String, default="member") 
+    current_streak = Column(Integer, default=0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    streak_shields = Column(Integer, default=1, nullable=False)
     joined_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
 
     user = relationship("User", back_populates="memberships")
     arena = relationship("Arena", back_populates="memberships")
+
+
+ArenaMember = ArenaMembership
 
 
 class Message(Base):
@@ -97,6 +132,10 @@ class Message(Base):
 
     arena = relationship("Arena", back_populates="messages")
     user = relationship("User", back_populates="messages")
+
+    __table_args__ = (
+        Index('idx_messages_arena_created', 'arena_id', 'created_at'),
+    )
 
 
 class Submission(Base):
@@ -125,6 +164,7 @@ class Submission(Base):
     __table_args__ = (
         Index('idx_arena_created', 'arena_id', 'submitted_at'),
         Index('idx_user_submissions', 'user_id', 'submitted_at'),
+        Index('idx_arena_user_submitted', 'arena_id', 'user_id', 'submitted_at'),
     )
 
 
@@ -152,7 +192,11 @@ class DailyArenaSheet(Base):
     proof_type = Column(String, nullable=True)  
     updated_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
 
-    __table_args__ = (UniqueConstraint('arena_id', 'user_id', 'date_day', name='_arena_user_day_uc'),)
+    __table_args__ = (
+        UniqueConstraint('arena_id', 'user_id', 'date_day', name='_arena_user_day_uc'),
+        Index('idx_sheet_arena_date_status', 'arena_id', 'date_day', 'status'),
+        Index('idx_sheet_user_arena_status', 'user_id', 'arena_id', 'status'),
+    )
 
 
 class ArenaLogbook(Base):
@@ -213,6 +257,11 @@ class EscrowLedger(Base):
     def amount_inr(self, value: float) -> None:
         self.amount_tribes = value
 
+    __table_args__ = (
+        Index('idx_escrow_arena_created', 'arena_id', 'created_at'),
+        Index('idx_escrow_user_created', 'user_id', 'created_at'),
+    )
+
 
 class ArenaPool(Base):
     """
@@ -266,36 +315,41 @@ class UserWallet(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
     tribes_balance = Column(Float, default=1000.0, nullable=False)
+    balance = Column(Numeric(14, 2), default=1000.0, nullable=False)
+    version = Column(Integer, default=1, nullable=False)
     is_frozen = Column(Boolean, default=False, nullable=False)
     referral_count = Column(Integer, default=0, nullable=False)
     streak_shields = Column(Integer, default=1, nullable=False)
     last_reward_won_at = Column(DateTime(timezone=True), nullable=True)
     pending_penalty = Column(Boolean, default=False, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, server_default=func.now())
 
     user = relationship("User", back_populates="wallet")
 
     @property
     def kudos_balance(self) -> float:
-        return self.tribes_balance
+        return float(self.tribes_balance)
 
     @kudos_balance.setter
     def kudos_balance(self, value: float) -> None:
-        self.tribes_balance = value
+        self.tribes_balance = float(value)
+        self.balance = float(value)
 
     @property
     def balance_inr(self) -> float:
-        return self.tribes_balance
+        return float(self.tribes_balance)
 
     @balance_inr.setter
     def balance_inr(self, value: float) -> None:
-        self.tribes_balance = value
+        self.tribes_balance = float(value)
+        self.balance = float(value)
 
 
 
 class KudosLedger(Base):
     """
     Double-Entry Ledger tracking all Tribes digital currency transactions.
-    Types: WELCOME_BONUS, PENALTY_DEDUCTION, ARENA_VAULT_DEPOSIT, CONSISTENCY_PAYOUT, REFERRAL_BONUS.
+    Types: ESCROW_LOCK, ESCROW_REFUND, PENALTY_DEDUCT, WEEKLY_DIVIDEND, STREAK_FREEZE_BUY, etc.
     """
     __tablename__ = "kudos_ledger"
 
@@ -303,12 +357,77 @@ class KudosLedger(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
     arena_id = Column(Integer, ForeignKey("arenas.id", ondelete="CASCADE"), index=True, nullable=True)
     transaction_type = Column(String, nullable=False, index=True)
+    amount = Column(Float, default=0.0, nullable=False)
     amount_kudos = Column(Float, nullable=False)
     debit_account = Column(String, nullable=False)
     credit_account = Column(String, nullable=False)
     idempotency_key = Column(String, unique=True, index=True, nullable=False)
+    reference_id = Column(String, nullable=True)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+
+    __table_args__ = (
+        Index('idx_kudos_arena_created', 'arena_id', 'created_at'),
+        Index('idx_kudos_user_created', 'user_id', 'created_at'),
+    )
+
+
+class Proof(Base):
+    """
+    Proof entity enforcing single-proof-per-day-per-arena composite constraint.
+    Supports Keyset cursor pagination (arena_id, created_at DESC, id DESC).
+    """
+    __tablename__ = "proofs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    arena_id = Column(Integer, ForeignKey("arenas.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    submission_date = Column(Date, default=datetime.date.today, index=True, nullable=False)
+    media_url = Column(Text, nullable=False)
+    selfie_url = Column(Text, nullable=True)
+    proof_type = Column(String, default="IMAGE", nullable=False)
+    caption = Column(Text, nullable=True)
+    telemetry_data = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now(), index=True)
+
+    arena = relationship("Arena", back_populates="proofs")
+    user = relationship("User", back_populates="proofs")
+    reactions = relationship("ProofReaction", back_populates="proof", cascade="all, delete-orphan")
+
+    @property
+    def proof_url(self) -> str:
+        return self.media_url
+
+    @proof_url.setter
+    def proof_url(self, value: str) -> None:
+        self.media_url = value
+
+    __table_args__ = (
+        UniqueConstraint('arena_id', 'user_id', 'submission_date', name='uq_proofs_arena_user_date'),
+        Index('idx_proofs_cursor', 'arena_id', created_at.desc(), id.desc()),
+    )
+
+
+class ProofReaction(Base):
+    """
+    User emoji reactions on proofs with single reaction per emoji constraint.
+    """
+    __tablename__ = "proof_reactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    proof_id = Column(Integer, ForeignKey("proofs.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    emoji = Column(String(20), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+
+    proof = relationship("Proof", back_populates="reactions")
+    user = relationship("User", back_populates="reactions")
+
+    __table_args__ = (
+        UniqueConstraint('proof_id', 'user_id', 'emoji', name='uq_proof_reactions_proof_user_emoji'),
+        Index('idx_proof_reactions_proof', 'proof_id'),
+    )
+
 
 # Export Notification Domain Models
 from app.models.notification_models import Notification, PushSubscription, ArenaUnreadTracker
