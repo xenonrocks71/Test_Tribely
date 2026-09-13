@@ -12,7 +12,6 @@ from pydantic import BaseModel
 from app.schemas.schemas import ApiSuccessResponse, ArenaCreate, ArenaResponse, MembershipCreate, MembershipResponse
 from app.services.arena_service import arena_service
 from app.repositories.arena_repository import arena_repository
-from app.services.ledger_service import ledger_service
 
 router = APIRouter(prefix="/api/arenas", tags=["Arenas"])
 
@@ -690,13 +689,20 @@ def get_arena_members_list(
                 continue
                 
             common_count = counts_map.get(member.user_id, 1)
+            avatar_url = (member.user.profile.profile_image_url if getattr(member.user, 'profile', None) else None) or None
 
             results.append({
+                "id": member.id,
                 "user_id": member.user_id,
                 "user_name": member.user.full_name,
                 "full_name": member.user.full_name,
                 "email": member.user.email,
                 "role": member.role or ("admin" if member.user_id == creator_id else "member"),
+                "current_streak": member.current_streak or 0,
+                "streak_days": member.current_streak or 0,
+                "is_active": True,
+                "joined_at": member.joined_at.isoformat() if member.joined_at else None,
+                "user_avatar": avatar_url,
                 "common_arenas_count": common_count
             })
 
@@ -763,7 +769,8 @@ def leave_arena(
         db.commit()
 
         return success_response({
-            "message": message
+            "message": f"Successfully left arena {arena.name}",
+            "transferred_to_admin": new_admin_id
         })
     except HTTPException:
         raise
@@ -771,12 +778,49 @@ def leave_arena(
         db.rollback()
         raise HTTPException(
             status_code=500,
-            detail={
-                "status": "error",
-                "message": f"Failed leaving the arena room: {str(e)}",
-                "error_code": "LEAVE_ARENA_FAILED"
-            }
+            detail={"status": "error", "message": str(e), "error_code": "LEAVE_ARENA_FAILED"}
         )
+
+
+@router.post("/{arena_id}/join", response_model=ApiSuccessResponse)
+def join_arena_direct(
+    arena_id: int,
+    payload: Optional[dict] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Direct endpoint for joining an arena by ID, optionally validating an invite code.
+    If invite_code matches or arena is public, member is approved immediately.
+    If private without invite code, join request is set to pending.
+    """
+    arena = arena_service.get_arena_by_id(db, arena_id=arena_id)
+    invite_code = (payload or {}).get("invite_code", "").strip().upper() if payload else ""
+
+    existing = arena_repository.get_membership(db, user_id=current_user.id, arena_id=arena_id)
+    if existing:
+        if existing.status == "approved":
+            return success_response({"detail": "You are already an approved member of this arena.", "arena_id": arena.id, "membership_status": "approved"})
+        elif existing.status == "pending" and not invite_code:
+            return success_response({"detail": "Your join request is pending evaluation.", "arena_id": arena.id, "membership_status": "pending"})
+
+    if invite_code and invite_code == arena.invite_code:
+        membership = arena_service.join_by_invite_code(db, user_id=current_user.id, invite_code=invite_code)
+    else:
+        membership = arena_service.join_arena(db, user_id=current_user.id, arena_id=arena.id)
+
+    from app.core.managers.websocket_manager import websocket_manager
+    join_payload = {
+        "event_type": "member_joined",
+        "arena_id": arena.id,
+        "user_id": current_user.id,
+        "user_name": current_user.full_name,
+        "status": membership.status
+    }
+    websocket_manager.safe_broadcast_to_arena(arena.id, join_payload)
+
+    msg = f"Joined {arena.name} successfully!" if membership.status == "approved" else "Join request submitted for approval."
+    return success_response({"detail": msg, "arena_id": arena.id, "membership_status": membership.status})
 
 
 @router.post("/{arena_id}/process-deadline", response_model=ApiSuccessResponse)

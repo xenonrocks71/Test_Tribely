@@ -12,8 +12,6 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from app.models.models import Arena, ArenaMembership, Submission, DailyArenaSheet, ArenaLogbook, User, OutboxEvent, EscrowLedger, UserWallet
 from app.core.managers.websocket_manager import websocket_manager
-from app.services.ledger_service import ledger_service
-from app.services.kudos_service import kudos_service
 
 logger = logging.getLogger(__name__)
 

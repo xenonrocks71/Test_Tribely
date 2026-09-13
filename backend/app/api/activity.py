@@ -116,6 +116,8 @@ class SubmissionCreate(BaseModel):
     arena_id: int
     proof_url: str
     client_submitted_at: str | None = None
+    caption: str | None = None
+    telemetry_data: dict | None = None
 
 
 class VoteRequest(BaseModel):
@@ -261,7 +263,7 @@ def submit_proof(
                 submission_date=cycle_info.cycle_date,
                 media_url=proof_content,
                 proof_type=arena.proof_type.upper() if arena.proof_type else "IMAGE",
-                caption=getattr(payload, "caption", None) or "Daily habit proof drop.",
+                caption=payload.caption or "Daily habit proof drop.",
                 created_at=submission_time
             )
             db.add(new_proof)
@@ -404,143 +406,6 @@ def get_submission_voting_deadline(submission_time: datetime, deadline_str: str)
         return same_day_cutoff + timedelta(days=1)
 
 
-def execute_vote_logic(
-    submission_id: int,
-    vote_type_raw: str,
-    db: Session,
-    current_user: User,
-):
-    try:
-        norm_vote = "up" if vote_type_raw in ["up", "upvote"] else "down" if vote_type_raw in ["down", "downvote"] else None
-        if not norm_vote:
-            raise HTTPException(
-                status_code=400,
-                detail={"status": "error", "message": "Invalid vote selection framework.", "error_code": "VOTE_TYPE_INVALID"}
-            )
-
-        submission = db.query(Submission).filter(Submission.id == submission_id).first()
-        if not submission:
-            raise HTTPException(
-                status_code=404,
-                detail={"status": "error", "message": "Target submission not found.", "error_code": "SUBMISSION_NOT_FOUND"}
-            )
-
-        arena = db.query(Arena).filter(Arena.id == submission.arena_id).first()
-        if not arena:
-            raise HTTPException(
-                status_code=404,
-                detail={"status": "error", "message": "Associated arena room not found.", "error_code": "ARENA_NOT_FOUND"}
-            )
-
-        # 1. Enforce voting deadline constraint (voting locked after daily reset)
-        voting_cutoff = get_submission_voting_deadline(submission.submitted_at, arena.deadline_time)
-        now_naive = make_naive(datetime.utcnow())
-        if now_naive > voting_cutoff:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "status": "error",
-                    "message": f"Voting window closed. Proof voting for this cycle ended at {arena.deadline_time}.",
-                    "error_code": "VOTING_WINDOW_CLOSED"
-                }
-            )
-
-        voter_id = current_user.id
-        if submission.upvotes is None: submission.upvotes = 0
-        if submission.downvotes is None: submission.downvotes = 0
-
-        # 2. Check existing vote record for vote toggle / vote switching / single vote enforcement
-        existing_vote = db.query(SubmissionVote).filter(
-            SubmissionVote.submission_id == submission_id,
-            SubmissionVote.user_id == voter_id
-        ).first()
-
-        user_vote_res = None
-
-        if existing_vote:
-            if existing_vote.vote_type == norm_vote:
-                # User clicked their current vote choice again -> Toggle off / un-vote!
-                if norm_vote == "up":
-                    submission.upvotes = max(0, submission.upvotes - 1)
-                else:
-                    submission.downvotes = max(0, submission.downvotes - 1)
-                db.delete(existing_vote)
-                msg = "Vote removed."
-                user_vote_res = None
-            else:
-                # Switch vote from previous choice to new choice
-                if existing_vote.vote_type == "up" and norm_vote == "down":
-                    submission.upvotes = max(0, submission.upvotes - 1)
-                    submission.downvotes += 1
-                elif existing_vote.vote_type == "down" and norm_vote == "up":
-                    submission.downvotes = max(0, submission.downvotes - 1)
-                    submission.upvotes += 1
-                
-                existing_vote.vote_type = norm_vote
-                msg = "Vote choice updated."
-                user_vote_res = norm_vote
-        else:
-            # Create new vote
-            new_vote = SubmissionVote(submission_id=submission_id, user_id=voter_id, vote_type=norm_vote)
-            db.add(new_vote)
-            if norm_vote == "up":
-                submission.upvotes += 1
-            else:
-                submission.downvotes += 1
-            msg = "Vote recorded."
-            user_vote_res = norm_vote
-
-        db.commit()
-
-        # Recalculate Consensus for Automated Absence Flagging
-        total_members = db.query(ArenaMembership).filter(
-            ArenaMembership.arena_id == submission.arena_id,
-            ArenaMembership.status == "approved"
-        ).count()
-
-        if total_members > 0 and submission.downvotes > (total_members / 2):
-            submission.is_absent = True
-            db.commit()
-        else:
-            submission.is_absent = False
-            db.commit()
-
-        # Real-time WS ledger broadcast for live vote tally sync across all connected users
-        broadcast_ledger_event(
-            submission.arena_id,
-            {
-                "event_type": "ledger_update",
-                "arena_id": submission.arena_id,
-                "action": "vote_updated",
-                "submission_id": submission.id,
-                "upvotes": submission.upvotes,
-                "downvotes": submission.downvotes,
-                "is_absent": submission.is_absent,
-            },
-        )
-
-        return success_response({
-            "message": msg,
-            "upvotes": submission.upvotes,
-            "downvotes": submission.downvotes,
-            "is_absent": submission.is_absent,
-            "user_vote": user_vote_res
-        })
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail={"status": "error", "message": f"Vote operation failed: {str(e)}", "error_code": "VOTE_FAILED"})
-
-
-@router.post("/submission/{submission_id}/vote", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
-def vote_submission_by_path(
-    submission_id: int,
-    payload: VoteRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    return execute_vote_logic(submission_id=submission_id, vote_type_raw=payload.vote_type, db=db, current_user=current_user)
 
 
 @router.get("/submission/{submission_id}/voters")
@@ -727,12 +592,12 @@ def get_arena_history(
     except Exception as ce:
         print(f"Error checking active call for arena {arena_id}: {ce}")
 
-    twenty_one_day_stats = None
-    try:
-        from app.services.ledger_service import ledger_service
-        twenty_one_day_stats = ledger_service.get_21_day_arena_ledger_status(db, arena_id)
-    except Exception as le:
-        print(f"Error fetching 21-day ledger stats: {le}")
+    twenty_one_day_stats = {
+        "arena_id": arena_id,
+        "cycle_days": 21,
+        "active_members_count": len(memberships),
+        "status": "active"
+    }
 
     user_is_seized = False  # Account freezing deprecated; users always have posting access
 
@@ -838,7 +703,7 @@ async def send_arena_message(
             event_type="chat_message",
             title=f"💬 {sender_name} in {arena_title}",
             body=content[:120],
-            data_json={"arena_id": arena_id, "url": f"/arena/{arena_id}"}
+            data_json={"arena_id": arena_id, "url": f"/arenas/{arena_id}"}
         )
     except Exception as ne:
         print(f"Notification dispatch warning: {ne}")

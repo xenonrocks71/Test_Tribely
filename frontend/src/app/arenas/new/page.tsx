@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function NewArenaPage() {
-  redirect("/dashboard?create=1");
+  redirect("/arenas");
 }

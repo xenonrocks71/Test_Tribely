@@ -64,8 +64,8 @@ export function useArenaDetails(arenaId: number): UseArenaDetailsResult {
 
       // 2. Fetch squad members if available
       try {
-        const squadRes = await apiClient.get<any>(`/api/arenas/${arenaId}/squad`);
-        const rawMembers = squadRes.data?.members || squadRes.data || [];
+        const squadRes = await apiClient.get<any>(`/api/arenas/${arenaId}/members`);
+        const rawMembers = Array.isArray(squadRes.data) ? squadRes.data : squadRes.data?.members || [];
         const normalizedMembers: ArenaMember[] = rawMembers.map((m: any) => ({
           id: m.id || m.user_id,
           arenaId: arenaId,

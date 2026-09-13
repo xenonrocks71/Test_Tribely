@@ -51,6 +51,7 @@ def resolve_websocket_user_id(token: str | None) -> int:
         raise ValueError(f"Invalid token: {str(e)}")
 
 
+@router.websocket("/{arena_id}")
 @router.websocket("/arena/{arena_id}")
 async def arena_websocket_endpoint(
     websocket: WebSocket, 
@@ -59,7 +60,7 @@ async def arena_websocket_endpoint(
 ):
     """
     Persistent bi-directional communications tunnel for real-time arena tracking.
-    Operates with zero long-held database connections to support millions of concurrent connections.
+    Enforces JWT authentication and private Arena authorization.
     """
     try:
         user_id = resolve_websocket_user_id(token)
@@ -67,6 +68,28 @@ async def arena_websocket_endpoint(
         await websocket.accept()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(e))
         return
+
+    # Enforce private arena authorization check
+    db = SessionLocal()
+    try:
+        from app.models.models import Arena, ArenaMembership
+        arena = db.query(Arena).filter(Arena.id == arena_id).first()
+        if not arena:
+            await websocket.accept()
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Arena not found")
+            return
+        if arena.is_private and arena.creator_id != user_id:
+            mem = db.query(ArenaMembership).filter(
+                ArenaMembership.arena_id == arena_id,
+                ArenaMembership.user_id == user_id,
+                ArenaMembership.status == "approved"
+            ).first()
+            if not mem:
+                await websocket.accept()
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Access denied: Private Arena")
+                return
+    finally:
+        db.close()
 
     await manager.connect(websocket, arena_id)
     manager.connect_user(websocket, user_id)

@@ -26,8 +26,6 @@ from app.models.models import Arena, ArenaMembership, UserWallet, DailyArenaShee
 from app.core.redis import get_redis_client, close_redis_client
 from app.workers.locks import RedisDistributedLock
 from app.services.audit_service import audit_service
-from app.services.wallet_service import wallet_service
-from app.services.ledger_service import ledger_service
 from app.workers.outbox_worker import process_outbox_events_job
 from app.workers.media_worker import process_proof_image_task
 from app.workers.reminder_worker import send_deadline_warning_reminders_task
@@ -113,26 +111,6 @@ async def cron_global_deadline_audit(ctx: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def cron_sunday_vault_distribution(ctx: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Weekly consistency dividend orchestrator:
-    Runs on Sunday midnight to distribute accumulated vault penalties to consistent finishers.
-    """
-    logger.info("[SundayVault] Running weekly consistency dividend distribution...")
-    distributed_arenas = []
-    with SessionLocal() as db:
-        arenas = db.query(Arena).all()
-        for arena in arenas:
-            try:
-                # Distribute weekly vault rewards
-                res = ledger_service.distribute_consistency_rewards(db, arena_id=arena.id)
-                distributed_arenas.append({"arena_id": arena.id, "result": res})
-            except Exception as e:
-                logger.error(f"[SundayVault] Error distributing vault for arena #{arena.id}: {e}")
-
-    return {"status": "completed", "distributed_arenas": distributed_arenas}
-
-
 async def startup(ctx: Dict[str, Any]) -> None:
     logger.info("[ArqWorker] Launching Tribely Distributed Task Worker...")
     ctx["redis"] = await get_redis_client()
@@ -151,7 +129,6 @@ class WorkerSettings:
     ]
     cron_jobs = [
         cron(cron_global_deadline_audit, minute={0, 15, 30, 45}),
-        cron(cron_sunday_vault_distribution, weekday="sun", hour=23, minute=59),
         cron(process_outbox_events_job, second={0, 10, 20, 30, 40, 50}),
         cron(send_deadline_warning_reminders_task, minute={50}),
     ]
