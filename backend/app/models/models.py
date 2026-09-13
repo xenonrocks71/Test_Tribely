@@ -160,6 +160,7 @@ class Submission(Base):
 
     arena = relationship("Arena", back_populates="submissions")
     user = relationship("User", back_populates="submissions")
+    comments = relationship("SubmissionComment", back_populates="submission", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index('idx_arena_created', 'arena_id', 'submitted_at'),
@@ -179,6 +180,24 @@ class SubmissionVote(Base):
     voted_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
 
     __table_args__ = (UniqueConstraint('submission_id', 'user_id', name='_user_submission_vote_uc'),)
+
+
+
+class SubmissionComment(Base):
+    __tablename__ = "submission_comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    submission_id = Column(Integer, ForeignKey("submissions.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, index=True, server_default=func.now())
+
+    submission = relationship("Submission", back_populates="comments")
+    user = relationship("User")
+
+    __table_args__ = (
+        Index('idx_sub_comments_created', 'submission_id', 'created_at'),
+    )
 
 
 class DailyArenaSheet(Base):

@@ -107,3 +107,17 @@ export interface PresignedUploadResponse {
   key: string;
   fields?: Record<string, string>;
 }
+
+export interface ProofComment {
+  id: string;
+  rawId?: number;
+  proofId: string;
+  submissionId?: number;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  text: string;
+  timeAgo: string;
+  likes: number;
+  createdAt?: string | null;
+}

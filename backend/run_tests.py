@@ -21,8 +21,11 @@ def safe_load_setuptools_entrypoints(self, group, name=None):
 pluggy.PluginManager.load_setuptools_entrypoints = safe_load_setuptools_entrypoints
 
 import pytest
+from app.core.database import sync_engine, Base
+import app.models.models  # Register all models
 
 if __name__ == "__main__":
+    Base.metadata.create_all(bind=sync_engine)
     args = sys.argv[1:] if len(sys.argv) > 1 else ["tests/", "-v"]
     exit_code = pytest.main(args)
     sys.exit(exit_code)

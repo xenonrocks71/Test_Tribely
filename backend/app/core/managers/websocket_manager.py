@@ -233,6 +233,23 @@ class WebSocketManager:
             for ws in stale:
                 self.user_connections[user_id].discard(ws)
 
+    async def broadcast_to_all_users(self, message: Dict[str, Any]) -> None:
+        """Broadcast payload to all active user-scoped WebSocket connections."""
+        if not self.user_connections:
+            return
+        payload = json.dumps(message)
+        for user_id, sockets in list(self.user_connections.items()):
+            stale = []
+            for ws in list(sockets):
+                try:
+                    await asyncio.wait_for(ws.send_text(payload), timeout=1.5)
+                except Exception:
+                    stale.append(ws)
+            for ws in stale:
+                sockets.discard(ws)
+            if not sockets:
+                self.user_connections.pop(user_id, None)
+
     def _get_or_create_room(self, arena_id: int) -> RoomConnectionPool:
 
         """Retrieve existing room pool or instantiate new room pool."""

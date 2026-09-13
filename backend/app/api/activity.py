@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import case, literal, or_
+from sqlalchemy import case, literal, or_, func
 from pydantic import BaseModel
 from typing import Dict, Any, Tuple, Optional, List
 from datetime import datetime, time, timedelta, timezone
@@ -11,7 +11,7 @@ from app.api.deps import get_current_user
 from app.models.models import (
     Arena, Submission, Message, User, UserProfile,
     ArenaMembership, SubmissionVote, DailyArenaSheet, UserWallet,
-    Proof, ProofReaction
+    Proof, ProofReaction, SubmissionComment
 )
 
 from app.api.websocket import manager as websocket_manager
@@ -837,6 +837,7 @@ def get_arena_social_proof_feed(
     sub_ids = [s.id for s in submissions]
     user_votes = {}
     reaction_counts = {sid: {"fire": 0, "electric": 0, "respect": 0, "target": 0, "up": 0, "down": 0} for sid in sub_ids}
+    comment_counts = {}
 
     if sub_ids:
         all_votes = db.query(SubmissionVote).filter(SubmissionVote.submission_id.in_(sub_ids)).all()
@@ -846,6 +847,13 @@ def get_arena_social_proof_feed(
                 reaction_counts[v.submission_id][v_type] += 1
             if v.user_id == current_user.id:
                 user_votes[v.submission_id] = v.vote_type
+
+        counts = db.query(
+            SubmissionComment.submission_id,
+            func.count(SubmissionComment.id)
+        ).filter(SubmissionComment.submission_id.in_(sub_ids))\
+         .group_by(SubmissionComment.submission_id).all()
+        comment_counts = {sid: count for sid, count in counts}
 
     cards = []
     for s in submissions:
@@ -868,7 +876,9 @@ def get_arena_social_proof_feed(
             "upvotes": s.upvotes,
             "downvotes": s.downvotes,
             "reactions": reaction_counts.get(s.id, {}),
-            "current_user_reaction": user_votes.get(s.id)
+            "current_user_reaction": user_votes.get(s.id),
+            "comments_count": comment_counts.get(s.id, 0),
+            "commentsCount": comment_counts.get(s.id, 0)
         })
 
     return success_response({
@@ -1010,6 +1020,173 @@ async def react_to_submission(
         print(f"Reaction broadcast notice: {e}")
 
     return success_response(broadcast_data)
+
+
+class CommentCreateRequest(BaseModel):
+    content: Optional[str] = None
+    text: Optional[str] = None
+
+
+@router.get("/submissions/{submission_id}/comments")
+@router.get("/proofs/{submission_id}/comments")
+def get_submission_comments(
+    submission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Fetch all peer discussion comments for a habit proof submission in chronological order.
+    """
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    proof = db.query(Proof).filter(Proof.id == submission_id).first() if not submission else None
+
+    if not submission and not proof:
+        raise HTTPException(status_code=404, detail="Submission or proof not found.")
+
+    comments = (
+        db.query(SubmissionComment)
+        .options(joinedload(SubmissionComment.user).joinedload(User.profile))
+        .filter(SubmissionComment.submission_id == submission_id)
+        .order_by(SubmissionComment.created_at.asc())
+        .all()
+    )
+
+    now = datetime.utcnow()
+    formatted = []
+    for c in comments:
+        author = c.user
+        profile = author.profile if author else None
+        avatar = profile.profile_image_url if profile and profile.profile_image_url else None
+        if not avatar and author:
+            avatar = f"https://api.dicebear.com/7.x/avataaars/svg?seed={author.id}"
+
+        c_time = c.created_at.replace(tzinfo=None) if c.created_at and c.created_at.tzinfo else c.created_at
+        if c_time:
+            diff = now - c_time
+            secs = max(0, diff.total_seconds())
+            if secs < 60:
+                time_ago = "Just now"
+            elif secs < 3600:
+                time_ago = f"{int(secs // 60)}m ago"
+            elif secs < 86400:
+                time_ago = f"{int(secs // 3600)}h ago"
+            else:
+                time_ago = f"{int(diff.days)}d ago"
+        else:
+            time_ago = "Just now"
+
+        formatted.append({
+            "id": f"c_{c.id}",
+            "rawId": c.id,
+            "proofId": str(submission_id),
+            "submissionId": submission_id,
+            "userId": str(c.user_id),
+            "userName": author.full_name if author else f"Member #{c.user_id}",
+            "userAvatar": avatar or f"https://api.dicebear.com/7.x/avataaars/svg?seed={c.user_id}",
+            "text": c.content,
+            "timeAgo": time_ago,
+            "likes": 0,
+            "createdAt": c.created_at.isoformat() if c.created_at else None
+        })
+
+    return success_response({
+        "submission_id": submission_id,
+        "comments": formatted,
+        "total": len(formatted)
+    })
+
+
+@router.post("/submissions/{submission_id}/comments")
+@router.post("/proofs/{submission_id}/comments")
+async def create_submission_comment(
+    submission_id: int,
+    payload: CommentCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Post a discussion reply / comment on a habit proof drop.
+    Persists to database and broadcasts real-time WebSocket update to peers.
+    """
+    raw_text = (payload.content or payload.text or "").strip()
+    if not raw_text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Comment content cannot be empty."
+        )
+
+    if len(raw_text) > 1000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Comment exceeds maximum length of 1000 characters."
+        )
+
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    proof = db.query(Proof).filter(Proof.id == submission_id).first() if not submission else None
+
+    if not submission and not proof:
+        raise HTTPException(status_code=404, detail="Submission or proof not found.")
+
+    arena_id = submission.arena_id if submission else proof.arena_id
+
+    new_comment = SubmissionComment(
+        submission_id=submission_id,
+        user_id=current_user.id,
+        content=raw_text,
+        created_at=datetime.utcnow()
+    )
+    db.add(new_comment)
+    db.commit()
+    db.refresh(new_comment)
+
+    avatar = get_user_avatar_url(db, current_user.id)
+    if not avatar:
+        avatar = f"https://api.dicebear.com/7.x/avataaars/svg?seed={current_user.id}"
+
+    comment_obj = {
+        "id": f"c_{new_comment.id}",
+        "rawId": new_comment.id,
+        "proofId": str(submission_id),
+        "submissionId": submission_id,
+        "userId": str(current_user.id),
+        "userName": current_user.full_name or f"Member #{current_user.id}",
+        "userAvatar": avatar,
+        "text": new_comment.content,
+        "timeAgo": "Just now",
+        "likes": 0,
+        "createdAt": new_comment.created_at.isoformat() if new_comment.created_at else None
+    }
+
+    # Total comments count for this submission
+    total_comments = db.query(func.count(SubmissionComment.id)).filter(
+        SubmissionComment.submission_id == submission_id
+    ).scalar() or 1
+
+    broadcast_data = {
+        "event_type": "proof_comment_added",
+        "proof_id": str(submission_id),
+        "submission_id": submission_id,
+        "arena_id": arena_id,
+        "comment": comment_obj,
+        "comments_count": total_comments,
+        "commentsCount": total_comments
+    }
+
+    try:
+        await websocket_manager.broadcast_to_arena(arena_id, broadcast_data)
+    except Exception as e:
+        print(f"[WebSocket] Error broadcasting comment to arena: {e}")
+
+    try:
+        await websocket_manager.broadcast_to_all_users(broadcast_data)
+    except Exception as e:
+        print(f"[WebSocket] Error broadcasting comment to all users: {e}")
+
+    return success_response({
+        "comment": comment_obj,
+        "submission_id": submission_id,
+        "comments_count": total_comments
+    })
 
 
 @router.post("/submission/{submission_id}/vote", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
@@ -1410,13 +1587,22 @@ def get_user_social_feed(
         .limit(limit)\
         .all()
 
-    # User's existing votes on these submissions
+    # User's existing votes and comments on these submissions
     sub_ids = [s.id for s in submissions]
     user_votes = db.query(SubmissionVote).filter(
         SubmissionVote.user_id == current_user.id,
         SubmissionVote.submission_id.in_(sub_ids)
     ).all() if sub_ids else []
     user_vote_map = {v.submission_id: v.vote_type for v in user_votes}
+
+    comment_counts = {}
+    if sub_ids:
+        counts = db.query(
+            SubmissionComment.submission_id,
+            func.count(SubmissionComment.id)
+        ).filter(SubmissionComment.submission_id.in_(sub_ids))\
+         .group_by(SubmissionComment.submission_id).all()
+        comment_counts = {sid: count for sid, count in counts}
 
     now = datetime.utcnow()
     twenty_four_hours_ago = now - timedelta(hours=24)
@@ -1481,6 +1667,8 @@ def get_user_social_feed(
                 "target": sub.downvotes or 0
             },
             "current_user_reaction": user_vote_map.get(sub.id),
+            "comments_count": comment_counts.get(sub.id, 0),
+            "commentsCount": comment_counts.get(sub.id, 0),
         })
 
     has_more = (offset + limit) < total_count

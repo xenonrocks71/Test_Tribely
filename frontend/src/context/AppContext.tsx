@@ -475,6 +475,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
   }, []);
 
+  // Real-time synchronization of peer comments on proof submissions
+  useEffect(() => {
+    const handleCommentAdded = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const data = customEvent.detail;
+      if (!data || !data.proof_id || !data.comment) return;
+
+      const proofId = String(data.proof_id);
+      const incomingComment = data.comment as ProofComment;
+
+      setProofComments((prev) => {
+        const existing = prev[proofId] || [];
+        if (existing.some((c) => c.id === incomingComment.id)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [proofId]: [...existing, incomingComment],
+        };
+      });
+
+      setFeedPosts((prev) =>
+        prev.map((p) =>
+          p.id === proofId
+            ? { ...p, commentsCount: data.comments_count ?? (p.commentsCount || 0) + 1 }
+            : p
+        )
+      );
+    };
+
+    window.addEventListener("tribely:proof_comment_added", handleCommentAdded);
+    return () => {
+      window.removeEventListener("tribely:proof_comment_added", handleCommentAdded);
+    };
+  }, []);
+
   const markStoryAsViewed = useCallback((storyUserId: string) => {
     if (!storyUserId || storyUserId === "self") return;
     setViewedStoryUserIds((prev) => {
@@ -579,7 +615,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         target: p.downvotes || 0,
       },
       currentUserReaction: (p.current_user_reaction as any) || null,
-      commentsCount: 0,
+      commentsCount: (p as any).comments_count ?? (p as any).commentsCount ?? 0,
       timeAgo: timeAgoStr,
       proofType: computedProofType,
     };
@@ -865,7 +901,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const openInstagramStoryExport = () => { triggerHaptic([20, 30]); setIsInstagramStoryExportOpen(true); };
   const closeInstagramStoryExport = () => setIsInstagramStoryExportOpen(false);
 
-  const openProofReply = (post: ProofPost) => { triggerHaptic([15]); setActiveProofForReply(post); };
+  const openProofReply = (post: ProofPost) => {
+    triggerHaptic([15]);
+    setActiveProofForReply(post);
+    const subId = post.rawSubmissionId || post.id;
+    if (subId) {
+      tribelyService.fetchProofComments(subId).then((comments) => {
+        if (comments) {
+          setProofComments((prev) => ({ ...prev, [post.id]: comments }));
+          setFeedPosts((prev) =>
+            prev.map((p) =>
+              p.id === post.id ? { ...p, commentsCount: comments.length } : p
+            )
+          );
+        }
+      }).catch(() => {});
+    }
+  };
   const closeProofReply = () => setActiveProofForReply(null);
 
   // ── Reactions (optimistic + real) ──────────────────────────────────────────
@@ -1027,24 +1079,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const addProofComment = (proofId: string, text: string) => {
+  const addProofComment = async (proofId: string, text: string) => {
     if (!text.trim()) return;
     triggerHaptic([20]);
-    const newComment: ProofComment = {
-      id: `c_${Date.now()}`,
+    const cleanText = text.trim();
+    const tempId = `c_temp_${Date.now()}`;
+    const optimisticComment: ProofComment = {
+      id: tempId,
       proofId,
       userId: user.id,
       userName: user.name,
       userAvatar: user.avatar,
-      text: text.trim(),
+      text: cleanText,
       timeAgo: "Just now",
       likes: 0,
     };
-    setProofComments((prev) => ({ ...prev, [proofId]: [...(prev[proofId] || []), newComment] }));
+    setProofComments((prev) => ({ ...prev, [proofId]: [...(prev[proofId] || []), optimisticComment] }));
     setFeedPosts((prev) =>
-      prev.map((p) => (p.id === proofId ? { ...p, commentsCount: p.commentsCount + 1 } : p))
+      prev.map((p) => (p.id === proofId ? { ...p, commentsCount: (p.commentsCount || 0) + 1 } : p))
     );
     showToast("💬 Comment posted to habit thread!", "success");
+
+    try {
+      const serverComment = await tribelyService.postProofComment(proofId, cleanText);
+      if (serverComment) {
+        setProofComments((prev) => {
+          const currentList = prev[proofId] || [];
+          return {
+            ...prev,
+            [proofId]: currentList.map((c) => (c.id === tempId ? serverComment : c)),
+          };
+        });
+      }
+    } catch (e) {
+      console.error("Error posting proof comment:", e);
+    }
   };
 
   const postDailyNote = (text: string) => {

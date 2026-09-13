@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from "@/lib/api-client";
+import { ProofComment } from "@/types/tribely";
 
 // -----------------------------------------------------------------------------
 // Type Definitions
@@ -125,6 +126,8 @@ export interface ApiFeedPost {
   reactions: Record<string, number>;
   current_user_reaction?: string | null;
   text_reflection?: string;
+  comments_count?: number;
+  commentsCount?: number;
 }
 
 export interface ApiSquadMember {
@@ -526,6 +529,41 @@ class TribelyService {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  async fetchProofComments(submissionId: string | number): Promise<ProofComment[]> {
+    try {
+      const res = await apiClient.get<{
+        status: string;
+        data: {
+          comments: ProofComment[];
+          total: number;
+        };
+      }>(`/api/activity/submissions/${submissionId}/comments`);
+      return res.data?.comments || [];
+    } catch {
+      return [];
+    }
+  }
+
+  async postProofComment(
+    submissionId: string | number,
+    text: string
+  ): Promise<ProofComment | null> {
+    try {
+      const res = await apiClient.post<{
+        status: string;
+        data: {
+          comment: ProofComment;
+          comments_count: number;
+        };
+      }>(`/api/activity/submissions/${submissionId}/comments`, {
+        content: text,
+      });
+      return res.data?.comment || null;
+    } catch {
+      return null;
     }
   }
 

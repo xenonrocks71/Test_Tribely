@@ -91,6 +91,12 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     ws.onmessage = (evt) => {
       try {
         const data = JSON.parse(evt.data);
+        if (data.event_type === "proof_comment_added") {
+          window.dispatchEvent(
+            new CustomEvent("tribely:proof_comment_added", { detail: data })
+          );
+        }
+
         if (data.event_type === "unread_update") {
           const targetArena = data.arena_id;
           const newCount = data.unread_count || 1;

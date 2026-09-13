@@ -152,6 +152,12 @@ export function useArenaDetails(arenaId: number): UseArenaDetailsResult {
             }
             break;
 
+          case "proof_comment_added":
+            window.dispatchEvent(
+              new CustomEvent("tribely:proof_comment_added", { detail: data })
+            );
+            break;
+
           default:
             break;
         }
