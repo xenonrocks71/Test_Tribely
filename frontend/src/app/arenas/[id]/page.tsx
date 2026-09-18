@@ -44,6 +44,9 @@ import { StakingModal } from "@/components/arenas/StakingModal";
 import { ConsistencyLeaderboard } from "@/components/arenas/ConsistencyLeaderboard";
 import { TribeChatDrawer } from "@/components/chat/TribeChatDrawer";
 import { ProofReplyModal } from "@/components/feed/ProofReplyModal";
+import { AvatarWithFallback } from "@/components/ui/AvatarWithFallback";
+import { ArenaStoryViewerModal, SpotterStoryProof } from "@/components/arenas/ArenaStoryViewerModal";
+import { resolveBackendUrl } from "@/lib/api-client";
 
 interface ArenaFeedItem {
   id: number;
@@ -351,6 +354,12 @@ function ArenaDetailContent() {
   const [activeSection, setActiveSection] = useState<"overview" | "members" | "escrow" | "proofs" | "ledger">("overview");
   const [isStakingModalOpen, setIsStakingModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [selectedSpotterStory, setSelectedSpotterStory] = useState<{
+    spotter: ApiSquadMember;
+    proofs: SpotterStoryProof[];
+  } | null>(null);
+  const [pendingJoinRequests, setPendingJoinRequests] = useState<any[]>([]);
+  const [isProcessingAdminAction, setIsProcessingAdminAction] = useState<number | null>(null);
 
   // Load arena details, complete chronological proof feed & ledger room roster
   const loadSquadData = useCallback(async () => {
@@ -565,6 +574,49 @@ function ArenaDetailContent() {
     setTimeout(() => setCopiedTxId(null), 2000);
   };
 
+  // Fetch pending join requests if the user is an admin / creator
+  useEffect(() => {
+    if (!arenaId) return;
+    const isAdmin =
+      arenaDetail?.user_role === "admin" ||
+      arenaDetail?.creator_id === Number(user.id);
+    if (isAdmin) {
+      tribelyService
+        .fetchPendingJoinRequests(arenaId)
+        .then((reqs) => {
+          if (Array.isArray(reqs)) setPendingJoinRequests(reqs);
+        })
+        .catch(() => {});
+    }
+  }, [arenaId, arenaDetail?.user_role, arenaDetail?.creator_id, user.id]);
+
+  const handleApprovePendingRequest = async (targetUserId: number) => {
+    triggerHaptic([15]);
+    setIsProcessingAdminAction(targetUserId);
+    const res = await tribelyService.approveJoinRequest(arenaId, targetUserId);
+    if (res.success) {
+      showToast(res.message || "Member approved!", "success");
+      setPendingJoinRequests((prev) => prev.filter((r) => r.user_id !== targetUserId));
+      loadSquadData();
+    } else {
+      showToast(res.message || "Failed to approve request", "info");
+    }
+    setIsProcessingAdminAction(null);
+  };
+
+  const handleRejectPendingRequest = async (targetUserId: number) => {
+    triggerHaptic([15]);
+    setIsProcessingAdminAction(targetUserId);
+    const res = await tribelyService.rejectJoinRequest(arenaId, targetUserId);
+    if (res.success) {
+      showToast(res.message || "Request rejected", "info");
+      setPendingJoinRequests((prev) => prev.filter((r) => r.user_id !== targetUserId));
+    } else {
+      showToast(res.message || "Failed to reject request", "info");
+    }
+    setIsProcessingAdminAction(null);
+  };
+
   if (isLoading && !arenaDetail) {
     return (
       <div className="min-h-screen bg-[#F8F9FA] dark:bg-[#121212] text-neutral-900 dark:text-white flex flex-col items-center justify-center p-4">
@@ -572,6 +624,107 @@ function ArenaDetailContent() {
         <p className="text-xs text-neutral-500 dark:text-neutral-400 font-medium">
           Loading cohort arena...
         </p>
+      </div>
+    );
+  }
+
+  // ── PRIVATE ARENA AUTHORIZATION GATE ──
+  const isPrivateGated =
+    Boolean((arenaDetail as any)?.is_pending_private_gate) ||
+    Boolean(
+      arenaDetail?.is_private &&
+      !arenaDetail?.is_joined &&
+      arenaDetail?.creator_id !== Number(user.id)
+    );
+
+  const isPendingApproval =
+    arenaDetail?.membership_status === "pending" ||
+    (arenaDetail as any)?.membership_status === "pending";
+
+  if (isPrivateGated) {
+    return (
+      <div className="min-h-screen bg-[#F8F9FA] dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 flex flex-col">
+        {/* Fixed Top App Bar */}
+        <header className="fixed top-0 inset-x-0 z-40 bg-white/95 dark:bg-[#1E1E1E]/95 backdrop-blur-md border-b border-[#E8EAED] dark:border-[#303134] px-4 sm:px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => router.push("/feed")}
+              className="p-1.5 -ml-1.5 rounded-full hover:bg-neutral-100 dark:hover:bg-[#2A2B2E] text-neutral-600 dark:text-neutral-300 transition cursor-pointer flex items-center gap-1.5"
+              title="Back to Feed"
+            >
+              <ArrowLeft className="w-5 h-5" />
+              <span className="text-xs font-semibold">Feed</span>
+            </button>
+            <h1 className="text-sm font-semibold text-neutral-900 dark:text-white">
+              {arenaDetail?.name || "Private Arena"}
+            </h1>
+          </div>
+          <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/15 border border-amber-500/25 px-2.5 py-0.5 rounded-full">
+            Private Squad
+          </span>
+        </header>
+
+        {/* Gate Body */}
+        <main className="flex-1 flex items-center justify-center p-4 pt-24 pb-12">
+          <div className="w-full max-w-md bg-white dark:bg-[#1E1E1E] border border-[#E8EAED] dark:border-[#303134] rounded-3xl p-6 sm:p-8 text-center space-y-5 shadow-xl">
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-500 flex items-center justify-center mx-auto">
+              <Lock className="w-8 h-8" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-lg font-bold tracking-tight text-neutral-900 dark:text-white">
+                {isPendingApproval ? "Join Request Pending Admin Approval" : "Private Squad Access Restricted"}
+              </h2>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed max-w-sm mx-auto">
+                {isPendingApproval
+                  ? "Your request to join this private arena has been submitted to the squad administrator. To maintain cohort accountability, feed drops, spotter lists, and daily proof submissions remain locked until approved."
+                  : "This is a private micro-arena. Membership requires administrator authorization and an escrow commitment to ensure 100% daily accountability."}
+              </p>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-[#F8F9FA] dark:bg-[#202124] border border-[#E8EAED] dark:border-[#303134] flex items-center justify-between text-xs">
+              <span className="text-neutral-500 font-medium">Authorization Status</span>
+              <span
+                className={`px-2.5 py-1 rounded-full font-bold text-[11px] ${
+                  isPendingApproval
+                    ? "bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-800"
+                    : "bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300"
+                }`}
+              >
+                {isPendingApproval ? "⏳ Pending Admin Review" : "🔒 Request Required"}
+              </span>
+            </div>
+
+            <div className="space-y-2 pt-2">
+              {!isPendingApproval && (
+                <button
+                  type="button"
+                  onClick={() => setIsStakingModalOpen(true)}
+                  className="w-full py-3 px-4 rounded-full bg-[#1A73E8] hover:bg-[#1557B0] text-white text-xs font-semibold shadow-md transition cursor-pointer"
+                >
+                  Request to Join Squad (50 Kudos Stake)
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => router.push("/feed")}
+                className="w-full py-2.5 px-4 rounded-full bg-neutral-100 dark:bg-[#2A2B2E] hover:bg-neutral-200 dark:hover:bg-[#323338] text-neutral-700 dark:text-neutral-200 text-xs font-medium transition cursor-pointer"
+              >
+                Explore Other Habit Squads
+              </button>
+            </div>
+          </div>
+        </main>
+
+        <StakingModal
+          isOpen={isStakingModalOpen}
+          onClose={() => setIsStakingModalOpen(false)}
+          arenaId={arenaId}
+          arenaTitle={arenaDetail?.name || "Private Arena"}
+          entryStake={arenaDetail?.penalty_amount || 50}
+          isPrivate={true}
+          onSuccess={loadSquadData}
+        />
       </div>
     );
   }
@@ -617,8 +770,8 @@ function ArenaDetailContent() {
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 pb-28">
-      {/* ── 1. GOOGLE WORKSPACE APP BAR ── */}
-      <header className="sticky top-0 z-30 bg-white/90 dark:bg-[#1E1E1E]/90 backdrop-blur-md border-b border-[#E8EAED] dark:border-[#303134] px-4 sm:px-6 py-3 flex items-center justify-between">
+      {/* ── 1. FIXED TOP APP BAR (STABLE ON MOBILE & DESKTOP SCROLL) ── */}
+      <header className="fixed top-0 inset-x-0 z-40 bg-white/95 dark:bg-[#1E1E1E]/95 backdrop-blur-md border-b border-[#E8EAED] dark:border-[#303134] px-4 sm:px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -674,7 +827,69 @@ function ArenaDetailContent() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto w-full px-4 sm:px-6 py-5 space-y-6">
+      <main className="max-w-5xl mx-auto w-full px-4 sm:px-6 pt-20 pb-32 space-y-6">
+        {/* ── 0. ADMIN PENDING JOIN REQUESTS BANNER ── */}
+        {pendingJoinRequests.length > 0 && (
+          <section className="w-full">
+            <div className="rounded-2xl sm:rounded-3xl border border-amber-500/30 bg-amber-500/10 p-4 sm:p-5 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-amber-500" />
+                  <h3 className="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">
+                    Pending Membership Requests ({pendingJoinRequests.length})
+                  </h3>
+                </div>
+                <span className="text-[10px] font-medium text-neutral-500 dark:text-neutral-400">
+                  Admin Approval Required
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {pendingJoinRequests.map((req) => (
+                  <div
+                    key={req.id || req.user_id}
+                    className="p-3 rounded-xl bg-white dark:bg-[#1E1E1E] border border-amber-500/20 flex items-center justify-between gap-3 shadow-xs"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <AvatarWithFallback
+                        name={req.user_name}
+                        sizeClass="w-9 h-9"
+                        textClass="text-[11px] font-bold"
+                      />
+                      <div className="min-w-0">
+                        <span className="text-xs font-semibold text-neutral-900 dark:text-white block truncate">
+                          {req.user_name}
+                        </span>
+                        <span className="text-[10px] text-neutral-500 block">
+                          Requested to join this squad
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        disabled={isProcessingAdminAction === req.user_id}
+                        onClick={() => handleApprovePendingRequest(req.user_id)}
+                        className="px-3.5 py-1.5 rounded-full bg-[#0F9D58] hover:bg-[#0B8043] text-white text-xs font-semibold transition cursor-pointer shadow-xs disabled:opacity-50"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isProcessingAdminAction === req.user_id}
+                        onClick={() => handleRejectPendingRequest(req.user_id)}
+                        className="px-2.5 py-1.5 rounded-full bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 text-xs font-medium transition cursor-pointer disabled:opacity-50"
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
         {/* ── 2. HERO SQUAD CARD ── */}
         <section className="w-full">
           <div className="rounded-2xl sm:rounded-3xl border border-[#E8EAED] dark:border-[#303134] bg-white dark:bg-[#1E1E1E] p-5 sm:p-6 shadow-xs space-y-4">
@@ -875,24 +1090,41 @@ function ArenaDetailContent() {
                   return (
                     <div
                       key={member.user_id}
-                      className="flex flex-col items-center shrink-0 w-14 text-center cursor-pointer"
-                      onClick={() => setActiveSection("members")}
+                      className="flex flex-col items-center shrink-0 w-14 text-center cursor-pointer group"
+                      onClick={() => {
+                        if (hasCheckedIn) {
+                          triggerHaptic([15]);
+                          const userProofs = proofFeed.filter((p) => p.user_id === member.user_id);
+                          setSelectedSpotterStory({
+                            spotter: member,
+                            proofs: userProofs.map((p) => ({
+                              id: p.id,
+                              proof_url: p.proof_url,
+                              submitted_at: p.submitted_at,
+                              ai_audit_notes: p.ai_audit_notes,
+                              upvotes: p.upvotes,
+                              comments_count: p.comments_count,
+                              proof_type: p.proof_type,
+                            })),
+                          });
+                        } else if (!member.is_current_user) {
+                          handleNudgeMember(member);
+                        }
+                      }}
                     >
                       <div className="relative">
                         <div
-                          className={`w-11 h-11 rounded-full p-0.5 transition duration-200 ${
+                          className={`w-11 h-11 rounded-full p-0.5 transition duration-200 group-hover:scale-105 ${
                             hasCheckedIn
-                              ? "border-2 border-[#0F9D58]"
+                              ? "border-2 border-[#0F9D58] shadow-[0_0_8px_rgba(15,157,88,0.3)]"
                               : "border border-dashed border-neutral-300 dark:border-neutral-600"
                           }`}
                         >
-                          <img
-                            src={
-                              member.user_avatar ||
-                              `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.user_id}`
-                            }
-                            alt={member.user_name}
-                            className="w-full h-full rounded-full object-cover bg-neutral-100 dark:bg-neutral-900"
+                          <AvatarWithFallback
+                            avatarUrl={member.user_avatar}
+                            name={member.user_name}
+                            sizeClass="w-full h-full"
+                            textClass="text-[10px] font-bold"
                           />
                         </div>
                         <span
@@ -1276,7 +1508,22 @@ function ArenaDetailContent() {
                       key={member.user_id}
                       className="flex flex-col items-center shrink-0 w-16 text-center group cursor-pointer"
                       onClick={() => {
-                        if (!hasCheckedIn && !member.is_current_user) {
+                        if (hasCheckedIn) {
+                          triggerHaptic([15]);
+                          const userProofs = proofFeed.filter((p) => p.user_id === member.user_id);
+                          setSelectedSpotterStory({
+                            spotter: member,
+                            proofs: userProofs.map((p) => ({
+                              id: p.id,
+                              proof_url: p.proof_url,
+                              submitted_at: p.submitted_at,
+                              ai_audit_notes: p.ai_audit_notes,
+                              upvotes: p.upvotes,
+                              comments_count: p.comments_count,
+                              proof_type: p.proof_type,
+                            })),
+                          });
+                        } else if (!member.is_current_user) {
                           handleNudgeMember(member);
                         }
                       }}
@@ -1284,19 +1531,17 @@ function ArenaDetailContent() {
                       {/* Ringed Avatar */}
                       <div className="relative">
                         <div
-                          className={`w-12 h-12 rounded-full p-0.5 transition duration-200 ${
+                          className={`w-12 h-12 rounded-full p-0.5 transition duration-200 group-hover:scale-105 ${
                             hasCheckedIn
-                              ? "border-2 border-[#0F9D58]"
+                              ? "border-2 border-[#0F9D58] shadow-[0_0_8px_rgba(15,157,88,0.3)]"
                               : "border border-dashed border-neutral-300 dark:border-neutral-600"
                           }`}
                         >
-                          <img
-                            src={
-                              member.user_avatar ||
-                              `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.user_id}`
-                            }
-                            alt={member.user_name}
-                            className="w-full h-full rounded-full object-cover bg-neutral-100 dark:bg-neutral-900"
+                          <AvatarWithFallback
+                            avatarUrl={member.user_avatar}
+                            name={member.user_name}
+                            sizeClass="w-full h-full"
+                            textClass="text-[11px] font-bold"
                           />
                         </div>
 
@@ -1320,6 +1565,11 @@ function ArenaDetailContent() {
                           {isNudged ? "Nudged" : "Nudge ⚡"}
                         </span>
                       )}
+                      {hasCheckedIn && (
+                        <span className="text-[9px] font-medium text-[#0F9D58] mt-0.5 flex items-center gap-0.5">
+                          Story ▶
+                        </span>
+                      )}
                     </div>
                   );
                 })}
@@ -1338,14 +1588,32 @@ function ArenaDetailContent() {
                       className="p-3.5 rounded-2xl bg-[#F8F9FA] dark:bg-[#202124] border border-[#E8EAED] dark:border-[#303134] flex items-center justify-between transition"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="relative">
-                          <img
-                            src={
-                              member.user_avatar ||
-                              `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.user_id}`
+                        <div
+                          className={`relative ${hasCheckedIn ? "cursor-pointer group/avatar" : ""}`}
+                          onClick={() => {
+                            if (hasCheckedIn) {
+                              triggerHaptic([15]);
+                              const userProofs = proofFeed.filter((p) => p.user_id === member.user_id);
+                              setSelectedSpotterStory({
+                                spotter: member,
+                                proofs: userProofs.map((p) => ({
+                                  id: p.id,
+                                  proof_url: p.proof_url,
+                                  submitted_at: p.submitted_at,
+                                  ai_audit_notes: p.ai_audit_notes,
+                                  upvotes: p.upvotes,
+                                  comments_count: p.comments_count,
+                                  proof_type: p.proof_type,
+                                })),
+                              });
                             }
-                            alt={member.user_name}
-                            className="w-10 h-10 rounded-full object-cover border border-[#E8EAED] dark:border-[#303134]"
+                          }}
+                        >
+                          <AvatarWithFallback
+                            avatarUrl={member.user_avatar}
+                            name={member.user_name}
+                            sizeClass="w-10 h-10"
+                            textClass="text-xs font-bold"
                           />
                           {hasCheckedIn && (
                             <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#0F9D58] border-2 border-white dark:border-[#202124]" />
@@ -1390,15 +1658,34 @@ function ArenaDetailContent() {
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-medium flex items-center gap-1 ${
-                            hasCheckedIn
-                              ? "bg-[#E6F4EA] dark:bg-[#0F9D58]/15 text-[#0F9D58] border border-[#CEEAD6] dark:border-[#0F9D58]/30"
-                              : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 border border-neutral-200 dark:border-neutral-700"
-                          }`}
-                        >
-                          {hasCheckedIn ? "✓ Checked In" : "⏳ Pending"}
-                        </span>
+                        {hasCheckedIn ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              triggerHaptic([15]);
+                              const userProofs = proofFeed.filter((p) => p.user_id === member.user_id);
+                              setSelectedSpotterStory({
+                                spotter: member,
+                                proofs: userProofs.map((p) => ({
+                                  id: p.id,
+                                  proof_url: p.proof_url,
+                                  submitted_at: p.submitted_at,
+                                  ai_audit_notes: p.ai_audit_notes,
+                                  upvotes: p.upvotes,
+                                  comments_count: p.comments_count,
+                                  proof_type: p.proof_type,
+                                })),
+                              });
+                            }}
+                            className="px-2.5 py-1 rounded-full bg-[#E6F4EA] hover:bg-[#CEEAD6] dark:bg-[#0F9D58]/15 dark:hover:bg-[#0F9D58]/25 text-[#0F9D58] border border-[#CEEAD6] dark:border-[#0F9D58]/30 text-[10px] font-semibold flex items-center gap-1 transition cursor-pointer shadow-xs"
+                          >
+                            <span>Story ▶</span>
+                          </button>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-medium flex items-center gap-1 bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 border border-neutral-200 dark:border-neutral-700">
+                            ⏳ Pending
+                          </span>
+                        )}
 
                         {!hasCheckedIn && !member.is_current_user && (
                           <button
@@ -1570,7 +1857,7 @@ function ArenaDetailContent() {
       </main>
 
       {/* ── 8. FLOATING CHECK-IN BUTTON (STICKY BOTTOM) ── */}
-      <div className="fixed bottom-0 inset-x-0 p-4 bg-gradient-to-t from-[#F8F9FA] via-[#F8F9FA]/90 dark:from-[#121212] dark:via-[#121212]/90 to-transparent z-20 pointer-events-none">
+      <div className="fixed bottom-0 inset-x-0 p-4 bg-gradient-to-t from-[#F8F9FA] via-[#F8F9FA]/90 dark:from-[#121212] dark:via-[#121212]/90 to-transparent z-40 pointer-events-none pb-[max(1rem,env(safe-area-inset-bottom))]">
         <div className="max-w-md lg:max-w-lg mx-auto pointer-events-auto">
           {isLockedIn ? (
             <button
@@ -1701,6 +1988,15 @@ function ArenaDetailContent() {
 
       {/* Proof Reply Modal Mount */}
       <ProofReplyModal />
+
+      {/* Spotter Story Viewer Modal Mount */}
+      <ArenaStoryViewerModal
+        isOpen={Boolean(selectedSpotterStory)}
+        onClose={() => setSelectedSpotterStory(null)}
+        spotter={selectedSpotterStory?.spotter || null}
+        proofs={selectedSpotterStory?.proofs || []}
+        arenaTag={squadTag}
+      />
     </div>
   );
 }

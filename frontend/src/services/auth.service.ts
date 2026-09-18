@@ -42,7 +42,7 @@ export const AUTH_COOKIE_NAME = 'tribely_token';
 
 export function setAuthCookie(token: string): void {
   if (typeof document === 'undefined') return;
-  const maxAge = 60 * 60 * 24 * 30; // 30 days
+  const maxAge = 60 * 60 * 24 * 365; // 365 days (keep logged in until explicit logout)
   document.cookie = `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; path=/; max-age=${maxAge}; SameSite=Lax`;
 }
 

@@ -104,7 +104,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   };
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#F8F9FA] dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 flex antialiased selection:bg-blue-500/20 selection:text-blue-600">
+    <div className="h-screen h-[100dvh] w-full overflow-hidden bg-[#F8F9FA] dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 flex antialiased selection:bg-blue-500/20 selection:text-blue-600">
       {/* ── DESKTOP PERSISTENT COMMAND SIDEBAR (lg: and above) ── */}
       <DesktopSidebar
         onOpenCreateSquad={() => setIsCreateJoinModalOpen(true)}
@@ -112,7 +112,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
       />
 
       {/* ── MAIN APPLICATION VIEWPORT ── */}
-      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
         {/* ── TOP APP HEADER (Visible on all screens, optimized per breakpoint) ── */}
         {/* ── TOP APP HEADER (Clean Google Workspace Style) ── */}
         <header className="shrink-0 z-30 flex items-center justify-between px-4 sm:px-6 py-2.5 bg-white/95 dark:bg-[#1E1E1E]/95 backdrop-blur-md border-b border-neutral-200/80 dark:border-neutral-800 transition-colors">

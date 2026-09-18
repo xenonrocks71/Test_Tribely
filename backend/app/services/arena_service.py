@@ -106,7 +106,9 @@ class ArenaService:
                     detail={
                         "status": "error",
                         "message": "Access denied: This is a private Arena. You must be an approved member to view details.",
-                        "error_code": "PRIVATE_ARENA_ACCESS_DENIED"
+                        "error_code": "PRIVATE_ARENA_ACCESS_DENIED",
+                        "is_private": True,
+                        "membership_status": membership.status if membership else "none"
                     }
                 )
 
@@ -367,6 +369,15 @@ class ArenaService:
                 "message": f"You are already an approved member of {arena.name}.",
                 "membership_status": "approved"
             }
+        if existing and existing.status == "pending":
+            return {
+                "id": arena.id,
+                "arena_id": arena.id,
+                "name": arena.name,
+                "detail": f"Your request to join {arena.name} is currently pending admin review.",
+                "message": f"Your request to join {arena.name} is currently pending admin review.",
+                "membership_status": "pending"
+            }
 
         if invite_code:
             membership = self.join_by_invite_code(db, user_id=user.id, invite_code=invite_code)
@@ -374,19 +385,20 @@ class ArenaService:
             membership = self.join_arena(db, user_id=user.id, arena_id=arena.id)
 
         websocket_manager.safe_broadcast_to_arena(arena.id, {
-            "event_type": "member_joined",
+            "event_type": "member_joined" if membership.status == "approved" else "join_request_created",
             "arena_id": arena.id,
             "user_id": user.id,
             "user_name": user.full_name,
             "status": membership.status
         })
 
+        msg = f"Joined {arena.name} successfully!" if membership.status == "approved" else f"Request to join {arena.name} submitted for admin review."
         return {
             "id": arena.id,
             "arena_id": arena.id,
             "name": arena.name,
-            "detail": f"Joined {arena.name} successfully!",
-            "message": f"Joined {arena.name} successfully!",
+            "detail": msg,
+            "message": msg,
             "membership_status": membership.status
         }
 
@@ -437,7 +449,7 @@ class ArenaService:
         for m in memberships:
             u = m.user
             profile = u.profile if u else None
-            avatar_url = profile.profile_image_url if profile else None
+            avatar_url = (profile.profile_image_url if profile and profile.profile_image_url else (u.avatar_url if u and u.avatar_url else None)) or None
             member_list.append({
                 "user_id": m.user_id,
                 "user_name": u.full_name if u else f"Member #{m.user_id}",
@@ -677,7 +689,7 @@ class ArenaService:
             if not m.user:
                 continue
             common_count = counts_map.get(m.user_id, 1)
-            avatar_url = (m.user.profile.profile_image_url if getattr(m.user, 'profile', None) else None) or None
+            avatar_url = (m.user.profile.profile_image_url if (getattr(m.user, 'profile', None) and m.user.profile.profile_image_url) else getattr(m.user, 'avatar_url', None)) or None
             results.append({
                 "id": m.id,
                 "user_id": m.user_id,
@@ -814,8 +826,9 @@ class ArenaService:
         from app.services.kudos_service import kudos_service
         kudos_service.deduct_arena_join_stake(db, user_id, arena)
 
-        membership = self.arena_repo.join_arena(db, user_id=user_id, arena_id=arena.id, status="approved", role="member")
-        self.notify_arena_admins_on_join(db, arena=arena, user_id=user_id, status="approved")
+        initial_status = "pending" if arena.is_private else "approved"
+        membership = self.arena_repo.join_arena(db, user_id=user_id, arena_id=arena.id, status=initial_status, role="member")
+        self.notify_arena_admins_on_join(db, arena=arena, user_id=user_id, status=initial_status)
         return membership
 
     def leave_arena(self, db: Session, *, arena_id: int, current_user_id: int) -> Dict[str, Any]:
@@ -877,7 +890,13 @@ class ArenaService:
                 "user_id": req.user_id,
                 "arena_id": req.arena_id,
                 "status": req.status,
-                "user_name": req.user.full_name if (req.user and getattr(req.user, 'full_name', None)) else f"Member #{req.user_id}"
+                "user_name": req.user.full_name if (req.user and getattr(req.user, 'full_name', None)) else f"Member #{req.user_id}",
+                "user_handle": (req.user.username if (req.user and getattr(req.user, 'username', None)) else f"user{req.user_id}"),
+                "user_avatar": (
+                    req.user.profile.profile_image_url
+                    if (req.user and getattr(req.user, 'profile', None) and req.user.profile.profile_image_url)
+                    else (getattr(req.user, 'avatar_url', None) if req.user else None)
+                ) or None
             }
             for req in requests
         ]

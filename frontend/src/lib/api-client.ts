@@ -107,7 +107,17 @@ class ApiClient {
     this.instance.interceptors.request.use(
       (config: InternalAxiosRequestConfig) => {
         if (typeof window !== 'undefined') {
-          const token = localStorage.getItem('tribely_token') || localStorage.getItem('token') || localStorage.getItem('access_token');
+          let token = localStorage.getItem('tribely_token') || localStorage.getItem('token') || localStorage.getItem('access_token');
+          if (!token && typeof document !== 'undefined') {
+            const match = document.cookie.match(/(?:^|;\s*)tribely_token=([^;]*)/);
+            if (match) {
+              token = decodeURIComponent(match[1]);
+              try {
+                localStorage.setItem('tribely_token', token);
+                localStorage.setItem('token', token);
+              } catch {}
+            }
+          }
           if (token && config.headers) {
             if (typeof config.headers.set === 'function') {
               config.headers.set('Authorization', `Bearer ${token}`);

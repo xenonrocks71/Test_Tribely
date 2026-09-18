@@ -475,7 +475,26 @@ class TribelyService {
         `/api/arenas/${arenaId}`
       );
       return res.data || null;
-    } catch {
+    } catch (err: any) {
+      const errData = err?.response?.data?.detail || err?.response?.data || {};
+      if (err?.response?.status === 403 && (errData.error_code === "PRIVATE_ARENA_ACCESS_DENIED" || errData.is_private)) {
+        return {
+          id: arenaId,
+          name: "Private Arena",
+          tag: `#PrivateSquad${arenaId}`,
+          is_private: true,
+          is_locked: true,
+          is_joined: false,
+          membership_status: errData.membership_status || "pending",
+          is_pending_private_gate: true,
+          category: "Habit",
+          deadline_time: "11:59 PM",
+          penalty_amount: 50,
+          sprint_vault: 0,
+          members: [],
+          ledger_transactions: [],
+        } as any;
+      }
       return null;
     }
   }
@@ -837,6 +856,15 @@ class TribelyService {
       };
     } catch {
       return { notifications: [], unread_count: 0 };
+    }
+  }
+
+  async fetchPendingJoinRequests(arenaId: number): Promise<any[]> {
+    try {
+      const res = await apiClient.get<{ status: string; data: any[] }>(`/api/admin/arenas/${arenaId}/requests`);
+      return res.data || [];
+    } catch {
+      return [];
     }
   }
 

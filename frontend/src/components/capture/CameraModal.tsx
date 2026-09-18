@@ -216,21 +216,51 @@ export const CameraModal: React.FC = () => {
 
   // Track modal open/close transition so viewMode is ONLY set when modal opens
   const wasOpenRef = useRef(false);
+  const [fallbackArena, setFallbackArena] = useState<HabitArena | null>(null);
 
   useEffect(() => {
     if (isCameraModalOpen && !wasOpenRef.current) {
       wasOpenRef.current = true;
       if (initialCameraArenaId) {
+        setSelectedArenaId(String(initialCameraArenaId));
+        setViewMode("input_proof");
         const target = arenas.find(
           (a) =>
             String(a.id) === String(initialCameraArenaId) ||
             String(a.rawId) === String(initialCameraArenaId)
         );
-        if (target) {
-          setSelectedArenaId(String(target.id));
-          setViewMode("input_proof");
-          return;
+        if (!target) {
+          const numId = Number(initialCameraArenaId);
+          if (!isNaN(numId) && numId > 0) {
+            tribelyService.fetchArenaDetail(numId).then((detail) => {
+              if (detail) {
+                setFallbackArena({
+                  id: String(detail.id),
+                  rawId: detail.id,
+                  name: detail.name,
+                  tag: detail.tag || `#${detail.name}`,
+                  emoji: "🔥",
+                  description: detail.description || "",
+                  memberCount: detail.member_count || 1,
+                  penaltyAmount: detail.penalty_amount || 50,
+                  deadlineTime: detail.deadline_time || "11:59 PM",
+                  countdownMinutesLeft: 60,
+                  vaultPoolKudos: detail.sprint_vault || 0,
+                  multiplierActive: true,
+                  multiplierValue: 1.5,
+                  bannerImage: "",
+                  proofType:
+                    detail.proof_type === "link" || detail.proof_type === "text" || detail.proof_type === "video"
+                      ? detail.proof_type
+                      : "image",
+                  inviteCode: detail.invite_code,
+                  isPrivate: detail.is_private,
+                });
+              }
+            }).catch(() => {});
+          }
         }
+        return;
       }
       // Default to squad selector
       setSelectedArenaId("");
@@ -244,28 +274,58 @@ export const CameraModal: React.FC = () => {
 
   const activeSquadItem = useMemo(() => {
     if (!selectedArenaId) return null;
-    return (
-      squadItems.find(
-        (s) =>
-          String(s.arena.id) === String(selectedArenaId) ||
-          String(s.arena.rawId) === String(selectedArenaId)
-      ) || null
+    const item = squadItems.find(
+      (s) =>
+        String(s.arena.id) === String(selectedArenaId) ||
+        String(s.arena.rawId) === String(selectedArenaId)
     );
-  }, [squadItems, selectedArenaId]);
+    if (item) return item;
+    if (
+      fallbackArena &&
+      (String(fallbackArena.id) === String(selectedArenaId) ||
+        String(fallbackArena.rawId) === String(selectedArenaId))
+    ) {
+      const normProofType = (fallbackArena.proofType || "image").toLowerCase();
+      let proofCategory: "link" | "image" | "video" | "text" = "image";
+      if (normProofType.includes("link") || normProofType.includes("url")) proofCategory = "link";
+      else if (normProofType.includes("video") || normProofType.includes("clip")) proofCategory = "video";
+      else if (normProofType.includes("text") || normProofType.includes("reflection")) proofCategory = "text";
+      else proofCategory = "image";
+
+      return {
+        arena: fallbackArena,
+        isCompleted: false,
+        timeline: parseArenaDeadline(fallbackArena.deadlineTime, tickerTime),
+        proofCategory,
+      };
+    }
+    return null;
+  }, [squadItems, selectedArenaId, fallbackArena, tickerTime]);
 
   const selectedArena = useMemo(() => {
     if (activeSquadItem?.arena) return activeSquadItem.arena;
     if (!selectedArenaId) return null;
-    return (
-      arenas.find(
-        (a) =>
-          String(a.id) === String(selectedArenaId) ||
-          String(a.rawId) === String(selectedArenaId)
-      ) || null
+    const found = arenas.find(
+      (a) =>
+        String(a.id) === String(selectedArenaId) ||
+        String(a.rawId) === String(selectedArenaId)
     );
-  }, [activeSquadItem, arenas, selectedArenaId]);
+    if (found) return found;
+    if (
+      fallbackArena &&
+      (String(fallbackArena.id) === String(selectedArenaId) ||
+        String(fallbackArena.rawId) === String(selectedArenaId))
+    ) {
+      return fallbackArena;
+    }
+    return null;
+  }, [activeSquadItem, arenas, selectedArenaId, fallbackArena]);
 
-  const selectedProofCategory = activeSquadItem?.proofCategory || "image";
+  const selectedProofCategory =
+    activeSquadItem?.proofCategory ||
+    selectedArena?.proofType ||
+    (selectedArena as any)?.proof_type ||
+    "image";
 
   // ── Tailored Proof Input State ──
   // For Image / Photo
@@ -691,8 +751,12 @@ export const CameraModal: React.FC = () => {
       setCaption("");
       stopCameraStream();
 
-      // Return to Stage 1 where this squad is now marked completed
-      setViewMode("select_arena");
+      // Return to Stage 1 or close if opened directly for a specific arena
+      if (initialCameraArenaId) {
+        closeCamera();
+      } else {
+        setViewMode("select_arena");
+      }
     } catch (err: any) {
       if (selectedArena.rawId) {
         offlineProofQueue.enqueueProof(
@@ -703,7 +767,11 @@ export const CameraModal: React.FC = () => {
         );
       }
       showToast(`Saved offline: Will sync automatically to ${selectedArena.name} when connected 💾`, "info");
-      setViewMode("select_arena");
+      if (initialCameraArenaId) {
+        closeCamera();
+      } else {
+        setViewMode("select_arena");
+      }
     } finally {
       setIsSubmitting(false);
     }

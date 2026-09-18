@@ -394,42 +394,73 @@ export const StoryTray: React.FC = () => {
 
               {/* Main Media or Proof Reflection */}
               <div className="absolute inset-0 z-0">
-                {activeSlide.imageUrl && activeSlide.imageUrl !== "Done" ? (
-                  activeSlide.imageUrl.match(/\.(mp4|webm|mov|ogg)($|\?|&)/i) || activeSlide.imageUrl.startsWith("data:video/") ? (
-                    <video
-                      src={resolveBackendUrl(activeSlide.imageUrl)}
-                      autoPlay
-                      loop
-                      playsInline
-                      muted
-                      className="w-full h-full object-cover select-none"
-                    />
-                  ) : (
+                {(() => {
+                  const mediaUrl = activeSlide.imageUrl;
+                  if (!mediaUrl || mediaUrl === "Done") {
+                    return (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-[#121217] via-[#0E0E12] to-black text-white p-8 text-center space-y-4">
+                        <div className="w-20 h-20 rounded-3xl bg-orange-500/15 border border-orange-500/30 text-orange-400 flex items-center justify-center text-3xl shadow-[0_0_40px_rgba(255,94,0,0.25)]">
+                          <Flame className="w-10 h-10 fill-orange-400" />
+                        </div>
+                        <div className="space-y-2">
+                          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-bold">
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            <span>Verified Daily Check-In</span>
+                          </div>
+                          <h3 className="text-xl font-bold text-white">
+                            {activeSlide.arenaTag || activeUser.arenaTag}
+                          </h3>
+                          <p className="text-sm text-neutral-400 max-w-xs leading-relaxed">
+                            {activeSlide.caption || "Completed daily habit streak on schedule."}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  const ytMatch = mediaUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+                  if (ytMatch && ytMatch[1]) {
+                    return (
+                      <div className="w-full h-full bg-black flex items-center justify-center overflow-hidden pointer-events-auto">
+                        <iframe
+                          src={`https://www.youtube-nocookie.com/embed/${ytMatch[1]}?autoplay=1&rel=0&playsinline=1`}
+                          title="YouTube Habit Proof"
+                          className="w-full h-full border-0"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                        />
+                      </div>
+                    );
+                  }
+
+                  if (
+                    mediaUrl.match(/\.(mp4|webm|mov|ogg)($|\?|&)/i) ||
+                    mediaUrl.startsWith("data:video/")
+                  ) {
+                    return (
+                      <video
+                        src={resolveBackendUrl(mediaUrl)}
+                        autoPlay
+                        loop
+                        playsInline
+                        muted
+                        controls
+                        className="w-full h-full object-cover select-none"
+                      />
+                    );
+                  }
+
+                  return (
                     <img
-                      src={resolveBackendUrl(activeSlide.imageUrl)}
+                      src={resolveBackendUrl(mediaUrl)}
                       alt="Habit Proof"
                       className="w-full h-full object-cover select-none"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = "none";
+                      }}
                     />
-                  )
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-[#121217] via-[#0E0E12] to-black text-white p-8 text-center space-y-4">
-                    <div className="w-20 h-20 rounded-3xl bg-orange-500/15 border border-orange-500/30 text-orange-400 flex items-center justify-center text-3xl shadow-[0_0_40px_rgba(255,94,0,0.25)]">
-                      <Flame className="w-10 h-10 fill-orange-400" />
-                    </div>
-                    <div className="space-y-2">
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-bold">
-                        <ShieldCheck className="w-3.5 h-3.5" />
-                        <span>Verified Daily Check-In</span>
-                      </div>
-                      <h3 className="text-xl font-bold text-white">
-                        {activeSlide.arenaTag || activeUser.arenaTag}
-                      </h3>
-                      <p className="text-sm text-neutral-400 max-w-xs leading-relaxed">
-                        {activeSlide.caption || "Completed daily habit streak on schedule."}
-                      </p>
-                    </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Dark Gradient Overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-black/40 pointer-events-none" />

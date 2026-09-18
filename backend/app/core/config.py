@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     SECRET_KEY: str = "tribely_super_secret_jwt_key_2026"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 525600  # 365 days (keep user logged in until explicit logout)
     ALLOWED_ORIGINS: Union[list[str], str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
