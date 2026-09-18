@@ -1,7 +1,9 @@
+import json
 import os
 import urllib.parse
+from typing import Any, Union
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import computed_field
+from pydantic import computed_field, field_validator
 
 class Settings(BaseSettings):
     # Core App Settings
@@ -10,7 +12,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "tribely_super_secret_jwt_key_2026"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
-    ALLOWED_ORIGINS: list[str] = [
+    ALLOWED_ORIGINS: Union[list[str], str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:8000",
@@ -18,6 +20,21 @@ class Settings(BaseSettings):
         "https://tribely.mayurkpatil.in",
         "https://tribely-backend.onrender.com"
     ]
+
+    @field_validator("ALLOWED_ORIGINS")
+    @classmethod
+    def assemble_cors_origins(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            cleaned = v.strip()
+            if cleaned.startswith("[") and cleaned.endswith("]"):
+                try:
+                    return json.loads(cleaned)
+                except Exception:
+                    pass
+            return [i.strip() for i in cleaned.split(",") if i.strip()]
+        elif isinstance(v, (list, tuple)):
+            return [str(i).strip() for i in v if str(i).strip()]
+        return v
 
     # Application & Domain URLs
     FRONTEND_URL: str = os.environ.get("FRONTEND_URL") or os.environ.get("NEXT_PUBLIC_APP_URL") or "https://tribely.mayurkpatil.in"
