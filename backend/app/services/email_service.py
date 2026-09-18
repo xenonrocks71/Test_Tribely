@@ -118,6 +118,33 @@ class EmailService:
             "If you did not request this, please disregard this email."
         )
 
+        # 1. Try Resend REST API if configured
+        resend_key = getattr(settings, "RESEND_API_KEY", None)
+        if resend_key:
+            try:
+                import httpx
+                sender = getattr(settings, "RESEND_FROM_EMAIL", None) or "Tribely <onboarding@resend.dev>"
+                res = httpx.post(
+                    "https://api.resend.com/emails",
+                    headers={"Authorization": f"Bearer {resend_key.strip()}"},
+                    json={
+                        "from": sender,
+                        "to": [clean_email],
+                        "subject": f"{code} is your Tribely verification code",
+                        "html": html_content,
+                        "text": text_content,
+                    },
+                    timeout=10.0
+                )
+                if res.status_code in (200, 201):
+                    logger.info(f"[EmailService] Delivered OTP code email via Resend to {clean_email}")
+                    return True
+                else:
+                    logger.warning(f"[EmailService] Resend API response error {res.status_code}: {res.text}")
+            except Exception as re_err:
+                logger.warning(f"[EmailService] Resend API delivery exception: {re_err}")
+
+        # 2. Try standard SMTP if configured (e.g. Gmail App Password, Brevo, SendGrid)
         if self.smtp_host and self.smtp_user and self.smtp_password:
             try:
                 msg = MIMEMultipart("alternative")

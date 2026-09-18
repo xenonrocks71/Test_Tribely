@@ -77,6 +77,8 @@ class Settings(BaseSettings):
     SMTP_TLS: bool = True
     EMAILS_FROM_EMAIL: str = os.environ.get("EMAILS_FROM_EMAIL") or "no-reply@tribely.app"
     EMAILS_FROM_NAME: str = os.environ.get("EMAILS_FROM_NAME") or "Tribely"
+    RESEND_API_KEY: str | None = os.environ.get("RESEND_API_KEY") or None
+    RESEND_FROM_EMAIL: str | None = os.environ.get("RESEND_FROM_EMAIL") or None
 
     # OTP Security & Rate Limiting Thresholds
     OTP_TTL_SECONDS: int = 300  # 5 minutes in Redis
