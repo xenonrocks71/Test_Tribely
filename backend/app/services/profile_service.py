@@ -98,7 +98,12 @@ class ProfileService:
 
         # Real Kudos balance from wallet or user table
         wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
-        kudos_balance = int(wallet.balance) if wallet and wallet.balance is not None else int(user.kudos_balance or 0)
+        if wallet and wallet.tribes_balance is not None:
+            kudos_balance = int(wallet.tribes_balance)
+        elif wallet and wallet.balance is not None:
+            kudos_balance = int(wallet.balance)
+        else:
+            kudos_balance = int(user.kudos_balance or 0)
 
         return {
             "id": user.id,

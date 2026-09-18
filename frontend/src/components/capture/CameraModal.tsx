@@ -165,6 +165,7 @@ export const CameraModal: React.FC = () => {
     completedArenaIdsToday,
     isArenaCompletedToday,
     user,
+    refreshUser,
   } = useApp();
 
   // ── Navigation Flow State: "select_arena" (Stage 1) or "input_proof" (Stage 2) ──
@@ -675,6 +676,10 @@ export const CameraModal: React.FC = () => {
           }
         } else {
           showToast(`✓ Proof verified for ${selectedArena.name}! Marked Present for Today 🔥`, "success");
+          refreshUser().catch(() => {});
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("refresh_wallet"));
+          }
         }
       }
 

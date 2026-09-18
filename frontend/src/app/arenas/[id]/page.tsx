@@ -27,6 +27,7 @@ import {
   Globe,
   Lock,
   ArrowRight,
+  Video,
 } from "lucide-react";
 import { useApp, AppProvider } from "@/context/AppContext";
 import {
@@ -36,6 +37,7 @@ import {
   ApiEscrowTransaction,
   ApiEscrowSummary,
 } from "@/services/tribely.service";
+import { ArenaPoolDetails } from "@/types/tribely";
 import { CameraModal } from "@/components/capture/CameraModal";
 import { ArenaPoolCard } from "@/components/arenas/ArenaPoolCard";
 import { StakingModal } from "@/components/arenas/StakingModal";
@@ -59,6 +61,41 @@ interface ArenaFeedItem {
   ai_audit_notes?: string | null;
   comments_count?: number;
   proof_type?: string;
+}
+
+function getYouTubeVideoId(url?: string | null): string | null {
+  if (!url || typeof url !== "string") return null;
+  try {
+    const trimmed = url.trim();
+    if (trimmed.includes("youtu.be/")) {
+      const parts = trimmed.split("youtu.be/");
+      return parts[1].split("?")[0].split("&")[0];
+    }
+    if (trimmed.includes("youtube.com/")) {
+      if (trimmed.includes("/shorts/")) {
+        return trimmed.split("/shorts/")[1].split("?")[0].split("&")[0];
+      }
+      if (trimmed.includes("/embed/")) {
+        return trimmed.split("/embed/")[1].split("?")[0].split("&")[0];
+      }
+      const parsed = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
+      return parsed.searchParams.get("v");
+    }
+  } catch {
+    const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/);
+    return match ? match[1] : null;
+  }
+  return null;
+}
+
+function isVideoFileUrl(url?: string | null): boolean {
+  if (!url || typeof url !== "string") return false;
+  return /\.(mp4|webm|ogg|mov)($|\?)/i.test(url) || url.startsWith("data:video/");
+}
+
+function isWebLink(url?: string | null): boolean {
+  if (!url || typeof url !== "string") return false;
+  return url.startsWith("http://") || url.startsWith("https://");
 }
 
 /**
@@ -303,6 +340,7 @@ function ArenaDetailContent() {
   } = useApp();
 
   const [arenaDetail, setArenaDetail] = useState<ApiArenaDetail | null>(null);
+  const [arenaPool, setArenaPool] = useState<ArenaPoolDetails | null>(null);
   const [ledgerRoom, setLedgerRoom] = useState<any | null>(null);
   const [proofFeed, setProofFeed] = useState<ArenaFeedItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -319,17 +357,23 @@ function ArenaDetailContent() {
     if (!arenaId) return;
     setIsLoading(true);
     try {
-      const [detailRes, feedRes, historyRes, roomRes] = await Promise.allSettled([
+      const [detailRes, feedRes, historyRes, roomRes, poolRes] = await Promise.allSettled([
         tribelyService.fetchArenaDetail(arenaId),
         tribelyService.fetchArenaProofFeed(arenaId, 50),
         tribelyService.fetchArenaHistory(arenaId),
         tribelyService.fetchLedgerRoom(arenaId),
+        tribelyService.getArenaPoolDetails(arenaId),
       ]);
 
       const detail = detailRes.status === "fulfilled" ? detailRes.value : null;
       const feedItems = feedRes.status === "fulfilled" ? feedRes.value : [];
       const history = historyRes.status === "fulfilled" ? historyRes.value : null;
       const room = roomRes.status === "fulfilled" ? roomRes.value : null;
+      const poolData = poolRes.status === "fulfilled" ? poolRes.value : null;
+
+      if (poolData) {
+        setArenaPool(poolData);
+      }
 
       // Deduplicate and combine all proofs for this specific arena
       const combinedMap = new Map<string | number, ArenaFeedItem>();
@@ -430,6 +474,27 @@ function ArenaDetailContent() {
   useEffect(() => {
     loadSquadData();
   }, [loadSquadData]);
+
+  // Real-time listener for WebSocket pool balance updates
+  useEffect(() => {
+    const handlePoolUpdate = (event: any) => {
+      if (
+        event.detail?.arena_id === arenaId &&
+        typeof event.detail?.pool_balance === "number"
+      ) {
+        setArenaPool((prev) =>
+          prev
+            ? { ...prev, pool_balance: event.detail.pool_balance }
+            : null
+        );
+      }
+    };
+
+    window.addEventListener("pool_balance_updated", handlePoolUpdate);
+    return () => {
+      window.removeEventListener("pool_balance_updated", handlePoolUpdate);
+    };
+  }, [arenaId]);
 
   // Re-sync squad data when camera modal closes after proof drop
   const prevCameraOpen = useRef(isCameraModalOpen);
@@ -642,7 +707,7 @@ function ArenaDetailContent() {
 
               <span className="px-3 py-1 rounded-full bg-[#FEF7E0] dark:bg-[#F9AB00]/15 border border-[#FEEFC3] dark:border-[#F9AB00]/25 text-[11px] font-medium text-[#B06000] dark:text-[#F9AB00] flex items-center gap-1.5">
                 <Trophy className="w-3.5 h-3.5 text-amber-500" />
-                <span>{escrow.total_vault_amount.toLocaleString()} Kudos Pool</span>
+                <span>{(arenaPool?.pool_balance ?? escrow.total_vault_amount).toLocaleString()} Kudos Pool</span>
               </span>
             </div>
 
@@ -874,17 +939,57 @@ function ArenaDetailContent() {
                   onClick={() => setSelectedProofPreview(proofFeed[0])}
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    {proofFeed[0].proof_url ? (
-                      <img
-                        src={proofFeed[0].proof_url}
-                        alt="Latest drop"
-                        className="w-12 h-12 rounded-xl object-cover shrink-0 border border-black/10"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 rounded-xl bg-[#E8F0FE] dark:bg-[#1A73E8]/20 flex items-center justify-center shrink-0 text-[#1A73E8]">
-                        <Camera className="w-5 h-5" />
-                      </div>
-                    )}
+                    {(() => {
+                      const firstProof = proofFeed[0]?.proof_url;
+                      const ytId = getYouTubeVideoId(firstProof);
+                      if (ytId) {
+                        return (
+                          <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0 border border-black/10 bg-black">
+                            <img
+                              src={`https://img.youtube.com/vi/${ytId}/hqdefault.jpg`}
+                              alt="YouTube thumbnail"
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                              <span className="w-5 h-5 rounded-full bg-red-600 text-white text-[9px] font-bold flex items-center justify-center pl-0.5 shadow-xs">
+                                ▶
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      if (isVideoFileUrl(firstProof)) {
+                        return (
+                          <div className="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0 border border-purple-500/20">
+                            <Video className="w-5 h-5" />
+                          </div>
+                        );
+                      }
+                      if (isWebLink(firstProof)) {
+                        return (
+                          <div className="w-12 h-12 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/20">
+                            <ExternalLink className="w-5 h-5" />
+                          </div>
+                        );
+                      }
+                      if (firstProof) {
+                        return (
+                          <img
+                            src={firstProof}
+                            alt="Latest drop"
+                            className="w-12 h-12 rounded-xl object-cover shrink-0 border border-black/10"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = "none";
+                            }}
+                          />
+                        );
+                      }
+                      return (
+                        <div className="w-12 h-12 rounded-xl bg-[#E8F0FE] dark:bg-[#1A73E8]/20 flex items-center justify-center shrink-0 text-[#1A73E8]">
+                          <Camera className="w-5 h-5" />
+                        </div>
+                      );
+                    })()}
                     <div className="min-w-0">
                       <span className="text-xs font-semibold text-neutral-900 dark:text-white block truncate">
                         {proofFeed[0].user_name}
@@ -1021,29 +1126,82 @@ function ArenaDetailContent() {
                       </span>
                     </div>
 
-                    {/* Media Container (Image, Link, or Text) */}
+                    {/* Media Container (Image, Link, Video, or Text) */}
                     {item.proof_url ? (
-                      <div
-                        className="relative aspect-[4/5] sm:aspect-[16/10] bg-neutral-100 dark:bg-black overflow-hidden cursor-pointer group"
-                        onClick={() => setSelectedProofPreview(item)}
-                      >
-                        <img
-                          src={item.proof_url}
-                          alt="Proof drop"
-                          className="w-full h-full object-cover group-hover:scale-[1.01] transition duration-200"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).src =
-                              "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=800&q=80";
-                          }}
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-80" />
+                      (() => {
+                        const ytId = getYouTubeVideoId(item.proof_url);
+                        if (ytId) {
+                          return (
+                            <div className="relative aspect-video w-full bg-black overflow-hidden group">
+                              <iframe
+                                src={`https://www.youtube-nocookie.com/embed/${ytId}?rel=0`}
+                                title="Proof YouTube Video"
+                                className="w-full h-full border-0"
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                allowFullScreen
+                              />
+                            </div>
+                          );
+                        }
+                        if (isVideoFileUrl(item.proof_url)) {
+                          return (
+                            <div className="relative aspect-video w-full bg-black overflow-hidden">
+                              <video
+                                src={item.proof_url}
+                                controls
+                                playsInline
+                                className="w-full h-full object-contain"
+                              />
+                            </div>
+                          );
+                        }
+                        if (isWebLink(item.proof_url)) {
+                          return (
+                            <div className="p-4 sm:p-5 bg-[#F8F9FA] dark:bg-[#202124] border-b border-[#E8EAED] dark:border-[#303134]">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="p-1.5 rounded-lg bg-[#E8F0FE] dark:bg-[#1A73E8]/20 text-[#1A73E8] dark:text-[#8AB4F8]">
+                                  <ExternalLink className="w-4 h-4" />
+                                </span>
+                                <span className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+                                  Verified Link Submission
+                                </span>
+                              </div>
+                              <a
+                                href={item.proof_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs font-medium text-[#1A73E8] dark:text-[#8AB4F8] hover:underline break-all inline-flex items-center gap-1.5"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <span>{item.proof_url}</span>
+                                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                              </a>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div
+                            className="relative aspect-[4/5] sm:aspect-[16/10] bg-neutral-100 dark:bg-black overflow-hidden cursor-pointer group"
+                            onClick={() => setSelectedProofPreview(item)}
+                          >
+                            <img
+                              src={item.proof_url}
+                              alt="Proof drop"
+                              className="w-full h-full object-cover group-hover:scale-[1.01] transition duration-200"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = "none";
+                              }}
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-80" />
 
-                        {item.ai_audit_notes && (
-                          <div className="absolute bottom-3 left-3 right-3 p-3 rounded-xl bg-black/60 backdrop-blur-md border border-white/10 text-xs text-neutral-200 leading-relaxed">
-                            {item.ai_audit_notes}
+                            {item.ai_audit_notes && (
+                              <div className="absolute bottom-3 left-3 right-3 p-3 rounded-xl bg-black/60 backdrop-blur-md border border-white/10 text-xs text-neutral-200 leading-relaxed">
+                                {item.ai_audit_notes}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
+                        );
+                      })()
                     ) : item.ai_audit_notes ? (
                       <div className="p-4 bg-[#F8F9FA] dark:bg-[#202124] border-b border-[#E8EAED] dark:border-[#303134]">
                         <p className="text-xs text-neutral-800 dark:text-neutral-200 italic leading-relaxed">
@@ -1454,12 +1612,45 @@ function ArenaDetailContent() {
               >
                 ✕
               </button>
-              <div className="aspect-[4/5] bg-black">
-                <img
-                  src={selectedProofPreview.proof_url}
-                  alt="Proof expanded"
-                  className="w-full h-full object-cover"
-                />
+              <div className="aspect-[4/5] sm:aspect-video bg-black flex items-center justify-center overflow-hidden">
+                {(() => {
+                  const ytId = getYouTubeVideoId(selectedProofPreview.proof_url);
+                  if (ytId) {
+                    return (
+                      <iframe
+                        src={`https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&rel=0`}
+                        title="YouTube proof drop"
+                        className="w-full h-full border-0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    );
+                  }
+                  if (isVideoFileUrl(selectedProofPreview.proof_url)) {
+                    return (
+                      <video
+                        src={selectedProofPreview.proof_url}
+                        controls
+                        autoPlay
+                        playsInline
+                        className="w-full h-full object-contain"
+                      />
+                    );
+                  }
+                  if (selectedProofPreview.proof_url) {
+                    return (
+                      <img
+                        src={selectedProofPreview.proof_url}
+                        alt="Proof expanded"
+                        className="w-full h-full object-contain"
+                        onError={(e) => {
+                          (e.target as HTMLElement).style.display = "none";
+                        }}
+                      />
+                    );
+                  }
+                  return null;
+                })()}
               </div>
               <div className="p-4 space-y-1">
                 <div className="flex items-center justify-between">

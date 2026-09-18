@@ -313,7 +313,7 @@ export const ArenaStoryTray: React.FC = () => {
                     alt={activeSlide.caption}
                     className="w-full h-full object-cover"
                     onError={(e) => {
-                      (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=800&q=80";
+                      (e.target as HTMLImageElement).style.display = "none";
                     }}
                   />
                 ) : (

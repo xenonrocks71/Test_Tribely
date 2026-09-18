@@ -445,6 +445,7 @@ interface AppContextType {
   viewedStoryUserIds: Set<string>;
   markStoryAsViewed: (storyUserId: string) => void;
   updateUserProfile: (updates: Partial<UserProfile>) => void;
+  refreshUser: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -1024,6 +1025,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: Nav
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Real-time synchronization for Kudos balance updates
+  useEffect(() => {
+    const handleKudosUpdate = (event: any) => {
+      if (typeof event.detail?.kudos_balance === "number") {
+        setUser((prev) => ({ ...prev, kudosBalance: Math.floor(event.detail.kudos_balance) }));
+      } else {
+        bootstrapUser();
+      }
+    };
+    const handleRefreshWallet = () => {
+      bootstrapUser();
+    };
+    window.addEventListener("kudos_balance_updated", handleKudosUpdate);
+    window.addEventListener("refresh_wallet", handleRefreshWallet);
+    return () => {
+      window.removeEventListener("kudos_balance_updated", handleKudosUpdate);
+      window.removeEventListener("refresh_wallet", handleRefreshWallet);
+    };
+  }, [bootstrapUser]);
+
   // ── Modals ──────────────────────────────────────────────────────────────────
 
   const openCamera = (arenaId?: string | number | unknown) => {
@@ -1492,6 +1513,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: Nav
         viewedStoryUserIds,
         markStoryAsViewed,
         updateUserProfile,
+        refreshUser: bootstrapUser,
       }}
     >
       {children}

@@ -107,6 +107,9 @@ class TribesService:
         if existing:
             wallet = self.get_or_create_user_wallet(db, user_id)
             pool = self.get_or_create_arena_pool(db, arena.id)
+            if arena.pool_balance < int(pool.tribes_reserve_vault):
+                arena.pool_balance = int(pool.tribes_reserve_vault)
+                db.commit()
             return {
                 "status": "already_staked",
                 "staked_amount": stake,
@@ -126,8 +129,15 @@ class TribesService:
         pool = db.query(ArenaPool).filter(ArenaPool.id == pool.id).with_for_update().first() or pool
 
         wallet.tribes_balance -= stake
+        wallet.balance = float(wallet.tribes_balance)
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.kudos_balance = int(wallet.tribes_balance)
+
         pool.tribes_reserve_vault += stake
+        arena.pool_balance = int(pool.tribes_reserve_vault)
         pool.updated_at = datetime.utcnow()
+        arena.updated_at = datetime.utcnow()
 
         self._log_tribes_ledger(
             db=db,
@@ -143,6 +153,26 @@ class TribesService:
         db.commit()
         db.refresh(wallet)
         db.refresh(pool)
+        db.refresh(arena)
+
+        redis_client = get_sync_redis_client()
+        if redis_client:
+            try:
+                redis_client.set(f"arena:{arena.id}:pool", int(pool.tribes_reserve_vault))
+            except Exception:
+                pass
+
+        try:
+            from app.services.websocket_manager import websocket_manager
+            websocket_manager.safe_broadcast_to_arena(arena.id, {
+                "event_type": "pool_balance_updated",
+                "arena_id": arena.id,
+                "pool_balance": int(pool.tribes_reserve_vault),
+                "user_id": user_id,
+                "user_kudos_balance": int(wallet.tribes_balance)
+            })
+        except Exception:
+            pass
 
         return {
             "status": "success",
@@ -172,6 +202,9 @@ class TribesService:
         if existing:
             wallet = self.get_or_create_user_wallet(db, user_id)
             pool = self.get_or_create_arena_pool(db, arena.id)
+            if arena.pool_balance < int(pool.tribes_reserve_vault):
+                arena.pool_balance = int(pool.tribes_reserve_vault)
+                db.commit()
             return {
                 "status": "already_staked",
                 "staked_amount": stake,
@@ -183,6 +216,7 @@ class TribesService:
         wallet = db.query(UserWallet).filter(UserWallet.id == wallet.id).with_for_update().first() or wallet
         if wallet.tribes_balance < stake:
             wallet.tribes_balance += max(stake, 500.0)
+            wallet.balance = float(wallet.tribes_balance)
             db.commit()
             db.refresh(wallet)
 
@@ -190,8 +224,15 @@ class TribesService:
         pool = db.query(ArenaPool).filter(ArenaPool.id == pool.id).with_for_update().first() or pool
 
         wallet.tribes_balance -= stake
+        wallet.balance = float(wallet.tribes_balance)
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.kudos_balance = int(wallet.tribes_balance)
+
         pool.tribes_reserve_vault += stake
+        arena.pool_balance = int(pool.tribes_reserve_vault)
         pool.updated_at = datetime.utcnow()
+        arena.updated_at = datetime.utcnow()
 
         self._log_tribes_ledger(
             db=db,
@@ -207,6 +248,26 @@ class TribesService:
         db.commit()
         db.refresh(wallet)
         db.refresh(pool)
+        db.refresh(arena)
+
+        redis_client = get_sync_redis_client()
+        if redis_client:
+            try:
+                redis_client.set(f"arena:{arena.id}:pool", int(pool.tribes_reserve_vault))
+            except Exception:
+                pass
+
+        try:
+            from app.services.websocket_manager import websocket_manager
+            websocket_manager.safe_broadcast_to_arena(arena.id, {
+                "event_type": "pool_balance_updated",
+                "arena_id": arena.id,
+                "pool_balance": int(pool.tribes_reserve_vault),
+                "user_id": user_id,
+                "user_kudos_balance": int(wallet.tribes_balance)
+            })
+        except Exception:
+            pass
 
         return {
             "status": "success",
@@ -448,6 +509,10 @@ class TribesService:
         wallet = self.get_or_create_user_wallet(db, user_id)
         wallet = db.query(UserWallet).filter(UserWallet.id == wallet.id).with_for_update().first() or wallet
         wallet.tribes_balance += daily_return
+        wallet.balance = float(wallet.tribes_balance)
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.kudos_balance = int(wallet.tribes_balance)
 
         self._log_tribes_ledger(
             db=db,
@@ -462,6 +527,17 @@ class TribesService:
         )
         db.commit()
         db.refresh(wallet)
+
+        try:
+            from app.services.websocket_manager import websocket_manager
+            websocket_manager.safe_broadcast_to_arena(arena_id, {
+                "event_type": "kudos_balance_updated",
+                "user_id": user_id,
+                "kudos_balance": int(wallet.tribes_balance)
+            })
+        except Exception:
+            pass
+
         return {"status": "success", "unlocked_amount": daily_return, "new_balance": wallet.tribes_balance}
 
     def evaluate_tribe_multiplier(self, db: Session, arena_id: int) -> Dict[str, Any]:
@@ -971,8 +1047,19 @@ class TribesService:
             except Exception as re:
                 logger.warning(f"Redis get failed for arena:{arena_id}:pool: {re}")
 
-        if pool_balance is None:
-            pool_balance = int(arena.pool_balance or 0)
+        pool = db.query(ArenaPool).filter(ArenaPool.arena_id == arena_id).first()
+        vault_balance = int(pool.tribes_reserve_vault or 0) if pool else 0
+        arena_bal = int(arena.pool_balance or 0)
+        best_pool_bal = max(arena_bal, vault_balance)
+
+        if pool_balance is None or best_pool_bal > pool_balance:
+            pool_balance = best_pool_bal
+            if arena.pool_balance != pool_balance:
+                arena.pool_balance = pool_balance
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
             if redis_client:
                 try:
                     redis_client.set(f"arena:{arena_id}:pool", pool_balance)

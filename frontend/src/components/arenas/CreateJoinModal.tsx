@@ -60,7 +60,7 @@ export const CreateJoinModal: React.FC<CreateJoinModalProps> = ({
   onClose,
   initialTab = "choose",
 }) => {
-  const { triggerHaptic, showToast, refreshArenas, refreshFeed, setActiveTab } = useApp();
+  const { triggerHaptic, showToast, refreshArenas, refreshFeed, setActiveTab, refreshUser } = useApp();
 
   const [activeSubTab, setActiveSubTab] = useState<"choose" | "create" | "invite">(initialTab);
 
@@ -129,7 +129,10 @@ export const CreateJoinModal: React.FC<CreateJoinModalProps> = ({
     if (res.success) {
       showToast(`Squad "${name}" launched! ⚔️`, "success");
       handleClose();
-      await Promise.all([refreshFeed(), refreshArenas()]);
+      await Promise.all([refreshFeed(), refreshArenas(), refreshUser()]);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("refresh_wallet"));
+      }
       setActiveTab("explore");
     } else {
       showToast(res.error || "Failed to create squad", "fire");
@@ -149,7 +152,10 @@ export const CreateJoinModal: React.FC<CreateJoinModalProps> = ({
     if (res.success) {
       showToast(res.message || "Joined Habit Tribe successfully! 🔥", "success");
       handleClose();
-      await refreshArenas();
+      await Promise.all([refreshArenas(), refreshUser()]);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("refresh_wallet"));
+      }
       setActiveTab("explore");
     } else {
       showToast(res.message || "Invalid invite code", "fire");

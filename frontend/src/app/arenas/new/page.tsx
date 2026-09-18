@@ -39,7 +39,7 @@ const formatTimeTo12Hour = (timeVal: string): string => {
 
 function NewArenaContent() {
   const router = useRouter();
-  const { triggerHaptic, showToast, refreshArenas, refreshFeed } = useApp();
+  const { triggerHaptic, showToast, refreshArenas, refreshFeed, refreshUser } = useApp();
 
   const [name, setName] = useState("");
   const [icon, setIcon] = useState("⚡");
@@ -78,7 +78,10 @@ function NewArenaContent() {
 
     if (res.success) {
       showToast(`Arena "${name}" launched! ⚔️`, "success");
-      await Promise.all([refreshFeed(), refreshArenas()]);
+      await Promise.all([refreshFeed(), refreshArenas(), refreshUser()]);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("refresh_wallet"));
+      }
       const newId = res.data?.id;
       if (newId) {
         router.push(`/arenas/${newId}`);
