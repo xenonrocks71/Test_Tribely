@@ -37,11 +37,11 @@ export default function GlobalError({
           </button>
 
           <Link
-            href="/dashboard"
+            href="/feed"
             className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition border border-slate-700"
           >
             <Home className="h-4 w-4" />
-            <span>Dashboard</span>
+            <span>Feed</span>
           </Link>
         </div>
       </div>

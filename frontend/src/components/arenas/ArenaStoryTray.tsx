@@ -182,56 +182,62 @@ export const ArenaStoryTray: React.FC = () => {
   if (!arenas.length) return null;
 
   return (
-    <div className="w-full pt-3 pb-3 border-b border-neutral-900 bg-neutral-950/70">
-      {/* Section Header */}
-      <div className="px-4 mb-2 flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-black uppercase tracking-wider text-neutral-400">
-            Unread Proofs by Arena
-          </span>
-          {arenaStoryGroups.some((g) => g.hasUnread) && (
-            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-          )}
-        </div>
-        <span className="text-[10px] text-neutral-500 font-semibold">5s Ephemeral Playback</span>
-      </div>
-
-      {/* Horizontal Story Rings Carousel */}
-      <div className="flex items-center gap-4 overflow-x-auto px-4 py-1 no-scrollbar">
-        {arenaStoryGroups.map((group) => (
-          <div
-            key={group.arenaId}
-            className="flex flex-col items-center shrink-0 w-[72px] text-center cursor-pointer group"
-            onClick={() => handleOpenGroup(group)}
-          >
-            {/* Story Ring Container */}
-            <div className="relative">
-              <div
-                className={`w-16 h-16 rounded-full p-[2.5px] transition-transform duration-200 group-hover:scale-105 ${
-                  group.hasUnread
-                    ? "bg-gradient-to-tr from-fuchsia-500 via-rose-500 to-amber-400 shadow-[0_0_15px_rgba(244,63,94,0.35)]"
-                    : "bg-neutral-800"
-                }`}
-              >
-                <div className="w-full h-full rounded-full bg-neutral-950 border-2 border-neutral-950 flex items-center justify-center text-2xl select-none">
-                  {group.icon}
-                </div>
-              </div>
-
-              {/* Unread Counter Pill Badge */}
-              {group.unreadCount > 0 && (
-                <div className="absolute -bottom-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-500 border-2 border-neutral-950 text-[9px] font-black text-white shadow-md">
-                  {group.unreadCount} new
-                </div>
+    <>
+      <div className="px-4 mb-4">
+        <div className="w-full bg-white dark:bg-[#1E1E1E] border border-[#E8EAED] dark:border-[#303134] rounded-2xl md:rounded-3xl p-4 sm:p-5 shadow-xs select-none transition-colors">
+          {/* Section Header */}
+          <div className="mb-3 px-0.5 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xs font-semibold text-neutral-900 dark:text-white tracking-tight">
+                Tribe Proofs
+              </h2>
+              {arenaStoryGroups.some((g) => g.hasUnread) && (
+                <span className="px-2 py-0.5 rounded-full bg-[#E8F0FE] dark:bg-[#1A73E8]/15 text-[10px] font-medium text-[#1A73E8] dark:text-[#8AB4F8] border border-[#D2E3FC] dark:border-[#1A73E8]/25">
+                  New
+                </span>
               )}
             </div>
-
-            {/* Arena Shortcut Label */}
-            <span className="text-[11px] font-bold text-neutral-300 group-hover:text-white truncate max-w-[70px] mt-1.5 leading-tight">
-              {group.shortcutName}
-            </span>
+            <span className="text-[11px] text-neutral-500 dark:text-neutral-400 font-normal">Active Today</span>
           </div>
-        ))}
+
+          {/* Horizontal Story Rings Carousel */}
+          <div className="flex items-center gap-4 overflow-x-auto py-1 no-scrollbar">
+            {arenaStoryGroups.map((group) => (
+              <div
+                key={group.arenaId}
+                className="flex flex-col items-center shrink-0 w-[72px] text-center cursor-pointer group"
+                onClick={() => handleOpenGroup(group)}
+              >
+                {/* Arena Icon Circle Avatar */}
+                <div className="relative">
+                  <div
+                    className={`w-14 h-14 rounded-full p-0.5 flex items-center justify-center transition-all duration-200 border-2 ${
+                      group.hasUnread
+                        ? "border-[#1A73E8] dark:border-[#8AB4F8]"
+                        : "border-neutral-200 dark:border-neutral-800"
+                    }`}
+                  >
+                    <div className="w-full h-full rounded-full bg-[#F1F3F4] dark:bg-[#202124] flex items-center justify-center text-xl overflow-hidden group-hover:scale-105 transition-transform duration-200">
+                      <span>{group.icon}</span>
+                    </div>
+                  </div>
+
+                  {/* Unread Counter Pill Badge */}
+                  {group.unreadCount > 0 && (
+                    <div className="absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded-full bg-[#1A73E8] border-2 border-white dark:border-[#121212] text-[9px] font-medium text-white shadow-xs">
+                      {group.unreadCount}
+                    </div>
+                  )}
+                </div>
+
+                {/* Arena Shortcut Label */}
+                <span className="text-[11px] font-medium text-neutral-600 dark:text-neutral-300 group-hover:text-neutral-900 dark:group-hover:text-white truncate max-w-[70px] mt-1.5 leading-tight">
+                  {group.shortcutName}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* ── FULL-SCREEN STORY MODAL ── */}
@@ -368,6 +374,6 @@ export const ArenaStoryTray: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
-    </div>
+    </>
   );
 };

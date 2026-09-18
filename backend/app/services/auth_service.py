@@ -28,24 +28,70 @@ class AuthService:
 
     def register_user(self, db: Session, user_in: UserCreate = None, **kwargs) -> User:
         """
-        Register a new user account with duplicate email validation in a single atomic database roundtrip.
+        Register a new user account with duplicate email, phone, and username validation.
 
         :param db: Active database session.
         :param user_in: Validated UserCreate request schema.
         :return: Persisted User model instance.
-        :raises HTTPException: 400 Bad Request if email is already registered.
+        :raises HTTPException: 400 Bad Request if email, phone, or username already exists.
         """
         if user_in is None:
             user_in = kwargs.get("user_in")
         from sqlalchemy.exc import IntegrityError
+        from app.services.otp_service import otp_service
+
+        # 1. Pre-validation checks for explicit conflicts
+        if user_in.email:
+            existing_email = self.user_repo.get_by_email(db, user_in.email)
+            if existing_email:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email address already registered."
+                )
+
+        if user_in.phone_number:
+            existing_phone = self.user_repo.get_by_phone(db, user_in.phone_number)
+            if existing_phone:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Phone number already registered."
+                )
+
+        if user_in.username:
+            existing_user = self.user_repo.get_by_username(db, user_in.username)
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Username already taken."
+                )
+
+        # 2. Token validation if provided
+        if user_in.verification_token:
+            clean_email = user_in.email.strip().lower()
+            clean_phone = user_in.phone_number.strip() if user_in.phone_number else ""
+            is_valid_email = otp_service.validate_verification_token(user_in.verification_token, clean_email)
+            is_valid_phone = bool(clean_phone and otp_service.validate_verification_token(user_in.verification_token, clean_phone))
+            if not is_valid_email and not is_valid_phone:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid or expired verification token."
+                )
+
         try:
             db_user = self.user_repo.create_user(db, user_in=user_in)
             return db_user
-        except IntegrityError:
+        except IntegrityError as ie:
             db.rollback()
+            orig_msg = str(getattr(ie, "orig", ie)).lower()
+            if "phone_number" in orig_msg:
+                detail = "Phone number already registered."
+            elif "username" in orig_msg:
+                detail = "Username already taken."
+            else:
+                detail = "Email address already registered."
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email address already registered."
+                detail=detail
             )
         except Exception:
             db.rollback()

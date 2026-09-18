@@ -4,7 +4,17 @@
  */
 
 import { apiClient } from "@/lib/api-client";
-import { ProofComment } from "@/types/tribely";
+import { parseSafeUtcDate } from "@/lib/utils";
+import {
+  ProofComment,
+  KudosWallet,
+  KudosTransaction,
+  ArenaPoolDetails,
+  LeaderboardMember,
+  WeeklyDistributionResponse,
+  ArenaJoinStakeResponse,
+  PenaltyMissedResponse
+} from "@/types/tribely";
 
 // -----------------------------------------------------------------------------
 // Type Definitions
@@ -14,8 +24,18 @@ export interface ApiUser {
   id: number;
   full_name: string;
   email: string;
+  username?: string;
+  phone_number?: string | null;
   profile_image_url?: string | null;
+  avatar_url?: string | null;
   contextual_role?: string;
+  is_verified?: boolean;
+  kudos_balance?: number;
+  current_streak?: number;
+  longest_streak?: number;
+  arenas_count?: number;
+  proofs_count?: number;
+  created_at?: string;
 }
 
 export interface ApiWallet {
@@ -25,7 +45,6 @@ export interface ApiWallet {
   inr_value: number;
   is_frozen: boolean;
   referral_count: number;
-  streak_shields: number;
   recent_transactions: ApiTransaction[];
 }
 
@@ -94,12 +113,36 @@ export interface ApiMessage {
   sender_avatar_url?: string | null;
 }
 
+export interface ApiNotification {
+  id: number | string;
+  arena_id?: number | null;
+  arena_name?: string | null;
+  event_type: "proof_submission" | "join_request" | "member_joined" | "join_approved" | "chat_message" | "call_invite" | "streak" | string;
+  title: string;
+  body: string;
+  is_read?: boolean;
+  created_at?: string;
+  target_user_id?: number;
+  target_user_name?: string;
+  target_user_avatar?: string | null;
+  status?: "pending" | "approved" | "rejected" | string;
+  is_admin_actionable?: boolean;
+  data?: {
+    arena_id?: number;
+    arena_name?: string;
+    user_id?: number;
+    user_name?: string;
+    action_type?: string;
+    status?: string;
+    url?: string;
+    [key: string]: any;
+  };
+}
+
 export interface ApiStreak {
   current_streak: number;
   max_streak: number;
-  available_shields: number;
   badge_tier: string;
-  days_until_next_shield: number;
   rule: string;
 }
 
@@ -169,6 +212,8 @@ export interface ApiArenaDetail {
   id: number;
   name: string;
   tag: string;
+  category?: string;
+  icon_url?: string;
   description: string;
   invite_code: string;
   proof_type: string;
@@ -196,7 +241,7 @@ export interface ApiArenaDetail {
 export interface ApiHeatmapDay {
   date: string;
   day_of_week: string;
-  status: "present" | "shielded" | "absent" | "today_pending";
+  status: "present" | "absent" | "today_pending";
   proof_type?: string | null;
   ai_confidence?: number | null;
 }
@@ -207,7 +252,6 @@ export interface ApiHeatmapData {
   days_count: number;
   matrix: ApiHeatmapDay[];
   present_count: number;
-  shielded_count: number;
   absent_count: number;
   consistency_percentage: number;
 }
@@ -215,6 +259,7 @@ export interface ApiHeatmapData {
 export interface SubmitProofPayload {
   arena_id: number;
   proof_url: string;
+  caption?: string;
   client_submitted_at?: string;
 }
 
@@ -248,15 +293,76 @@ class TribelyService {
   }
 
   async fetchCurrentUserProfile(): Promise<ApiUser | null> {
-    const userId = getStoredUserId();
-    if (!userId) return null;
     try {
       const res = await apiClient.get<{ status: string; data: ApiUser }>(
-        `/users/profile/${userId}`
+        "/api/users/profile/me"
       );
-      return res.data ?? null;
+      const user = res.data ?? null;
+      if (user && typeof window !== "undefined") {
+        if (user.id) localStorage.setItem("tribely_user_id", String(user.id));
+        if (user.full_name) localStorage.setItem("tribely_user_name", user.full_name);
+      }
+      return user;
     } catch {
-      return null;
+      const userId = getStoredUserId();
+      if (!userId) return null;
+      try {
+        const res = await apiClient.get<{ status: string; data: ApiUser }>(
+          `/users/profile/${userId}`
+        );
+        return res.data ?? null;
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  async updateProfileDetails(payload: {
+    full_name?: string;
+    username?: string;
+    phone_number?: string;
+    profile_image_url?: string;
+    bio?: string;
+  }): Promise<{ success: boolean; data?: ApiUser; message?: string }> {
+    try {
+      const res = await apiClient.patch<{ status: string; data: ApiUser }>(
+        "/api/users/profile/details",
+        payload
+      );
+      const user = res.data;
+      if (user && typeof window !== "undefined") {
+        if (user.full_name) localStorage.setItem("tribely_user_name", user.full_name);
+      }
+      return { success: true, data: user };
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail?.message || err?.response?.data?.detail || err?.message || "Failed to update profile";
+      return { success: false, message: typeof msg === "string" ? msg : JSON.stringify(msg) };
+    }
+  }
+
+  async updateProfileImage(profile_image_url: string): Promise<{ success: boolean; data?: any; message?: string }> {
+    try {
+      const res = await apiClient.put<{ status: string; data: any }>(
+        "/api/users/profile/image",
+        { profile_image_url }
+      );
+      return { success: true, data: res.data };
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail?.message || err?.response?.data?.detail || err?.message || "Failed to update avatar";
+      return { success: false, message: typeof msg === "string" ? msg : JSON.stringify(msg) };
+    }
+  }
+
+  async changePassword(current_password: string, new_password: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await apiClient.post<{ status: string; data: any }>(
+        "/api/users/profile/change-password",
+        { current_password, new_password }
+      );
+      return { success: true, message: res?.data?.message || "Password updated successfully!" };
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail?.message || err?.response?.data?.detail || err?.message || "Failed to change password";
+      return { success: false, message: typeof msg === "string" ? msg : JSON.stringify(msg) };
     }
   }
 
@@ -328,6 +434,24 @@ class TribelyService {
         const message = typeof rawError === "string" ? rawError : JSON.stringify(rawError);
         return { success: false, message };
       }
+    }
+  }
+
+  async nudgeMember(arena_id: number, target_user_id: number): Promise<{ success: boolean; message?: string }> {
+    try {
+      const res = await apiClient.post<any>(
+        `/api/activity/arenas/${arena_id}/nudge/${target_user_id}`,
+        { nudge_type: "standard" }
+      );
+      return {
+        success: true,
+        message: res?.data?.message || "Nudge sent successfully!",
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err?.response?.data?.detail || "Failed to send nudge",
+      };
     }
   }
 
@@ -467,14 +591,14 @@ class TribelyService {
 
   async fetchAggregatedHeatmap(arenaIds: number[], userId: number): Promise<ApiHeatmapDay[]> {
     if (!arenaIds.length || !userId) return [];
-    const dateStatusMap: Record<string, "present" | "shielded" | "absent" | "today_pending"> = {};
+    const dateStatusMap: Record<string, "present" | "absent" | "today_pending"> = {};
     await Promise.allSettled(
       arenaIds.map(async (arenaId) => {
         const data = await this.fetchHeatmap(arenaId, userId);
         if (data?.matrix) {
           for (const day of data.matrix) {
             const existing = dateStatusMap[day.date];
-            if (!existing || day.status === "present" || (day.status === "shielded" && existing !== "present")) {
+            if (!existing || day.status === "present") {
               dateStatusMap[day.date] = day.status;
             }
           }
@@ -497,6 +621,7 @@ class TribelyService {
         {
           arena_id: payload.arena_id,
           proof_url: payload.proof_url,
+          caption: payload.caption,
           client_submitted_at: payload.client_submitted_at || new Date().toISOString(),
         }
       );
@@ -511,16 +636,40 @@ class TribelyService {
     }
   }
 
+  async uploadMediaFile(file: File): Promise<{ success: boolean; url?: string; message?: string }> {
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await apiClient.post<{ status: string; url: string; filename: string }>(
+        "/api/upload/file",
+        formData,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+        }
+      );
+      return { success: true, url: res.url };
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+      const message =
+        (typeof detail === "object" ? detail?.message : detail) ||
+        err?.message ||
+        "Failed to upload media file.";
+      return { success: false, message };
+    }
+  }
+
   async uploadAndSubmitProof(
     arenaId: number,
-    imageDataUrl: string
+    proofContent: string,
+    caption?: string
   ): Promise<{ success: boolean; proofUrl?: string; message?: string }> {
     const result = await this.submitProof({
       arena_id: arenaId,
-      proof_url: imageDataUrl,
+      proof_url: proofContent,
+      caption,
       client_submitted_at: new Date().toISOString(),
     });
-    return { ...result, proofUrl: imageDataUrl };
+    return { ...result, proofUrl: proofContent };
   }
 
   async voteSubmission(
@@ -589,26 +738,18 @@ class TribelyService {
     }
   }
 
-  async useStreakShield(arenaId: number): Promise<{ success: boolean; remaining_shields?: number; message?: string }> {
-    try {
-      const res = await apiClient.post<{ status: string; remaining_shields: number; message: string }>(
-        "/api/activity/streak/use-shield",
-        { arena_id: arenaId }
-      );
-      return { success: true, remaining_shields: res.remaining_shields, message: res.message };
-    } catch (err: any) {
-      const message = err?.response?.data?.detail || "Failed to use streak shield.";
-      return { success: false, message: typeof message === "string" ? message : JSON.stringify(message) };
-    }
-  }
+
 
   async createArena(payload: {
     name: string;
     description?: string;
-    proof_type?: string;
+    category?: string;
+    proof_type?: "image" | "link" | "text" | string;
     deadline_time?: string;
     penalty_amount?: number;
     is_private?: boolean;
+    icon_url?: string;
+    timezone?: string;
   }): Promise<{ success: boolean; data?: any; error?: string }> {
     try {
       const res = await apiClient.post<any>("/api/arenas/", payload);
@@ -620,9 +761,9 @@ class TribelyService {
   }
 
   formatTimeAgo(isoString: string): string {
-    const date = new Date(isoString);
+    const date = parseSafeUtcDate(isoString);
     const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
+    const diffMs = Math.max(0, now.getTime() - date.getTime());
     const diffMin = Math.floor(diffMs / 60000);
     if (diffMin < 1) return "Just now";
     if (diffMin < 60) return `${diffMin}m ago`;
@@ -638,6 +779,100 @@ class TribelyService {
     return submissions.some(
       (s) => s.user_id === userId && new Date(s.submitted_at) >= todayStart
     );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Kudos Virtual Currency & Gamified Staking Economy Client Methods (v1)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async getKudosWallet(): Promise<KudosWallet> {
+    return await apiClient.get<KudosWallet>("/api/v1/kudos/wallet");
+  }
+
+  async getKudosTransactions(limit: number = 50, offset: number = 0): Promise<KudosTransaction[]> {
+    return await apiClient.get<KudosTransaction[]>(
+      `/api/v1/kudos/transactions?limit=${limit}&offset=${offset}`
+    );
+  }
+
+  async joinArenaWithStake(arenaId: number, inviteCode?: string): Promise<ArenaJoinStakeResponse> {
+    return await apiClient.post<ArenaJoinStakeResponse>(
+      `/api/v1/arenas/${arenaId}/join`,
+      inviteCode ? { invite_code: inviteCode } : {}
+    );
+  }
+
+  async getArenaPoolDetails(arenaId: number): Promise<ArenaPoolDetails> {
+    return await apiClient.get<ArenaPoolDetails>(`/api/v1/arenas/${arenaId}/pool`);
+  }
+
+  async getArenaLeaderboard(arenaId: number): Promise<LeaderboardMember[]> {
+    return await apiClient.get<LeaderboardMember[]>(`/api/v1/arenas/${arenaId}/leaderboard`);
+  }
+
+  async distributeWeeklyRewards(arenaId: number): Promise<WeeklyDistributionResponse> {
+    return await apiClient.post<WeeklyDistributionResponse>(
+      `/api/v1/arenas/${arenaId}/distribute-weekly`
+    );
+  }
+
+  async penalizeMissedDeadline(arenaId: number, userId: number): Promise<PenaltyMissedResponse> {
+    return await apiClient.post<PenaltyMissedResponse>(
+      `/api/v1/arenas/${arenaId}/penalize-missed`,
+      { user_id: userId }
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Real-Time Notifications & Admin Moderation Methods
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async fetchNotifications(limit: number = 50): Promise<{ notifications: ApiNotification[]; unread_count: number }> {
+    try {
+      const res = await apiClient.get<any>(`/api/notifications/history?limit=${limit}`);
+      const data = res.data || res;
+      return {
+        notifications: data.notifications || [],
+        unread_count: data.unread_count ?? 0,
+      };
+    } catch {
+      return { notifications: [], unread_count: 0 };
+    }
+  }
+
+  async approveJoinRequest(arenaId: number, userId: number): Promise<{ success: boolean; message?: string }> {
+    try {
+      const res = await apiClient.post<any>("/api/admin/arenas/approve", {
+        arena_id: arenaId,
+        user_id: userId,
+      });
+      return { success: true, message: res.data?.detail || "Member approved successfully." };
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail?.message || err?.response?.data?.detail || "Failed to approve request";
+      return { success: false, message: typeof msg === "string" ? msg : JSON.stringify(msg) };
+    }
+  }
+
+  async rejectJoinRequest(arenaId: number, userId: number): Promise<{ success: boolean; message?: string }> {
+    try {
+      const res = await apiClient.post<any>("/api/admin/arenas/reject", {
+        arena_id: arenaId,
+        user_id: userId,
+      });
+      return { success: true, message: res.data?.detail || "Request rejected successfully." };
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail?.message || err?.response?.data?.detail || "Failed to reject request";
+      return { success: false, message: typeof msg === "string" ? msg : JSON.stringify(msg) };
+    }
+  }
+
+  async markAllNotificationsRead(): Promise<boolean> {
+    try {
+      await apiClient.post("/api/notifications/mark-all-read");
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 

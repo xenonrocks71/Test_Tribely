@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import api from "@/app/utils/api";
 import { getWsBaseUrl } from "@/app/utils/config";
 import { Bell, MessageCircle, X, ExternalLink } from "lucide-react";
-import { useCallContext } from "./CallContext";
 
 interface NotificationBanner {
   id: string;
@@ -97,11 +96,18 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           );
         }
 
-        if (data.event_type === "unread_update") {
+        if (data.event_type === "unread_update" || data.notification || data.event_type === "join_request" || data.event_type === "member_joined") {
           const targetArena = data.arena_id;
           const newCount = data.unread_count || 1;
 
-          setUnreadCounts((prev) => ({ ...prev, [targetArena]: newCount }));
+          if (targetArena) {
+            setUnreadCounts((prev) => ({ ...prev, [targetArena]: newCount }));
+          }
+
+          // Broadcast real-time notification update to in-app listeners (like NotificationsModal)
+          window.dispatchEvent(
+            new CustomEvent("tribely:notification_update", { detail: data })
+          );
 
           if (data.notification) {
             playChime();
@@ -141,13 +147,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     };
   }, []);
 
-  const { joinArenaCall } = useCallContext();
-
   const handleToastClick = (banner: NotificationBanner) => {
-    if (banner.title.includes("Call") && banner.arenaId) {
-      joinArenaCall(banner.arenaId);
-    } else if (banner.url) {
+    if (banner.url) {
       router.push(banner.url);
+    } else if (banner.arenaId) {
+      router.push(`/arenas/${banner.arenaId}`);
     }
     setActiveBanner(null);
   };

@@ -78,6 +78,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const setThemeMode = useCallback((newMode: ThemeMode) => {
     setThemeModeState(newMode);
     localStorage.setItem("tribely_theme", newMode);
+    try {
+      document.cookie = `tribely_theme=${encodeURIComponent(newMode)}; path=/; max-age=31536000; SameSite=Lax`;
+    } catch {}
     resolveAndApply(newMode);
   }, [resolveAndApply]);
 

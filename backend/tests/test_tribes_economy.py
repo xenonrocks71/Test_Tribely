@@ -47,7 +47,6 @@ def test_absence_penalty_and_freeze_trigger(db_session):
 
     wallet = tribes_service.get_or_create_user_wallet(db_session, user_id=u.id)
     wallet.tribes_balance = 100.0
-    wallet.streak_shields = 0
     db_session.commit()
 
     arena = Arena(id=5, name="Audit Arena", invite_code="AUDIT555", creator_id=u.id, penalty_amount=300.0)
@@ -118,7 +117,6 @@ def test_custom_arena_penalty_amount(db_session):
 
     wallet = tribes_service.get_or_create_user_wallet(db_session, user_id=u.id)
     wallet.tribes_balance = 1000.0
-    wallet.streak_shields = 0
     db_session.commit()
 
     custom_penalty = 500.0

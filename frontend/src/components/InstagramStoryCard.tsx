@@ -67,22 +67,22 @@ export const InstagramStoryCard: React.FC<InstagramStoryCardProps> = ({
           ref={cardRef}
           className="w-full aspect-[9/16] rounded-3xl p-6 flex flex-col justify-between relative overflow-hidden shadow-2xl border border-white/15"
           style={{
-            background: "radial-gradient(circle at 50% 20%, #2A1005 0%, #0D0D11 65%, #050508 100%)",
-            boxShadow: "0 25px 60px -15px rgba(255, 94, 0, 0.4), inset 0 1px 1px rgba(255,255,255,0.2)",
+            background: "radial-gradient(circle at 50% 20%, #172B4D 0%, #121212 65%, #0A0A0A 100%)",
+            boxShadow: "0 25px 60px -15px rgba(26, 115, 232, 0.4), inset 0 1px 1px rgba(255,255,255,0.2)",
           }}
         >
           {/* Subtle Ambient Glow */}
-          <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 rounded-full bg-[#FF5E00]/15 blur-3xl pointer-events-none" />
+          <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 rounded-full bg-[#1A73E8]/20 blur-3xl pointer-events-none" />
 
           {/* Top Bar: Tribely Branding */}
           <div className="flex items-center justify-between relative z-10">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-xl bg-gradient-to-tr from-[#FF5E00] to-amber-500 flex items-center justify-center text-white font-black text-xs shadow-lg shadow-[#FF5E00]/40">
-                T
+              <div className="w-7 h-7 rounded-xl bg-white dark:bg-[#202124] p-0.5 border border-white/20 flex items-center justify-center shadow-md">
+                <img src="/icons/BrandNewLook.png" alt="Tribely" className="w-full h-full object-contain" />
               </div>
-              <span className="text-sm font-black tracking-widest text-white uppercase">Tribely</span>
+              <span className="text-sm font-semibold tracking-wider text-white">Tribely</span>
             </div>
-            <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/10 text-zinc-300 backdrop-blur">
+            <span className="text-[10px] font-medium tracking-wider px-2.5 py-1 rounded-full bg-white/10 text-neutral-300 backdrop-blur">
               Verified Proof
             </span>
           </div>
@@ -91,29 +91,29 @@ export const InstagramStoryCard: React.FC<InstagramStoryCardProps> = ({
           <div className="text-center space-y-4 my-auto relative z-10">
             {/* User Avatar with Ring */}
             <div className="inline-block relative">
-              <div className="w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-[#FF5E00] via-[#10B981] to-amber-400 shadow-[0_0_25px_rgba(255,94,0,0.4)] mx-auto">
-                <div className="w-full h-full rounded-full overflow-hidden bg-black flex items-center justify-center">
+              <div className="w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-[#1A73E8] via-[#0F9D58] to-[#8AB4F8] shadow-[0_0_25px_rgba(26,115,232,0.4)] mx-auto">
+                <div className="w-full h-full rounded-full overflow-hidden bg-neutral-900 flex items-center justify-center">
                   {userAvatar ? (
                     <img src={userAvatar} alt={userName} className="w-full h-full object-cover" />
                   ) : (
-                    <span className="text-xl font-black text-white">{userName.slice(0, 2).toUpperCase()}</span>
+                    <span className="text-xl font-bold text-white">{userName.slice(0, 2).toUpperCase()}</span>
                   )}
                 </div>
               </div>
             </div>
 
             <div>
-              <h4 className="text-base font-black text-white">{userName}</h4>
-              <p className="text-xs font-semibold text-[#FF7A00] mt-0.5">{arenaName}</p>
+              <h4 className="text-base font-bold text-white">{userName}</h4>
+              <p className="text-xs font-medium text-[#8AB4F8] mt-0.5">{arenaName}</p>
             </div>
 
             {/* Giant Streak Callout */}
             <div className="py-4 px-6 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-md shadow-inner inline-block">
               <div className="flex items-center justify-center gap-2">
-                <Flame className="w-8 h-8 text-[#FF5E00] fill-[#FF5E00] animate-bounce" />
-                <span className="text-4xl font-black tracking-tight text-white">{currentStreak}</span>
+                <Flame className="w-8 h-8 text-[#0F9D58] fill-[#0F9D58] animate-bounce" />
+                <span className="text-4xl font-bold tracking-tight text-white">{currentStreak}</span>
               </div>
-              <p className="text-[11px] font-black uppercase tracking-widest text-zinc-400 mt-1">
+              <p className="text-[11px] font-medium tracking-widest text-neutral-300 mt-1 uppercase">
                 Day Unbroken Streak
               </p>
             </div>
@@ -125,24 +125,24 @@ export const InstagramStoryCard: React.FC<InstagramStoryCardProps> = ({
                   key={i}
                   className={`w-2.5 h-2.5 rounded-sm ${
                     i < Math.min(14, currentStreak)
-                      ? "bg-[#10B981] shadow-[0_0_4px_#10B981]"
-                      : "bg-zinc-800"
+                      ? "bg-[#0F9D58] shadow-[0_0_4px_#0F9D58]"
+                      : "bg-neutral-800"
                   }`}
                 />
               ))}
             </div>
 
             {/* Tier Badge */}
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-black">
-              <Trophy className="w-3.5 h-3.5" />
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#1A73E8]/20 border border-[#1A73E8]/40 text-[#8AB4F8] text-xs font-medium">
+              <Trophy className="w-3.5 h-3.5 text-amber-400" />
               <span>{tierBadge}</span>
             </div>
           </div>
 
           {/* Bottom Card Footer */}
           <div className="text-center pt-3 border-t border-white/10 relative z-10">
-            <p className="text-[10px] font-bold text-zinc-400">Join my tribe on Tribely</p>
-            <p className="text-[9px] font-black text-zinc-500 tracking-wider uppercase mt-0.5">tribely.app</p>
+            <p className="text-[10px] font-medium text-neutral-300">Join my tribe on Tribely</p>
+            <p className="text-[9px] font-semibold text-neutral-400 tracking-wider uppercase mt-0.5">tribely.app</p>
           </div>
         </div>
 
@@ -151,11 +151,7 @@ export const InstagramStoryCard: React.FC<InstagramStoryCardProps> = ({
           <button
             type="button"
             onClick={handleNativeShare}
-            className="flex-1 py-3 px-4 rounded-2xl font-black text-xs text-white flex items-center justify-center gap-2 shadow-xl transition-all active:scale-95 cursor-pointer"
-            style={{
-              background: "linear-gradient(135deg, #FF7A00 0%, #FF3D00 100%)",
-              boxShadow: "0 8px 25px rgba(255, 94, 0, 0.4)",
-            }}
+            className="flex-1 py-3 px-4 rounded-full font-medium text-xs text-white flex items-center justify-center gap-2 shadow-lg bg-[#1A73E8] hover:bg-[#1557B0] transition-all active:scale-95 cursor-pointer"
           >
             <Share2 className="w-4 h-4" />
             <span>{copied ? "Link Copied!" : "Share to Story"}</span>

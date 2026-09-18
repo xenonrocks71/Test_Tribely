@@ -10,9 +10,9 @@ export default function SplashScreen() {
 
   useEffect(() => {
     setMounted(true);
-    // Start fade-out after 1.2s, fully remove after 1.6s
-    const fadeTimer = setTimeout(() => setFadeOut(true), 1200);
-    const hideTimer = setTimeout(() => setVisible(false), 1600);
+    // Meta-style smooth timing: 1.1s display, 350ms graceful fade-out exit
+    const fadeTimer = setTimeout(() => setFadeOut(true), 1100);
+    const hideTimer = setTimeout(() => setVisible(false), 1500);
     return () => {
       clearTimeout(fadeTimer);
       clearTimeout(hideTimer);
@@ -23,69 +23,83 @@ export default function SplashScreen() {
 
   return (
     <div
+      className={`fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-white dark:bg-[#000000] select-none transition-all duration-400 ease-out ${
+        fadeOut ? "opacity-0 scale-[1.03] pointer-events-none" : "opacity-100 scale-100"
+      }`}
       style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 9999,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "var(--bg, #FFFFFF)",
-        transition: "opacity 0.4s ease",
-        opacity: fadeOut ? 0 : 1,
-        pointerEvents: fadeOut ? "none" : "all",
+        transitionProperty: "opacity, transform",
+        transitionDuration: "380ms",
+        transitionTimingFunction: "cubic-bezier(0.16, 1, 0.3, 1)",
       }}
     >
-      {/* Logo — pops in with spring animation */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 0,
-          width: 160,
-          height: 160,
-          position: "relative",
-          animation: "splashPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
-        }}
-      >
-        <Image
-          src="/logo.png"
-          alt="Tribely"
-          fill
-          priority
-          sizes="160px"
+      {/* ── CENTER HERO: BrandLogo with Meta-Style Scale Entrance & Luminescent Aura ── */}
+      <div className="relative flex flex-col items-center justify-center">
+        {/* Subtle Ambient Aura */}
+        <div className="absolute -inset-6 rounded-full bg-gradient-to-tr from-[#A855F7]/15 via-[#0099FF]/15 to-[#10B981]/15 blur-2xl dark:opacity-70 opacity-30 animate-pulse pointer-events-none" />
+
+        {/* Full Brand Logo (Emblem + Wordmark) */}
+        <div
+          className="relative w-48 h-48 sm:w-56 sm:h-56 shrink-0"
           style={{
-            objectFit: "contain",
+            animation: "metaPop 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards",
           }}
-        />
+        >
+          <Image
+            src="/icons/BrandLogo.png"
+            alt="Tribely"
+            fill
+            priority
+            sizes="(max-width: 640px) 192px, 224px"
+            className="object-contain drop-shadow-sm select-none"
+          />
+        </div>
       </div>
 
-      {/* Loading dots */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: 52,
-          display: "flex",
-          gap: 7,
-        }}
-      >
-        {[0, 1, 2].map((i) => (
+      {/* ── BOTTOM META SIGNATURE FOOTER ── */}
+      <div className="absolute bottom-10 sm:bottom-12 flex flex-col items-center justify-center gap-1">
+        {/* Sleek Hairline Indeterminate Bar */}
+        <div className="w-14 h-[2px] rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden mb-2.5">
           <div
-            key={i}
+            className="w-full h-full bg-gradient-to-r from-[#A855F7] via-[#0099FF] to-[#10B981]"
             style={{
-              width: 7,
-              height: 7,
-              borderRadius: "50%",
-              background: "var(--accent, #FF5E00)",
-              animation: `splashDot 1.2s ease-in-out ${i * 0.2}s infinite`,
-              opacity: 0.5,
+              animation: "metaShimmer 1.4s ease-in-out infinite",
             }}
           />
-        ))}
+        </div>
+
+        <span className="text-[10px] font-semibold tracking-[0.25em] uppercase text-neutral-400 dark:text-neutral-500">
+          from
+        </span>
+        <span className="text-xs sm:text-[13px] font-extrabold tracking-[0.3em] uppercase bg-gradient-to-r from-[#A855F7] via-[#0099FF] to-[#10B981] bg-clip-text text-transparent">
+          Tribely
+        </span>
       </div>
+
+      <style jsx global>{`
+        @keyframes metaPop {
+          0% {
+            opacity: 0;
+            transform: scale(0.88);
+          }
+          100% {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+        @keyframes metaShimmer {
+          0% {
+            transform: translateX(-100%);
+          }
+          50% {
+            transform: translateX(20%);
+          }
+          100% {
+            transform: translateX(100%);
+          }
+        }
+      `}</style>
     </div>
   );
 }
+
 

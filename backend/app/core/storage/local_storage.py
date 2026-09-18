@@ -14,21 +14,31 @@ class LocalStorageService(BaseStorageService):
     Concrete Local File System implementation of BaseStorageService.
     """
 
-    def __init__(self, upload_dir: str = "static/uploads", base_url: str = None) -> None:
+    def __init__(self, upload_dir: str = None, base_url: str = None) -> None:
         """
         Initialize LocalStorageService with target storage folder and dynamic cloud public URL.
 
         :param upload_dir: Relative or absolute disk directory.
         :param base_url: Public base URL prefix for serving static files.
+                         Use None to store relative paths (recommended for local dev with Next.js proxy).
         """
-        self.upload_dir = upload_dir
+        if upload_dir:
+            self.upload_dir = upload_dir
+        else:
+            backend_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            self.upload_dir = os.path.join(backend_root, "static", "uploads")
+
         if base_url:
             self.base_url = base_url
         else:
             backend_url = os.getenv("BACKEND_PUBLIC_URL") or os.getenv("RENDER_EXTERNAL_URL")
             if not backend_url and os.getenv("ENVIRONMENT", "").lower() == "production":
+                # In production, use the absolute backend URL
                 backend_url = "https://tribely-backend.onrender.com"
-            self.base_url = f"{backend_url.rstrip('/')}/static/uploads" if backend_url else "/static/uploads"
+                self.base_url = f"{backend_url.rstrip('/')}/static/uploads"
+            else:
+                # In local dev: store relative paths so Next.js proxy rewrites serve them correctly
+                self.base_url = "/static/uploads"
         os.makedirs(self.upload_dir, exist_ok=True)
 
     def upload_file(self, file_bytes: bytes, filename: str, content_type: str = "image/jpeg") -> str:
@@ -36,18 +46,23 @@ class LocalStorageService(BaseStorageService):
         Persist raw binary bytes to local disk.
 
         :param file_bytes: File contents.
-        :param filename: Original filename.
+        :param filename: Original filename or target path.
         :param content_type: MIME type.
         :return: Public local URL string.
         """
-        ext = os.path.splitext(filename)[1] or ".jpg"
-        unique_name = f"{uuid.uuid4().hex}{ext}"
-        file_path = os.path.join(self.upload_dir, unique_name)
+        clean_path = filename.replace("\\", "/").strip("/")
+        parts = [p for p in clean_path.split("/") if p and p != ".."]
+        if not parts:
+            parts = [f"{uuid.uuid4().hex}.jpg"]
+        
+        object_key = "/".join(parts)
+        file_path = os.path.join(self.upload_dir, *parts)
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
         with open(file_path, "wb") as f:
             f.write(file_bytes)
 
-        return self.get_public_url(unique_name)
+        return self.get_public_url(object_key)
 
     def generate_presigned_upload_url(self, object_name: str, expiration: int = 3600) -> Dict[str, Any]:
         """
@@ -57,8 +72,9 @@ class LocalStorageService(BaseStorageService):
         :param expiration: Expiration window.
         :return: Dict containing target upload endpoint.
         """
+        clean_name = object_name.replace("\\", "/").strip("/")
         return {
-            "upload_url": f"{self.base_url}/{object_name}",
+            "upload_url": f"{self.base_url.rstrip('/')}/{clean_name}",
             "method": "PUT",
             "fields": {},
             "expiration": expiration
@@ -68,7 +84,8 @@ class LocalStorageService(BaseStorageService):
         """
         Construct local static public URL string.
 
-        :param object_name: Disk filename.
+        :param object_name: Disk filename or relative path.
         :return: Accessible static URL string.
         """
-        return f"{self.base_url}/{object_name}"
+        clean_name = object_name.replace("\\", "/").strip("/")
+        return f"{self.base_url.rstrip('/')}/{clean_name}"

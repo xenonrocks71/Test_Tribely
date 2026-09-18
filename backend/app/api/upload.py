@@ -13,10 +13,11 @@ from app.core.storage.storage_factory import StorageFactory
 router = APIRouter(prefix="/upload", tags=["Storage & Media Pipeline"])
 
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB hard limit to prevent OOM/DoS attacks
+MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB limit for high-res images and 30-second habit video clips
 
 ALLOWED_MIME_TYPES = {
     "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif",
+    "video/mp4", "video/webm", "video/quicktime", "video/ogg",
     "audio/webm", "audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav",
     "application/pdf"
 }
@@ -36,9 +37,13 @@ def validate_file_signature(file_bytes: bytes, mime_type: str) -> bool:
         return len(file_bytes) > 12 and file_bytes[:4] == b"RIFF" and file_bytes[8:12] == b"WEBP"
     if mime_type in ["audio/webm", "video/webm"]:
         return file_bytes.startswith(b"\x1a\x45\xdf\xa3") or file_bytes.startswith(b"1A45DFA3")
+    if mime_type in ["video/mp4", "audio/mp4"]:
+        return len(file_bytes) > 8 and (b"ftyp" in file_bytes[:16] or file_bytes[4:8] == b"ftyp")
+    if mime_type == "video/quicktime":
+        return len(file_bytes) > 8 and (b"moov" in file_bytes[:16] or b"mdat" in file_bytes[:16] or b"wide" in file_bytes[:16] or b"ftyp" in file_bytes[:16])
     if mime_type == "application/pdf":
         return file_bytes.startswith(b"%PDF-")
-    # For general audio types with variable containers, allow if MIME type is recognized
+    # For audio/video formats with variable containers, allow if recognized
     return True
 
 

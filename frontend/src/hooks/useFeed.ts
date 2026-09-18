@@ -10,6 +10,21 @@ interface UseFeedOptions {
   autoFetch?: boolean;
 }
 
+function sanitizeFeedCaption(caption?: string, textReflection?: string, submittedAt?: string): string {
+  const raw = (caption || textReflection || "").trim();
+  if (!raw || /ai auto-audit|confidence|\bauto-audit\b|invalid image proof format/i.test(raw)) {
+    try {
+      const d = new Date(submittedAt || "");
+      return !isNaN(d.getTime())
+        ? d.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })
+        : new Date().toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+    } catch {
+      return new Date().toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+    }
+  }
+  return raw;
+}
+
 export function useFeed(options: UseFeedOptions = {}) {
   const { limit = 15, initialCursor = null, autoFetch = true } = options;
 
@@ -47,7 +62,7 @@ export function useFeed(options: UseFeedOptions = {}) {
         mediaUrl: item.media_url || item.proof_url || "",
         selfieUrl: item.selfie_url || null,
         proofType: item.proof_type || "image",
-        caption: item.caption || item.text_reflection || "",
+        caption: sanitizeFeedCaption(item.caption, item.text_reflection, item.submitted_at || item.created_at),
         telemetryData: item.telemetry_data || {},
         submissionDate: item.submission_date || item.submitted_at || new Date().toISOString().split("T")[0],
         createdAt: item.created_at || item.submitted_at || new Date().toISOString(),
@@ -99,7 +114,7 @@ export function useFeed(options: UseFeedOptions = {}) {
         mediaUrl: item.media_url || item.proof_url || "",
         selfieUrl: item.selfie_url || null,
         proofType: item.proof_type || "image",
-        caption: item.caption || item.text_reflection || "",
+        caption: sanitizeFeedCaption(item.caption, item.text_reflection, item.submitted_at || item.created_at),
         telemetryData: item.telemetry_data || {},
         submissionDate: item.submission_date || item.submitted_at || new Date().toISOString().split("T")[0],
         createdAt: item.created_at || item.submitted_at || new Date().toISOString(),

@@ -14,9 +14,90 @@ import { ArenasView } from "@/components/arenas/ArenasView";
 import { VaultView } from "@/components/vault/VaultView";
 import { TribeChatDrawer } from "@/components/chat/TribeChatDrawer";
 import { EmptyState } from "@/components/common/EmptyState";
-import { CheckCircle2, Sparkles, Flame, RotateCw } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Flame,
+  Users,
+  RotateCw,
+} from "lucide-react";
 
-function FeedContent() {
+/* ── Beautiful empty state for feed ── */
+function FeedEmpty() {
+  const { openCamera, setActiveTab } = useApp();
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: "easeOut" }}
+      className="w-full flex flex-col items-center px-6 py-16 text-center"
+    >
+      {/* Icon */}
+      <div className="w-14 h-14 rounded-full bg-[#E8F0FE] dark:bg-[#1A73E8]/15 border border-[#D2E3FC] dark:border-[#1A73E8]/30 flex items-center justify-center mb-4 text-[#1A73E8] dark:text-[#8AB4F8]">
+        <Flame className="w-6 h-6 fill-current" />
+      </div>
+
+      <h3 className="text-base font-semibold text-neutral-900 dark:text-white tracking-tight mb-1.5 leading-tight">
+        Your feed is waiting
+      </h3>
+      <p className="text-xs text-neutral-500 dark:text-neutral-400 max-w-[280px] leading-relaxed mb-6">
+        Join a squad and drop your first verified habit proof to see your team's activity here.
+      </p>
+
+      <div className="w-full max-w-[260px] space-y-2.5">
+        <motion.button
+          whileTap={{ scale: 0.98 }}
+          onClick={openCamera}
+          className="w-full py-2.5 px-4 rounded-full bg-[#1A73E8] hover:bg-[#1557B0] dark:bg-[#8AB4F8] dark:hover:bg-[#A8C7FA] text-white dark:text-[#121212] font-medium text-xs shadow-xs flex items-center justify-center gap-2 cursor-pointer transition"
+        >
+          <Flame className="w-3.5 h-3.5" />
+          <span>Drop Today&apos;s Proof</span>
+        </motion.button>
+
+        <motion.button
+          whileTap={{ scale: 0.98 }}
+          onClick={() => setActiveTab("explore")}
+          className="w-full py-2.5 px-4 rounded-full border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 font-medium text-xs flex items-center justify-center gap-2 cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+        >
+          <Users className="w-3.5 h-3.5" />
+          <span>Explore Squads</span>
+        </motion.button>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ── Pull-to-refresh indicator ── */
+function PullIndicator({ pullDistance, isPullRefreshing }: { pullDistance: number; isPullRefreshing: boolean }) {
+  const opacity = isPullRefreshing ? 1 : Math.min(1, pullDistance / 40);
+  const height = isPullRefreshing ? 52 : pullDistance > 0 ? pullDistance : 0;
+
+  return (
+    <div
+      className="overflow-hidden transition-all duration-200 flex flex-col items-center justify-center"
+      style={{ height, opacity }}
+    >
+      {isPullRefreshing ? (
+        <div className="flex items-center gap-2 text-emerald-500 py-2">
+          <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-[12px] font-medium text-neutral-500 dark:text-neutral-400">Refreshing…</span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 py-2">
+          <RotateCw
+            className="w-4 h-4 text-neutral-400"
+            style={{ transform: `rotate(${pullDistance * 4.5}deg)` }}
+          />
+          <span className="text-[12px] text-neutral-400">
+            {pullDistance >= 50 ? "Release to refresh" : "Pull to refresh"}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Main Feed Content ── */
+export function FeedContent() {
   const {
     activeTab,
     setActiveTab,
@@ -30,6 +111,8 @@ function FeedContent() {
     showToast,
   } = useApp();
   const sentinelRef = React.useRef<HTMLDivElement>(null);
+
+  const visiblePosts = feedPosts;
 
   // Pull to refresh state
   const [pullDistance, setPullDistance] = React.useState(0);
@@ -70,7 +153,7 @@ function FeedContent() {
       triggerHaptic([20, 30]);
       try {
         await Promise.all([refreshFeed(), refreshArenas()]);
-        showToast("🔄 Squad feed refreshed!", "success");
+        showToast("Feed refreshed!", "success");
       } catch {}
       setTimeout(() => {
         setIsPullRefreshing(false);
@@ -99,56 +182,26 @@ function FeedContent() {
     <>
       {activeTab === "feed" && (
         <div
-          className="w-full"
+          className="w-full px-3 sm:px-0"
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
         >
-          {/* Pull to Refresh Indicator */}
-          <div
-            className="overflow-hidden transition-all duration-200 flex flex-col items-center justify-center text-xs font-bold text-neutral-500 dark:text-neutral-400"
-            style={{
-              height: isPullRefreshing ? 52 : pullDistance > 0 ? pullDistance : 0,
-              opacity: isPullRefreshing ? 1 : Math.min(1, pullDistance / 40),
-            }}
-          >
-            {isPullRefreshing ? (
-              <div className="flex items-center gap-2 text-emerald-500 py-2">
-                <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                <span className="text-[11px] font-black tracking-tight">Refreshing squad drops...</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 py-2">
-                <RotateCw
-                  className="w-4 h-4 transition-transform text-emerald-500"
-                  style={{ transform: `rotate(${pullDistance * 4.5}deg)` }}
-                />
-                <span className="text-[11px] font-bold">
-                  {pullDistance >= 50 ? "Release to refresh..." : "Pull down to refresh..."}
-                </span>
-              </div>
-            )}
-          </div>
+          {/* Pull Indicator */}
+          <PullIndicator pullDistance={pullDistance} isPullRefreshing={isPullRefreshing} />
 
-          {/* 1. Top Ephemeral Story Tray */}
+          {/* Daily Squad Check-in Pulse Tray */}
           <StoryTray />
 
-          {/* 2. Vertical Feed of Verified Habit Proof Drops */}
-          {feedPosts.length === 0 ? (
-            <EmptyState
-              title="Your Feed is Ready for Action"
-              description="Join an arena or be the first in your tribe to drop today's verified habit proof!"
-              actionLabel="Drop Today's Proof 🔥"
-              onAction={() => openCamera()}
-              secondaryLabel="Explore Arenas 🚀"
-              onSecondaryAction={() => setActiveTab("explore")}
-            />
+          {/* Feed Posts */}
+          {visiblePosts.length === 0 ? (
+            <FeedEmpty />
           ) : (
             (() => {
-              const firstPublicIndex = feedPosts.findIndex((p) => !p.isJoined);
+              const firstPublicIndex = visiblePosts.findIndex((p) => !p.isJoined);
               return (
-                <div className="divide-y divide-neutral-200 dark:divide-neutral-900/80">
-                  {feedPosts.map((post, index) => (
+                <div>
+                  {visiblePosts.map((post, index) => (
                     <React.Fragment key={post.id}>
                       {index === firstPublicIndex && firstPublicIndex > 0 && (
                         <CaughtUpDivider />
@@ -157,7 +210,7 @@ function FeedContent() {
                       {index === 1 && <SuggestedSquadsCard />}
                     </React.Fragment>
                   ))}
-                  {firstPublicIndex === -1 && !hasMoreFeed && feedPosts.length > 0 && (
+                  {firstPublicIndex === -1 && !hasMoreFeed && visiblePosts.length > 0 && (
                     <CaughtUpDivider />
                   )}
                 </div>
@@ -165,16 +218,16 @@ function FeedContent() {
             })()
           )}
 
-          {/* Infinite Scroll Sentinel & Subtle Status */}
-          {feedPosts.length > 0 && (
-            <div ref={sentinelRef} className="py-6 text-center flex items-center justify-center">
+          {/* Infinite Scroll Sentinel */}
+          {visiblePosts.length > 0 && (
+            <div ref={sentinelRef} className="py-8 flex items-center justify-center">
               {hasMoreFeed ? (
-                <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                <div className="w-5 h-5 border-[1.5px] border-neutral-400 border-t-transparent rounded-full animate-spin" />
               ) : (
-                <div className="flex items-center gap-2 text-xs font-bold text-neutral-400 py-4">
-                  <span className="w-1.5 h-1.5 rounded-full bg-neutral-500" />
-                  <span>You're completely up to date</span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-neutral-500" />
+                <div className="flex items-center gap-2 text-[12px] text-neutral-400 dark:text-neutral-600">
+                  <div className="w-1 h-1 rounded-full bg-neutral-300 dark:bg-neutral-700" />
+                  <span>You&apos;re up to date</span>
+                  <div className="w-1 h-1 rounded-full bg-neutral-300 dark:bg-neutral-700" />
                 </div>
               )}
             </div>
@@ -182,17 +235,14 @@ function FeedContent() {
         </div>
       )}
 
-      {activeTab === "explore" && <ArenasView />}
+      {activeTab === "explore" && <ArenasView viewMode="search" />}
+      {activeTab === "squads" && <ArenasView viewMode="enrolled" />}
       {activeTab === "vault" && <VaultView />}
       {activeTab === "profile" && <ProfileView />}
 
-      {/* Camera-First Drop Modal (Bottom Shutter) */}
+      {/* Modals */}
       <CameraModal />
-
-      {/* Slide-Over Real-Time Tribe DM & Audio Drop Drawer */}
       <TribeChatDrawer />
-
-      {/* Contextual Proof Discussion & Reply Bottom Sheet */}
       <ProofReplyModal />
     </>
   );

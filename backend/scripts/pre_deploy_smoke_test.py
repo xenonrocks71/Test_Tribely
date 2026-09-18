@@ -29,7 +29,7 @@ from app.core.database import sync_engine as engine, SessionLocal
 from app.models import models
 from app.models.models import (
     User, UserWallet, Arena, ArenaMembership, Submission,
-    DailyArenaSheet, ArenaLogbook, KudosLedger, SubmissionVote
+    DailyArenaSheet, ArenaLogbook, KudosLedger, SubmissionVote, Message
 )
 from app.services.audit_service import audit_service
 from app.services.kudos_service import kudos_service
@@ -133,33 +133,27 @@ def run_pre_deploy_smoke_test():
         print(f"  [OK] Proof registered (ID: {sub.id}, AI Confidence: {sub.ai_confidence_score})")
         print(f"  [OK] DailyArenaSheet synced (Status: present, Date: {today_str})")
 
-        # ── 4. Activate Emergency Streak Shield ───────────────────────────
-        print("\n[Step 4/7] Testing Streak Freeze Shield mechanism...")
-        prev_shields = wallet.streak_shields
-        wallet.streak_shields -= 1
-
+        # ── 4. Verify Multi-Day Streak Continuity ─────────────────────────
+        print("\n[Step 4/7] Testing Multi-Day Streak Continuity...")
         yesterday_str = (date.today() - timedelta(days=1)).isoformat()
-        shielded_sheet = DailyArenaSheet(
+        yesterday_sheet = DailyArenaSheet(
             arena_id=test_arena.id,
             user_id=test_user.id,
             date_day=yesterday_str,
-            status="shielded",
-            proof_type="shield"
+            status="present",
+            proof_type="image"
         )
-        db.add(shielded_sheet)
+        db.add(yesterday_sheet)
 
         logbook = ArenaLogbook(
             arena_id=test_arena.id,
             user_id=test_user.id,
-            entry_type="streak_shield_used",
-            description="Emergency streak shield smoke test activation."
+            entry_type="proof_submitted",
+            description="Yesterday's proof recorded."
         )
         db.add(logbook)
         db.commit()
-        db.refresh(wallet)
-
-        print(f"  [OK] Streak Shield deducted: {prev_shields} -> {wallet.streak_shields}")
-        assert wallet.streak_shields == prev_shields - 1, "Shield was not deducted!"
+        print(f"  [OK] Multi-day continuity record created for {yesterday_str}")
 
         # ── 5. Strava Heatmap Consistency Engine ──────────────────────────
         print("\n[Step 5/7] Testing Strava Consistency Matrix calculation...")
@@ -167,13 +161,10 @@ def run_pre_deploy_smoke_test():
         streak_data = streak_service.calculate_user_streak(db, user_id=test_user.id, arena_id=test_arena.id)
         print(f"  [OK] Calculated Streak: {streak_data['current_streak']} days (Badge: {streak_data['badge_tier']})")
         print(f"  [OK] Max Streak: {streak_data['max_streak']} days")
-        assert streak_data["current_streak"] >= 2, "Streak calculation should count present + shielded days!"
+        assert streak_data["current_streak"] >= 2, "Streak calculation should count present days!"
 
         # ── 6. Trigger Absence Audit on Another Arena ─────────────────────
         print("\n[Step 6/7] Triggering absence audit penalty...")
-        wallet.streak_shields = 0 # Deplete shields to test financial slash
-        db.commit()
-
         audit_res = audit_service.audit_arena_deadline(db, arena_id=test_arena.id, target_date_str="2026-08-01")
         db.refresh(wallet)
 

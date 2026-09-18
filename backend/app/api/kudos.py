@@ -60,7 +60,6 @@ def get_user_kudos_wallet(
             "inr_value": inr_val,
             "is_frozen": wallet.is_frozen,
             "referral_count": wallet.referral_count,
-            "streak_shields": getattr(wallet, 'streak_shields', 1),
             "recent_transactions": tx_list
         })
     except Exception as e:

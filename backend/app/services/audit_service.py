@@ -102,45 +102,39 @@ class AuditService:
                     db.add(sheet)
 
                     penalty_amount = float(arena.penalty_amount) if arena.penalty_amount is not None else 300.0
-                    
-                    user_wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
-                    has_shield = user_wallet and getattr(user_wallet, 'streak_shields', 0) > 0
 
-                    if has_shield:
-                        sheet.status = "shielded"
-                        sheet.proof_type = "shield"
-                        user_wallet.streak_shields -= 1
-                        logbook_entry = ArenaLogbook(
+                    # Debit penalty from user's wallet into arena reserve vault and record KudosLedger
+                    try:
+                        from app.services.kudos_service import kudos_service
+                        kudos_service.deduct_absent_penalty(
+                            db=db,
                             arena_id=arena_id,
                             user_id=user_id,
-                            entry_type="streak_shield_used",
-                            amount=0.0,
-                            description=f"Cutoff deadline missed — Protected by Streak Freeze Shield! (1 shield consumed for {target_date_str})"
+                            penalty_kudos=penalty_amount,
+                            target_date_str=target_date_str
                         )
-                        db.add(logbook_entry)
-                        try:
-                            from app.services.streak_service import streak_service
-                            streak_service.invalidate_streak_cache(user_id, arena_id)
-                        except Exception:
-                            pass
-                    else:
-                        # Reset streak to 0 on unshielded absence
-                        mem.current_streak = 0
+                    except Exception as ke:
+                        logger.error(f"[AuditService] Failed deducting absence penalty for user {user_id}: {ke}")
 
-                        logbook_entry = ArenaLogbook(
-                            arena_id=arena_id,
-                            user_id=user_id,
-                            entry_type="deadline_missed",
-                            amount=0.0,
-                            description=f"Cutoff deadline missed for date {target_date_str}. Active streak reset to 0."
-                        )
-                        db.add(logbook_entry)
+                    # Reset streak strictly to 0 on missed cutoff deadline
+                    mem.current_streak = 0
+                    if hasattr(mem, "streak_count"):
+                        mem.streak_count = 0
 
-                        try:
-                            from app.services.streak_service import streak_service
-                            streak_service.invalidate_streak_cache(user_id, arena_id)
-                        except Exception:
-                            pass
+                    logbook_entry = ArenaLogbook(
+                        arena_id=arena_id,
+                        user_id=user_id,
+                        entry_type="deadline_missed",
+                        amount=0.0,
+                        description=f"Cutoff deadline missed for date {target_date_str}. Active streak reset to 0."
+                    )
+                    db.add(logbook_entry)
+
+                    try:
+                        from app.services.streak_service import streak_service
+                        streak_service.invalidate_streak_cache(user_id, arena_id)
+                    except Exception:
+                        pass
 
                     # Transactional Outbox Event record
                     broadcast_payload = {

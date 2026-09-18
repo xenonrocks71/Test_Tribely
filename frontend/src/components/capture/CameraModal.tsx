@@ -3,29 +3,34 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Camera,
   X,
-  RefreshCw,
-  Zap,
-  CheckCircle2,
-  Image as ImageIcon,
-  Flame,
-  Lock,
-  Sparkles,
-  Link2,
-  ExternalLink,
-  Clipboard,
-  Check,
-  AlertCircle,
-  Clock,
-  ArrowRight,
-  Shield,
+  Camera,
   Upload,
+  Link2,
+  FileText,
+  Video,
+  Check,
+  CheckCircle2,
+  Clock,
+  Flame,
+  ArrowLeft,
+  ArrowRight,
+  RotateCcw,
+  RefreshCw,
   Trophy,
+  Sparkles,
+  AlertCircle,
+  Clipboard,
+  Image as ImageIcon,
+  ExternalLink,
+  Shield,
   ChevronRight,
-  Info,
+  Send,
+  Loader2,
 } from "lucide-react";
 import { useApp, HabitArena } from "@/context/AppContext";
+import { tribelyService } from "@/services/tribely.service";
+import { offlineProofQueue } from "@/utils/offlineProofQueue";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Types & Pure Deadline Timeline Calculator
@@ -41,14 +46,10 @@ export interface ArenaDeadlineTimeline {
   targetDayLabel: "Today" | "Tomorrow";
   displayCutoffTime: string;
   countdownFormatted: string;
-  progressPercent: number; // 0-100% of the active 24h window elapsed
+  progressPercent: number;
   urgencyLevel: "urgent" | "active" | "next_day";
 }
 
-/**
- * Accurately parses an arena's deadline time string (e.g. "10:00 PM", "06:00 AM", "23:59")
- * and computes remaining time, cycle rollover status, and countdown values.
- */
 export function parseArenaDeadline(deadlineStr?: string, referenceDate = new Date()): ArenaDeadlineTimeline {
   const currentHours = referenceDate.getHours();
   const currentMinutes = referenceDate.getMinutes();
@@ -82,7 +83,6 @@ export function parseArenaDeadline(deadlineStr?: string, referenceDate = new Dat
   const cutoffTotalMinutes = targetHours * 60 + targetMinutes;
   const cutoffTotalSeconds = cutoffTotalMinutes * 60;
 
-  // Formatted display cutoff string, e.g. "10:00 PM"
   const hDisplay = targetHours % 12 || 12;
   const period = targetHours >= 12 ? "PM" : "AM";
   const mDisplay = targetMinutes < 10 ? `0${targetMinutes}` : `${targetMinutes}`;
@@ -91,7 +91,6 @@ export function parseArenaDeadline(deadlineStr?: string, referenceDate = new Dat
   const isPassedToday = currentTotalMinutes >= cutoffTotalMinutes;
 
   if (!isPassedToday) {
-    // ── ACTIVE TODAY ──
     const diffSeconds = Math.max(0, cutoffTotalSeconds - currentTotalSeconds);
     const diffMinutes = Math.floor(diffSeconds / 60);
     const hours = Math.floor(diffSeconds / 3600);
@@ -100,14 +99,13 @@ export function parseArenaDeadline(deadlineStr?: string, referenceDate = new Dat
 
     let countdownFormatted = "";
     if (hours > 0) {
-      countdownFormatted = `${hours}h ${mins}m ${secs}s`;
+      countdownFormatted = `${hours}h ${mins}m`;
     } else if (mins > 0) {
       countdownFormatted = `${mins}m ${secs}s`;
     } else {
       countdownFormatted = `${secs}s`;
     }
 
-    // 24-hour cycle elapsed progress
     const windowElapsedMinutes = Math.max(0, 1440 - diffMinutes);
     const progressPercent = Math.min(100, Math.max(0, Math.round((windowElapsedMinutes / 1440) * 100)));
     const urgencyLevel: "urgent" | "active" = diffMinutes <= 120 ? "urgent" : "active";
@@ -126,8 +124,6 @@ export function parseArenaDeadline(deadlineStr?: string, referenceDate = new Dat
       urgencyLevel,
     };
   } else {
-    // ── CUTOFF PASSED: AUTOMATICALLY ROLL OVER TO NEXT DAY CYCLE ──
-    // DO NOT LOCK USER. Target deadline is tomorrow at the same cutoff time.
     const secondsToMidnight = 86400 - currentTotalSeconds;
     const diffSeconds = secondsToMidnight + cutoffTotalSeconds;
     const diffMinutes = Math.floor(diffSeconds / 60);
@@ -135,7 +131,7 @@ export function parseArenaDeadline(deadlineStr?: string, referenceDate = new Dat
     const mins = Math.floor((diffSeconds % 3600) / 60);
     const secs = diffSeconds % 60;
 
-    const countdownFormatted = `${hours}h ${mins}m ${secs}s`;
+    const countdownFormatted = `${hours}h ${mins}m`;
 
     return {
       hoursRemaining: hours,
@@ -154,13 +150,14 @@ export function parseArenaDeadline(deadlineStr?: string, referenceDate = new Dat
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. CameraModal Component
+// 2. CameraModal Component (Proof Submission Portal)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const CameraModal: React.FC = () => {
   const {
     isCameraModalOpen,
     closeCamera,
+    initialCameraArenaId,
     arenas,
     dropProofOptimistic,
     triggerHaptic,
@@ -169,6 +166,10 @@ export const CameraModal: React.FC = () => {
     isArenaCompletedToday,
     user,
   } = useApp();
+
+  // ── Navigation Flow State: "select_arena" (Stage 1) or "input_proof" (Stage 2) ──
+  const [viewMode, setViewMode] = useState<"select_arena" | "input_proof">("select_arena");
+  const [selectedArenaId, setSelectedArenaId] = useState<string>("");
 
   // ── Live Second-by-Second Ticker ──
   const [tickerTime, setTickerTime] = useState<Date>(new Date());
@@ -180,157 +181,214 @@ export const CameraModal: React.FC = () => {
     return () => clearInterval(interval);
   }, [isCameraModalOpen]);
 
-  // ── Top 3 Proof Modes: Capture, Upload, Link ──
-  const [proofMode, setProofMode] = useState<"capture" | "upload" | "link">("capture");
+  // ── Sorted Squads with Completion & Urgency Status ──
+  const squadItems = useMemo(() => {
+    return arenas.map((arena) => {
+      const isCompleted = isArenaCompletedToday(arena.id);
+      const timeline = parseArenaDeadline(arena.deadlineTime, tickerTime);
+      const normProofType = (arena.proofType || "image").toLowerCase();
 
-  // Proof content state
-  const [capturedImage, setCapturedImage] = useState<string | null>(null);
-  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+      let proofCategory: "link" | "image" | "video" | "text" = "image";
+      if (normProofType.includes("link") || normProofType.includes("url")) proofCategory = "link";
+      else if (normProofType.includes("video") || normProofType.includes("clip")) proofCategory = "video";
+      else if (normProofType.includes("text") || normProofType.includes("reflection")) proofCategory = "text";
+      else proofCategory = "image";
+
+      return {
+        arena,
+        isCompleted,
+        timeline,
+        proofCategory,
+      };
+    }).sort((a, b) => {
+      // Pending squads first, completed squads last
+      if (a.isCompleted && !b.isCompleted) return 1;
+      if (!a.isCompleted && b.isCompleted) return -1;
+      return a.timeline.totalMinutesRemaining - b.timeline.totalMinutesRemaining;
+    });
+  }, [arenas, completedArenaIdsToday, isArenaCompletedToday, tickerTime]);
+
+  // Total completed counts
+  const totalSquads = squadItems.length;
+  const totalCompleted = squadItems.filter((s) => s.isCompleted).length;
+  const isGrandSlam = totalSquads > 0 && totalCompleted === totalSquads;
+
+  // Track modal open/close transition so viewMode is ONLY set when modal opens
+  const wasOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (isCameraModalOpen && !wasOpenRef.current) {
+      wasOpenRef.current = true;
+      if (initialCameraArenaId) {
+        const target = arenas.find(
+          (a) =>
+            String(a.id) === String(initialCameraArenaId) ||
+            String(a.rawId) === String(initialCameraArenaId)
+        );
+        if (target) {
+          setSelectedArenaId(String(target.id));
+          setViewMode("input_proof");
+          return;
+        }
+      }
+      // Default to squad selector
+      setSelectedArenaId("");
+      setViewMode("select_arena");
+    } else if (!isCameraModalOpen && wasOpenRef.current) {
+      wasOpenRef.current = false;
+      setSelectedArenaId("");
+      setViewMode("select_arena");
+    }
+  }, [isCameraModalOpen, initialCameraArenaId, arenas]);
+
+  const activeSquadItem = useMemo(() => {
+    if (!selectedArenaId) return null;
+    return (
+      squadItems.find(
+        (s) =>
+          String(s.arena.id) === String(selectedArenaId) ||
+          String(s.arena.rawId) === String(selectedArenaId)
+      ) || null
+    );
+  }, [squadItems, selectedArenaId]);
+
+  const selectedArena = useMemo(() => {
+    if (activeSquadItem?.arena) return activeSquadItem.arena;
+    if (!selectedArenaId) return null;
+    return (
+      arenas.find(
+        (a) =>
+          String(a.id) === String(selectedArenaId) ||
+          String(a.rawId) === String(selectedArenaId)
+      ) || null
+    );
+  }, [activeSquadItem, arenas, selectedArenaId]);
+
+  const selectedProofCategory = activeSquadItem?.proofCategory || "image";
+
+  // ── Tailored Proof Input State ──
+  // For Image / Photo
+  const [imageSubMode, setImageSubMode] = useState<"upload" | "camera">("upload");
+  const [imageProofUrl, setImageProofUrl] = useState<string | null>(null);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [cameraFacing, setCameraFacing] = useState<"user" | "environment">("environment");
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [shutterFlash, setShutterFlash] = useState(false);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+
+  // For Link
   const [linkUrl, setLinkUrl] = useState("");
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [isPasting, setIsPasting] = useState(false);
+
+  // For Video
+  const [videoProofUrl, setVideoProofUrl] = useState<string | null>(null);
+
+  // For Text
+  const [textProof, setTextProof] = useState("");
+
+  // Caption / reflection note
   const [caption, setCaption] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isPasting, setIsPasting] = useState(false);
-  const [justSubmittedArenaId, setJustSubmittedArenaId] = useState<string | null>(null);
 
-  // Camera & media refs
+  // Media Refs
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const [cameraFacing, setCameraFacing] = useState<"user" | "environment">("environment");
-  const [cameraError, setCameraError] = useState<string | null>(null);
 
-  // Selected arena ID
-  const [selectedArenaId, setSelectedArenaId] = useState<string>("");
-
-  // ── 3. Enrolled Arenas Smart Sorting & Timeline Computation ──
-  // Rule 1: Pending squads due Today (sorted by soonest deadline first)
-  // Rule 2: Pending squads rolled over to Next Day (sorted by deadline)
-  // Rule 3: Completed squads for today (locked at bottom)
-  const sortedSquads = useMemo(() => {
-    return [...arenas]
-      .map((arena) => {
-        const isSubmitted = isArenaCompletedToday(arena.id);
-        const timeline = parseArenaDeadline(arena.deadlineTime, tickerTime);
-        return {
-          arena,
-          isSubmitted,
-          isLocked: isSubmitted, // Lock ONLY when submitted! Passing deadline does NOT lock.
-          timeline,
-        };
-      })
-      .sort((a, b) => {
-        // 1. Submitted squads strictly at the bottom
-        if (a.isSubmitted && !b.isSubmitted) return 1;
-        if (!a.isSubmitted && b.isSubmitted) return -1;
-        if (a.isSubmitted && b.isSubmitted) return 0;
-
-        // 2. Both unsubmitted: active today strictly before rolled next-day
-        if (!a.timeline.isNextDayCycle && b.timeline.isNextDayCycle) return -1;
-        if (a.timeline.isNextDayCycle && !b.timeline.isNextDayCycle) return 1;
-
-        // 3. Both in same cycle -> soonest deadline first
-        return a.timeline.totalMinutesRemaining - b.timeline.totalMinutesRemaining;
-      });
-  }, [arenas, completedArenaIdsToday, isArenaCompletedToday, tickerTime]);
-
-  // Auto-select the highest-priority pending arena on open or update
-  useEffect(() => {
-    if (!isCameraModalOpen) return;
-
-    const currentSelection = sortedSquads.find((s) => s.arena.id === selectedArenaId);
-
-    // If current selection doesn't exist or is completed, auto-pick next pending squad
-    if (!currentSelection || currentSelection.isSubmitted) {
-      const firstPending = sortedSquads.find((s) => !s.isSubmitted);
-      if (firstPending) {
-        setSelectedArenaId(firstPending.arena.id);
-      } else if (sortedSquads[0]) {
-        setSelectedArenaId(sortedSquads[0].arena.id);
-      }
-    }
-  }, [isCameraModalOpen, sortedSquads, selectedArenaId]);
-
-  const selectedSquadMeta = sortedSquads.find((s) => s.arena.id === selectedArenaId);
-  const selectedArena = selectedSquadMeta?.arena || arenas[0];
-  const isSelectedArenaLocked = Boolean(selectedSquadMeta?.isSubmitted);
-
-  // Count metrics for gamified HUD
-  const totalEnrolled = sortedSquads.length;
-  const totalCompletedToday = sortedSquads.filter((s) => s.isSubmitted).length;
-  const allSquadsSubmitted = totalEnrolled > 0 && totalCompletedToday === totalEnrolled;
-  const nextPendingSquad = sortedSquads.find((s) => !s.isSubmitted && s.arena.id !== selectedArenaId);
-
-  // Time remaining to midnight for locked squads (unlock window)
-  const unlockCountdown = useMemo(() => {
-    const now = tickerTime;
-    const currentSecs = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-    const remaining = 86400 - currentSecs;
-    const h = Math.floor(remaining / 3600);
-    const m = Math.floor((remaining % 3600) / 60);
-    const s = remaining % 60;
-    return `${h}h ${m < 10 ? "0" : ""}${m}m ${s < 10 ? "0" : ""}${s}s`;
-  }, [tickerTime]);
-
-  // ── 4. Camera Controls ──
-  const startCamera = useCallback(async (facing: "user" | "environment") => {
-    if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) return;
-
+  // Stop camera tracks cleanly
+  const stopCameraStream = useCallback(() => {
     if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
     }
+    setIsCameraActive(false);
+  }, []);
+
+  // Clean up camera on unmount or view change
+  useEffect(() => {
+    return () => {
+      stopCameraStream();
+    };
+  }, [stopCameraStream]);
+
+  // When leaving Stage 2 or closing modal, shut down camera
+  useEffect(() => {
+    if (!isCameraModalOpen || viewMode !== "input_proof" || imageSubMode !== "camera") {
+      stopCameraStream();
+    }
+  }, [isCameraModalOpen, viewMode, imageSubMode, stopCameraStream]);
+
+  // Start Camera ONLY when user explicitly clicks "Take Photo with Camera"
+  const startCamera = useCallback(async (facing: "user" | "environment") => {
+    if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setCameraError("Camera is not supported on this browser.");
+      return;
+    }
+
+    stopCameraStream();
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: facing,
-          width: { ideal: 1080 },
-          height: { ideal: 1350 },
+          width: { ideal: 1280 },
+          height: { ideal: 960 },
         },
         audio: false,
       });
 
       mediaStreamRef.current = stream;
+      setIsCameraActive(true);
+      setCameraError(null);
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.play().catch(() => {});
       }
-      setCameraError(null);
     } catch {
-      setCameraError("Camera permission unavailable. You can upload an image or paste a link.");
+      setCameraError("Camera access denied or unavailable. Please choose 'Upload Photo' instead.");
+      setIsCameraActive(false);
     }
-  }, []);
+  }, [stopCameraStream]);
 
-  useEffect(() => {
-    if (isCameraModalOpen && proofMode === "capture" && !capturedImage && !isSelectedArenaLocked) {
-      startCamera(cameraFacing);
-    } else {
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-        mediaStreamRef.current = null;
-      }
-    }
-
-    return () => {
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-        mediaStreamRef.current = null;
-      }
-    };
-  }, [isCameraModalOpen, proofMode, cameraFacing, capturedImage, isSelectedArenaLocked, startCamera]);
-
+  // Toggle Camera Facing
   const handleFlipCamera = () => {
     triggerHaptic([15]);
-    const next = cameraFacing === "user" ? "environment" : "user";
-    setCameraFacing(next);
-    startCamera(next);
+    const nextFacing = cameraFacing === "user" ? "environment" : "user";
+    setCameraFacing(nextFacing);
+    startCamera(nextFacing);
   };
 
-  const handleCaptureShutter = () => {
+  // Synthetic shutter click sound
+  const playShutterSound = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(600, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(120, ctx.currentTime + 0.06);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.06);
+    } catch {}
+  };
+
+  // Snap photo from live camera
+  const handleSnapPhoto = () => {
+    playShutterSound();
     triggerHaptic([35, 55]);
+    setShutterFlash(true);
+    setTimeout(() => setShutterFlash(false), 90);
+
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
@@ -344,53 +402,87 @@ export const CameraModal: React.FC = () => {
         }
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-        setCapturedImage(dataUrl);
-        return;
+        setImageProofUrl(dataUrl);
+        stopCameraStream();
+        showToast("Photo captured! 📸", "success");
       }
     }
-
-    // Fallback: trigger native camera input
-    nativeCameraInputRef.current?.click();
   };
 
-  // ── 5. File Upload Handler ──
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle Photo File Upload
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     triggerHaptic([20]);
+    setIsUploadingMedia(true);
+
+    // Read preview immediately
     const reader = new FileReader();
     reader.onload = () => {
-      const result = reader.result as string;
-      if (proofMode === "capture") {
-        setCapturedImage(result);
-      } else {
-        setUploadedImage(result);
-      }
-      showToast("Photo loaded successfully! 📸", "success");
+      setImageProofUrl(reader.result as string);
     };
     reader.readAsDataURL(file);
+
+    // Upload to backend storage
+    try {
+      const uploadRes = await tribelyService.uploadMediaFile(file);
+      if (uploadRes.success && uploadRes.url) {
+        setImageProofUrl(uploadRes.url);
+        showToast("Photo uploaded successfully! 📁", "success");
+      } else {
+        showToast("Photo loaded for verification.", "info");
+      }
+    } catch {
+      showToast("Photo loaded for verification.", "info");
+    } finally {
+      setIsUploadingMedia(false);
+    }
   };
 
-  // ── 6. Link Detection & Paste ──
+  // Handle Video File Upload
+  const handleVideoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 25 * 1024 * 1024) {
+      showToast("Video exceeds 25MB limit. Please choose a shorter clip.", "info");
+      return;
+    }
+
+    triggerHaptic([20]);
+    setIsUploadingMedia(true);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setVideoProofUrl(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+
+    try {
+      const uploadRes = await tribelyService.uploadMediaFile(file);
+      if (uploadRes.success && uploadRes.url) {
+        setVideoProofUrl(uploadRes.url);
+        showToast("Video clip loaded! 📹", "success");
+      }
+    } catch {
+      showToast("Video loaded.", "info");
+    } finally {
+      setIsUploadingMedia(false);
+    }
+  };
+
+  // ── Link Domain Recognition Helper ──
   const getLinkMeta = (url: string) => {
     try {
       const parsed = new URL(url);
       const host = parsed.hostname.toLowerCase();
 
       if (host.includes("leetcode.com")) {
-        return {
-          platform: "LeetCode",
-          badge: "LeetCode Algorithm ⚡",
-          color: "#FFA116",
-        };
+        return { platform: "LeetCode", badge: "LeetCode ⚡", color: "#FFA116", icon: "⚡" };
       }
       if (host.includes("github.com")) {
-        return {
-          platform: "GitHub",
-          badge: "GitHub PR / Commit 🐙",
-          color: "#A78BFA",
-        };
+        return { platform: "GitHub", badge: "GitHub 🐙", color: "#A78BFA", icon: "🐙" };
       }
       if (host.includes("youtube.com") || host.includes("youtu.be")) {
         let videoId: string | null = null;
@@ -401,23 +493,16 @@ export const CameraModal: React.FC = () => {
         }
         return {
           platform: "YouTube",
-          badge: "YouTube Video 🔴",
+          badge: "YouTube 🔴",
           color: "#EF4444",
+          icon: "🔴",
           thumbnail: videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : null,
         };
       }
       if (host.includes("strava.com")) {
-        return {
-          platform: "Strava",
-          badge: "Strava Workout 🏃",
-          color: "#FC4C02",
-        };
+        return { platform: "Strava", badge: "Strava 🏃", color: "#FC4C02", icon: "🏃" };
       }
-      return {
-        platform: host.replace("www.", ""),
-        badge: "Verified External Link ↗",
-        color: "#10B981",
-      };
+      return { platform: host.replace("www.", ""), badge: "Verified Link ↗", color: "#10B981", icon: "↗" };
     } catch {
       return null;
     }
@@ -425,58 +510,87 @@ export const CameraModal: React.FC = () => {
 
   const linkMeta = linkUrl.trim() ? getLinkMeta(linkUrl.trim()) : null;
 
+  // Paste from clipboard
   const handlePasteClipboard = async () => {
     try {
       setIsPasting(true);
       triggerHaptic([15]);
       if (typeof navigator !== "undefined" && navigator.clipboard?.readText) {
         const text = await navigator.clipboard.readText();
-        if (text && (text.startsWith("http") || text.includes(".com") || text.includes(".io"))) {
+        if (text && (text.startsWith("http") || text.includes(".com") || text.includes(".io") || text.includes(".org"))) {
           const finalUrl = text.startsWith("http") ? text.trim() : `https://${text.trim()}`;
           setLinkUrl(finalUrl);
           setLinkError(null);
-          showToast("Link pasted from clipboard!", "success");
+          showToast("Link pasted from clipboard! 📋", "success");
         } else {
           showToast("No valid web link in clipboard.", "info");
         }
       } else {
-        showToast("Clipboard access not available.", "info");
+        showToast("Clipboard not accessible.", "info");
       }
     } catch {
-      showToast("Clipboard read permission denied.", "info");
+      showToast("Clipboard permission required.", "info");
     } finally {
       setIsPasting(false);
     }
   };
 
-  // Active proof payload
+  // Determine current active proof payload based on selected arena's proof type
   const currentProofPayload = useMemo(() => {
-    if (proofMode === "capture") return capturedImage;
-    if (proofMode === "upload") return uploadedImage;
-    if (proofMode === "link") return linkUrl.trim();
+    if (selectedProofCategory === "link") return linkUrl.trim();
+    if (selectedProofCategory === "image") return imageProofUrl;
+    if (selectedProofCategory === "video") return videoProofUrl;
+    if (selectedProofCategory === "text") return textProof.trim();
     return null;
-  }, [proofMode, capturedImage, uploadedImage, linkUrl]);
+  }, [selectedProofCategory, linkUrl, imageProofUrl, videoProofUrl, textProof]);
 
-  // ── 7. Submit Proof for Selected Arena ──
-  const handleSubmitProof = () => {
+  const isProofReady = Boolean(currentProofPayload && currentProofPayload.length > 0);
+
+  // Transition from Stage 1 to Stage 2 for a specific arena
+  const handleSelectSquad = (arenaId: string | number) => {
+    triggerHaptic([20]);
+    const cleanId = String(arenaId);
+    setSelectedArenaId(cleanId);
+    // Reset inputs for clean state
+    setImageProofUrl(null);
+    setVideoProofUrl(null);
+    setLinkUrl("");
+    setTextProof("");
+    setCaption("");
+    setLinkError(null);
+    setImageSubMode("upload");
+    stopCameraStream();
+    setViewMode("input_proof");
+  };
+
+  // Return from Stage 2 back to Stage 1 Squad Selector
+  const handleBackToSquads = () => {
+    triggerHaptic([15]);
+    stopCameraStream();
+    setViewMode("select_arena");
+  };
+
+  // ── Single-Button Proof Submission ──
+  const handleSubmitProof = async () => {
     if (!selectedArena) {
-      showToast("Please select a squad.", "info");
+      showToast("Please select a habit squad.", "info");
       return;
     }
 
-    if (selectedSquadMeta?.isSubmitted) {
+    if (activeSquadItem?.isCompleted) {
       showToast(`Proof already verified for ${selectedArena.name} today! ✓`, "info");
       return;
     }
 
     if (!currentProofPayload) {
-      if (proofMode === "capture") showToast("Please snap a photo first.", "info");
-      else if (proofMode === "upload") showToast("Please choose an image from gallery.", "info");
-      else showToast("Please enter or paste a valid link URL.", "info");
+      if (selectedProofCategory === "link") showToast("Please paste your verification link.", "info");
+      else if (selectedProofCategory === "image") showToast("Please upload or take a photo.", "info");
+      else if (selectedProofCategory === "video") showToast("Please upload a video clip.", "info");
+      else showToast("Please write your habit reflection.", "info");
       return;
     }
 
-    if (proofMode === "link" && !currentProofPayload.startsWith("http")) {
+    if (selectedProofCategory === "link" && !currentProofPayload.startsWith("http")) {
       setLinkError("Please enter a valid link starting with http:// or https://");
       return;
     }
@@ -484,50 +598,110 @@ export const CameraModal: React.FC = () => {
     triggerHaptic([40, 80, 50]);
     setIsSubmitting(true);
 
-    const isNextDay = selectedSquadMeta?.timeline.isNextDayCycle;
+    const isNextDay = activeSquadItem?.timeline.isNextDayCycle;
+    const captureMoment = new Date().toISOString();
 
-    setTimeout(() => {
-      dropProofOptimistic({
-        arenaId: selectedArena.id,
-        image: currentProofPayload,
-        selfie: user.avatar,
-        caption:
-          caption ||
-          (isNextDay
-            ? `Early habit drop locked in for ${selectedArena.tag}! Next-day streak compounded 🌱`
-            : `Daily habit drop locked in for ${selectedArena.tag}! Consistency compounded 📈`),
-        telemetry:
-          proofMode === "link"
-            ? `${linkMeta?.platform || "Link"} Verified • ${isNextDay ? "Next Day Cycle" : "On-Time Drop"}`
-            : isNextDay
-            ? "Photo Verified • Next Day Cycle Active 🌱"
-            : "Photo Verified • On-Time Drop ⚡",
-        keepOpen: true, // Keep modal open so the user sees this squad lock and next squad auto-selected!
-      });
+    const userCaption = caption?.trim();
+    const defaultDateCaption = new Date().toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+    const finalCaption = userCaption || defaultDateCaption;
 
-      setJustSubmittedArenaId(selectedArena.id);
-      setIsSubmitting(false);
+    // 1. Instant Optimistic update to mark user present
+    dropProofOptimistic({
+      arenaId: selectedArena.id,
+      image: currentProofPayload,
+      selfie: user.avatar,
+      caption: finalCaption,
+      telemetry:
+        selectedProofCategory === "link"
+          ? `${linkMeta?.platform || "Link"} Verified • ${isNextDay ? "Next Day Cycle" : "On-Time Drop"}`
+          : selectedProofCategory === "video"
+          ? "Video Verified • On-Time Drop 📹"
+          : selectedProofCategory === "text"
+          ? "Reflection Verified • On-Time Drop 📝"
+          : isNextDay
+          ? "Photo Verified • Next Day Cycle 🌱"
+          : "Photo Verified • On-Time Drop ⚡",
+      keepOpen: true,
+    });
 
-      if (isNextDay) {
-        showToast(`🌱 Early drop locked in for tomorrow's cycle in ${selectedArena.name}!`, "success");
-      } else {
-        showToast(`✓ Proof locked in for ${selectedArena.name}! +1 Day Streak 🔥`, "success");
+    // Offline check: If offline, queue locally immediately
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      if (selectedArena.rawId) {
+        offlineProofQueue.enqueueProof(
+          selectedArena.rawId,
+          currentProofPayload,
+          finalCaption,
+          captureMoment
+        );
       }
-
-      // Reset proof inputs for next submission
-      setCapturedImage(null);
-      setUploadedImage(null);
+      showToast(`Offline: Proof saved locally with capture timestamp! Will auto-sync to ${selectedArena.name} when online 💾`, "info");
+      setImageProofUrl(null);
+      setVideoProofUrl(null);
       setLinkUrl("");
+      setTextProof("");
       setCaption("");
+      stopCameraStream();
+      setViewMode("select_arena");
+      setIsSubmitting(false);
+      return;
+    }
 
-      // Auto-switch to next pending squad if available
-      const remainingPending = sortedSquads.filter(
-        (s) => s.arena.id !== selectedArena.id && !s.isSubmitted
-      );
-      if (remainingPending[0]) {
-        setSelectedArenaId(remainingPending[0].arena.id);
+    try {
+      // 2. Direct real API submission for this arena only
+      if (selectedArena.rawId) {
+        const subRes = await tribelyService.submitProof({
+          arena_id: selectedArena.rawId,
+          proof_url: currentProofPayload,
+          caption: finalCaption,
+          client_submitted_at: captureMoment,
+        });
+
+        if (!subRes.success) {
+          // If network / connectivity issue occurred, queue offline
+          if (
+            subRes.message?.includes("Network") ||
+            subRes.message?.includes("Failed to fetch") ||
+            subRes.message?.includes("connection")
+          ) {
+            offlineProofQueue.enqueueProof(
+              selectedArena.rawId,
+              currentProofPayload,
+              caption || `Daily proof drop for ${selectedArena.name}.`,
+              captureMoment
+            );
+            showToast(`Connection interrupted: Proof stored locally with timestamp and queued for sync 💾`, "info");
+          } else {
+            showToast(subRes.message || `Proof submission issue for ${selectedArena.name}`, "info");
+          }
+        } else {
+          showToast(`✓ Proof verified for ${selectedArena.name}! Marked Present for Today 🔥`, "success");
+        }
       }
-    }, 450);
+
+      // Reset inputs
+      setImageProofUrl(null);
+      setVideoProofUrl(null);
+      setLinkUrl("");
+      setTextProof("");
+      setCaption("");
+      stopCameraStream();
+
+      // Return to Stage 1 where this squad is now marked completed
+      setViewMode("select_arena");
+    } catch (err: any) {
+      if (selectedArena.rawId) {
+        offlineProofQueue.enqueueProof(
+          selectedArena.rawId,
+          currentProofPayload,
+          caption || `Daily proof drop for ${selectedArena.name}.`,
+          captureMoment
+        );
+      }
+      showToast(`Saved offline: Will sync automatically to ${selectedArena.name} when connected 💾`, "info");
+      setViewMode("select_arena");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (!isCameraModalOpen) return null;
@@ -538,655 +712,589 @@ export const CameraModal: React.FC = () => {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-0 select-none overflow-hidden"
+        className="fixed inset-0 z-50 bg-black/90 backdrop-blur-2xl flex items-center justify-center p-0 sm:p-4 select-none overflow-hidden"
       >
         <canvas ref={canvasRef} className="hidden" />
 
-        {/* Hidden File Inputs */}
+        {/* Hidden File Pickers */}
         <input
           ref={fileInputRef}
           type="file"
           accept="image/*"
           className="hidden"
-          onChange={handleFileUpload}
+          onChange={handleImageFileChange}
         />
         <input
-          ref={nativeCameraInputRef}
+          ref={videoInputRef}
           type="file"
-          accept="image/*"
-          capture="environment"
+          accept="video/*"
           className="hidden"
-          onChange={handleFileUpload}
+          onChange={handleVideoFileChange}
         />
 
-        {/* Main Modal Frame */}
-        <div className="relative w-full max-w-md h-full bg-neutral-950 border-x border-neutral-900 flex flex-col justify-between shadow-2xl overflow-hidden">
-          {/* ── 1. MODAL HEADER & GAMIFIED HUD ── */}
-          <div className="p-3.5 border-b border-neutral-900 bg-neutral-950/95 sticky top-0 z-20 space-y-2.5">
-            <div className="flex items-center justify-between">
+        {/* Main Proof Submission Window */}
+        <div className="relative w-full max-w-lg h-full sm:h-[92vh] sm:max-h-[820px] sm:rounded-[36px] bg-[#1E1E1E] border border-[#303134] flex flex-col justify-between shadow-2xl overflow-hidden text-white">
+
+          {/* ── TOP PROGRESS TRACKER ── */}
+          <div className="px-4 pt-3 pb-1 flex gap-1.5 w-full bg-[#1E1E1E] shrink-0">
+            {squadItems.map((s, idx) => (
+              <div
+                key={s.arena.id || idx}
+                className={`h-1.5 flex-1 rounded-full transition-all duration-500 ${
+                  s.isCompleted
+                    ? "bg-[#0F9D58]"
+                    : "bg-neutral-800"
+                }`}
+                title={`${s.arena.name}: ${s.isCompleted ? "Completed" : "Pending"}`}
+              />
+            ))}
+          </div>
+
+          {/* ── HEADER BAR ── */}
+          <header className="px-5 py-3 flex items-center justify-between gap-3 border-b border-[#303134] shrink-0 bg-[#1E1E1E]">
+            {viewMode === "input_proof" ? (
+              <button
+                type="button"
+                onClick={handleBackToSquads}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#202124] hover:bg-[#303134] text-xs font-medium text-neutral-300 hover:text-white transition cursor-pointer border border-[#303134]"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>All Squads</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-[#E8F0FE] dark:bg-[#8AB4F8]/15 border border-[#D2E3FC] dark:border-[#8AB4F8]/30 flex items-center justify-center text-[#1A73E8] dark:text-[#8AB4F8]">
+                  <Flame className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold tracking-tight leading-tight">Habit Check-In</h2>
+                  <p className="text-[11px] text-neutral-400">
+                    {totalCompleted} of {totalSquads} habits locked in today
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Right: Streak status & Close Button */}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#FEF7E0] dark:bg-[#F9AB00]/15 border border-[#FEEFC3] dark:border-[#F9AB00]/25 text-amber-600 dark:text-amber-400 text-xs font-medium">
+                <Flame className="w-3.5 h-3.5 fill-amber-500" />
+                <span>{user.currentStreak}d Streak</span>
+              </div>
               <button
                 type="button"
                 onClick={closeCamera}
-                className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-neutral-900 transition cursor-pointer"
+                className="w-8 h-8 rounded-full bg-[#202124] hover:bg-[#303134] text-neutral-400 hover:text-white flex items-center justify-center transition cursor-pointer border border-[#303134]"
                 aria-label="Close"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
-
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-black tracking-tight text-white">
-                  Submit Daily Proof
-                </span>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              </div>
-
-              {/* Streak Badge in Header */}
-              <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-black">
-                <Flame className="w-3.5 h-3.5 fill-amber-400" />
-                <span>{user.currentStreak}d</span>
-              </div>
             </div>
+          </header>
 
-            {/* Gamified HUD: Squad Completion Bar & Bonus Multiplier */}
-            <div className="p-2.5 rounded-2xl bg-neutral-900/80 border border-neutral-800/80 flex items-center justify-between gap-2">
-              <div className="flex-1 space-y-1">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="font-bold text-neutral-400">Today's Squads</span>
-                  <span className="font-black text-white">
-                    {totalCompletedToday} / {totalEnrolled} Locked
-                  </span>
-                </div>
-                {/* Segmented Progress Bar */}
-                <div className="flex gap-1 h-1.5 w-full">
-                  {sortedSquads.map((s, idx) => (
-                    <div
-                      key={s.arena.id || idx}
-                      className={`h-full flex-1 rounded-full transition-all duration-300 ${
-                        s.isSubmitted
-                          ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
-                          : s.timeline.isNextDayCycle
-                          ? "bg-indigo-500/50"
-                          : "bg-neutral-800"
-                      }`}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <div className="shrink-0 flex items-center gap-1.5 pl-2 border-l border-neutral-800">
-                <div className="text-right">
-                  <div className="text-[10px] font-black text-emerald-400 flex items-center gap-0.5 justify-end">
-                    <Zap className="w-3 h-3 fill-emerald-400" />
-                    <span>+{user.multiplier || 1.0}x XP</span>
+          {/* ── STAGE 1: ARENA / SQUAD SELECTOR PORTAL ── */}
+          {viewMode === "select_arena" && (
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              {/* Encouragement Banner */}
+              {isGrandSlam ? (
+                <div className="p-4 rounded-3xl bg-gradient-to-r from-emerald-500/15 via-teal-500/15 to-emerald-500/10 border border-emerald-500/30 flex items-center gap-3.5 shadow-lg shadow-emerald-500/10">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                    <Trophy className="w-6 h-6 text-emerald-400" />
                   </div>
-                  <div className="text-[9px] font-bold text-neutral-500">
-                    🛡️ {user.streakShields || 1} Shield
+                  <div>
+                    <h3 className="text-xs font-black text-emerald-400 uppercase tracking-wider">Grand Slam Achieved! 🏆</h3>
+                    <p className="text-xs text-neutral-200 mt-0.5 leading-relaxed">
+                      All your habit squads are 100% verified today. Consistency compounded!
+                    </p>
                   </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* ── 2. SCROLLABLE BODY ── */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">
-            {/* ── ACTIVE ARENA TIMELINE HUD ── */}
-            {selectedArena && (
-              <div
-                className={`p-3 rounded-2xl border transition-all ${
-                  isSelectedArenaLocked
-                    ? "bg-emerald-950/20 border-emerald-500/30"
-                    : selectedSquadMeta?.timeline.isNextDayCycle
-                    ? "bg-indigo-950/20 border-indigo-500/30"
-                    : selectedSquadMeta?.timeline.urgencyLevel === "urgent"
-                    ? "bg-amber-950/20 border-amber-500/40"
-                    : "bg-neutral-900/90 border-neutral-800"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">{selectedArena.emoji || "⚔️"}</span>
-                    <div>
-                      <h4 className="text-xs font-black text-white leading-tight">
-                        {selectedArena.name}
-                      </h4>
-                      <span className="text-[10px] text-neutral-400 font-bold">
-                        {selectedArena.tag}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Dynamic Status Pill */}
-                  {isSelectedArenaLocked ? (
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-[10px] font-black">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Dropped Today</span>
-                    </div>
-                  ) : selectedSquadMeta?.timeline.isNextDayCycle ? (
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 text-[10px] font-black">
-                      <span>🌱</span>
-                      <span>Next Day Active</span>
-                    </div>
-                  ) : selectedSquadMeta?.timeline.urgencyLevel === "urgent" ? (
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-black animate-pulse">
-                      <Flame className="w-3.5 h-3.5 fill-amber-300" />
-                      <span>Urgent: {selectedSquadMeta?.timeline.countdownFormatted}</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-neutral-800 border border-neutral-700 text-neutral-300 text-[10px] font-bold">
-                      <Clock className="w-3.5 h-3.5 text-neutral-400" />
-                      <span>Due {selectedSquadMeta?.timeline.displayCutoffTime}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Sub-bar: Timeline explanation & live ticker */}
-                <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[10px]">
-                  <span className="text-neutral-400 font-medium">
-                    {isSelectedArenaLocked
-                      ? "Stake Protected • Streak Safe"
-                      : selectedSquadMeta?.timeline.isNextDayCycle
-                      ? `Deadline passed today • Reset to ${selectedSquadMeta?.timeline.displayCutoffTime}`
-                      : `Deadline closes at ${selectedSquadMeta?.timeline.displayCutoffTime}`}
-                  </span>
-                  <span className="font-mono font-bold text-white">
-                    {isSelectedArenaLocked
-                      ? `Next window in ${unlockCountdown}`
-                      : selectedSquadMeta?.timeline.countdownFormatted}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* ── IF SELECTED ARENA IS LOCKED: SHOW GAMIFIED COMPLETED CARD ── */}
-            {isSelectedArenaLocked ? (
-              <div className="p-6 rounded-3xl bg-neutral-900/90 border border-emerald-500/30 text-center space-y-4 shadow-[0_0_30px_rgba(16,185,129,0.1)]">
-                <div className="w-16 h-16 mx-auto rounded-3xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,0.2)]">
-                  <Flame className="w-9 h-9 fill-emerald-400 animate-bounce" />
-                </div>
-
-                <div className="space-y-1.5">
-                  <h3 className="text-base font-black text-white">
-                    {selectedArena.name} Locked for Today! 🔥
-                  </h3>
-                  <p className="text-xs text-neutral-400 max-w-xs mx-auto">
-                    You already verified today's habit proof. Your streak of{" "}
-                    <span className="text-emerald-400 font-bold">{user.currentStreak} days</span> is
-                    compounded and your stake is safe.
-                  </p>
-                </div>
-
-                {/* Live Countdown to Next Drop Window */}
-                <div className="p-3 rounded-2xl bg-neutral-950/80 border border-neutral-800 space-y-1">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-neutral-500">
-                    Next Daily Window Unlocks In
-                  </div>
-                  <div className="text-lg font-mono font-black text-emerald-400">
-                    {unlockCountdown}
-                  </div>
-                </div>
-
-                {/* Switch to pending squad CTA if any pending */}
-                {nextPendingSquad ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      triggerHaptic([15]);
-                      setSelectedArenaId(nextPendingSquad.arena.id);
-                    }}
-                    className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-neutral-950 font-black text-xs transition flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(16,185,129,0.25)] cursor-pointer"
-                  >
-                    <span>Switch to {nextPendingSquad.arena.name}</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                ) : (
-                  <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs font-bold text-emerald-300 flex items-center justify-center gap-1.5">
-                    <Trophy className="w-4 h-4 text-emerald-400" />
-                    <span>Grand Slam! All Enrolled Squads Completed Today.</span>
-                  </div>
-                )}
-              </div>
-            ) : (
-              /* ── IF ARENA IS ACTIVE (TODAY OR NEXT-DAY ROLLED): SHOW MEDIA CAPTURE ── */
-              <div className="space-y-4">
-                {/* ── TOP 3 PROOF TABS ── */}
-                <div className="grid grid-cols-3 gap-2 p-1 rounded-2xl bg-neutral-900/90 border border-neutral-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      triggerHaptic([10]);
-                      setProofMode("capture");
-                    }}
-                    className={`py-2 px-2 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                      proofMode === "capture"
-                        ? "bg-white text-neutral-950 shadow-md scale-[1.02]"
-                        : "text-neutral-400 hover:text-white"
-                    }`}
-                  >
-                    <Camera className="w-4 h-4" />
-                    <span>Capture</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      triggerHaptic([10]);
-                      setProofMode("upload");
-                    }}
-                    className={`py-2 px-2 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                      proofMode === "upload"
-                        ? "bg-white text-neutral-950 shadow-md scale-[1.02]"
-                        : "text-neutral-400 hover:text-white"
-                    }`}
-                  >
-                    <Upload className="w-4 h-4" />
-                    <span>Upload</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      triggerHaptic([10]);
-                      setProofMode("link");
-                    }}
-                    className={`py-2 px-2 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                      proofMode === "link"
-                        ? "bg-white text-neutral-950 shadow-md scale-[1.02]"
-                        : "text-neutral-400 hover:text-white"
-                    }`}
-                  >
-                    <Link2 className="w-4 h-4" />
-                    <span>Paste Link</span>
-                  </button>
-                </div>
-
-                {/* ── PROOF INPUT / PREVIEW AREA ── */}
-                {/* Mode 1: Capture Mode */}
-                {proofMode === "capture" && (
-                  <div className="space-y-2">
-                    {capturedImage ? (
-                      <div className="relative aspect-[4/5] rounded-3xl overflow-hidden bg-black border border-neutral-800 shadow-xl">
-                        <img
-                          src={capturedImage}
-                          alt="Captured Proof"
-                          className="w-full h-full object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            triggerHaptic([15]);
-                            setCapturedImage(null);
-                          }}
-                          className="absolute bottom-3 left-3 px-3 py-1.5 rounded-full bg-black/70 hover:bg-black text-white text-xs font-bold border border-white/20 backdrop-blur-md transition flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <RefreshCw className="w-3.5 h-3.5" />
-                          <span>Retake Photo</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="relative aspect-[4/5] rounded-3xl overflow-hidden bg-neutral-900 border border-neutral-800 flex flex-col justify-between p-3">
-                        <video
-                          ref={videoRef}
-                          playsInline
-                          muted
-                          className={`w-full h-full object-cover absolute inset-0 rounded-3xl ${
-                            cameraFacing === "user" ? "-scale-x-100" : ""
-                          }`}
-                        />
-
-                        {/* Top Viewfinder Controls */}
-                        <div className="relative z-10 flex items-center justify-between">
-                          <span className="px-2.5 py-1 rounded-full bg-black/60 text-white text-[10px] font-mono border border-white/10 backdrop-blur">
-                            LIVE CAMERA
-                          </span>
-                          <button
-                            type="button"
-                            onClick={handleFlipCamera}
-                            className="p-2 rounded-full bg-black/60 text-white hover:bg-black/80 transition border border-white/10 cursor-pointer"
-                            title="Flip Camera"
-                          >
-                            <RefreshCw className="w-4 h-4" />
-                          </button>
-                        </div>
-
-                        {cameraError && (
-                          <div className="relative z-10 my-auto text-center p-4 text-xs text-neutral-400">
-                            <p>{cameraError}</p>
-                          </div>
-                        )}
-
-                        {/* Bottom Circular Shutter Bar */}
-                        <div className="relative z-10 flex items-center justify-center pb-2">
-                          <motion.button
-                            whileTap={{ scale: 0.88 }}
-                            onClick={handleCaptureShutter}
-                            className="w-18 h-18 rounded-full p-1 border-4 border-white/80 flex items-center justify-center cursor-pointer shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:scale-105 transition"
-                            title="Snap Photo"
-                          >
-                            <div className="w-full h-full rounded-full bg-white active:bg-neutral-300" />
-                          </motion.button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Mode 2: Upload Mode */}
-                {proofMode === "upload" && (
-                  <div className="space-y-2">
-                    {uploadedImage ? (
-                      <div className="relative aspect-[4/5] rounded-3xl overflow-hidden bg-black border border-neutral-800 shadow-xl">
-                        <img
-                          src={uploadedImage}
-                          alt="Uploaded Proof"
-                          className="w-full h-full object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => fileInputRef.current?.click()}
-                          className="absolute bottom-3 left-3 px-3 py-1.5 rounded-full bg-black/70 hover:bg-black text-white text-xs font-bold border border-white/20 backdrop-blur-md transition flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Upload className="w-3.5 h-3.5" />
-                          <span>Change Photo</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <div
-                        onClick={() => fileInputRef.current?.click()}
-                        className="aspect-[4/5] rounded-3xl border-2 border-dashed border-neutral-800 hover:border-emerald-500/50 bg-neutral-900/60 flex flex-col items-center justify-center gap-3 p-6 text-center cursor-pointer transition group"
-                      >
-                        <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition shadow-[0_0_20px_rgba(16,185,129,0.15)]">
-                          <ImageIcon className="w-8 h-8" />
-                        </div>
-                        <div className="space-y-1">
-                          <h4 className="text-sm font-black text-white">
-                            Select Photo from Gallery
-                          </h4>
-                          <p className="text-[11px] text-neutral-400 max-w-xs">
-                            Upload screenshot or proof photo (.jpg, .png, .webp).
-                          </p>
-                        </div>
-                        <span className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold transition">
-                          Browse Files 📁
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Mode 3: Paste Link Mode */}
-                {proofMode === "link" && (
-                  <div className="p-4 rounded-3xl bg-neutral-900 border border-neutral-800 space-y-3.5 shadow-xl">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-black text-white uppercase tracking-wider">
-                        Verification Link
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handlePasteClipboard}
-                        disabled={isPasting}
-                        className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-xs font-bold text-emerald-400 border border-neutral-700 transition cursor-pointer"
-                      >
-                        <Clipboard className="w-3.5 h-3.5" />
-                        <span>{isPasting ? "Pasting..." : "Paste Link"}</span>
-                      </button>
-                    </div>
-
-                    <div className="relative">
-                      <input
-                        type="url"
-                        value={linkUrl}
-                        onChange={(e) => {
-                          setLinkUrl(e.target.value);
-                          setLinkError(null);
-                        }}
-                        placeholder="https://leetcode.com/... or github, youtube, strava"
-                        className="w-full px-3.5 py-3 rounded-2xl bg-neutral-950 border border-neutral-800 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500/60 font-mono transition"
-                      />
-                    </div>
-
-                    {linkError && (
-                      <p className="text-xs text-rose-400 font-medium flex items-center gap-1">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        <span>{linkError}</span>
-                      </p>
-                    )}
-
-                    {/* Detected Platform Chip / Preview */}
-                    {linkMeta && (
-                      <div className="p-3 rounded-2xl bg-neutral-950/80 border border-neutral-800 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="px-2.5 py-1 rounded-lg text-[10px] font-black"
-                            style={{ background: `${linkMeta.color}20`, color: linkMeta.color }}
-                          >
-                            {linkMeta.badge}
-                          </span>
-                          <span className="text-xs font-bold text-white truncate max-w-[160px]">
-                            {linkMeta.platform}
-                          </span>
-                        </div>
-
-                        {linkMeta.thumbnail && (
-                          <img
-                            src={linkMeta.thumbnail}
-                            alt="YouTube Thumbnail"
-                            className="w-12 h-8 object-cover rounded-lg border border-white/10"
-                          />
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Optional Caption / Reflection Input */}
-                <div>
-                  <input
-                    type="text"
-                    value={caption}
-                    onChange={(e) => setCaption(e.target.value)}
-                    placeholder="Add reflection or note (optional)..."
-                    className="w-full px-4 py-2.5 rounded-2xl bg-neutral-900 border border-neutral-800 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500/50 transition"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* ── 3. ENROLLED SQUADS SELECTOR (SMART SORTED & GAMIFIED) ── */}
-            <div className="space-y-2.5 pt-2">
-              <div className="flex items-center justify-between px-1">
-                <div>
-                  <h4 className="text-xs font-black uppercase tracking-wider text-neutral-300">
-                    Select Squad
-                  </h4>
-                  <p className="text-[10px] text-neutral-500 font-medium">
-                    Deadlines tick live • Completed squads locked at bottom
-                  </p>
-                </div>
-                <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                  {arenas.length} Squads
-                </span>
-              </div>
-
-              {sortedSquads.length === 0 ? (
-                <div className="p-4 rounded-2xl bg-neutral-900/60 border border-neutral-800 text-center text-xs text-neutral-400">
-                  You haven't joined any squads yet. Discover squads to submit proof.
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {sortedSquads.map(({ arena, isSubmitted, isLocked, timeline }) => {
-                    const isSelected = selectedArenaId === arena.id;
+                <div className="space-y-1">
+                  <h3 className="text-base font-black text-white">Select a Habit Squad</h3>
+                  <p className="text-xs text-neutral-400 leading-relaxed">
+                    Click a squad below to open its tailored proof verification window.
+                  </p>
+                </div>
+              )}
 
-                    // Badge text & color logic
-                    let badgeColor = "bg-neutral-800 text-neutral-300 border-neutral-700";
-                    let badgeText = `Due ${timeline.displayCutoffTime}`;
-
-                    if (isSubmitted) {
-                      badgeColor = "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
-                      badgeText = "✓ Dropped Today";
-                    } else if (timeline.isNextDayCycle) {
-                      badgeColor = "bg-indigo-500/20 text-indigo-300 border-indigo-500/40";
-                      badgeText = "🌱 Next Day Active";
-                    } else if (timeline.urgencyLevel === "urgent") {
-                      badgeColor = "bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse";
-                      badgeText = `⏳ ${timeline.countdownFormatted}`;
-                    }
+              {/* Squads List */}
+              {squadItems.length === 0 ? (
+                <div className="py-12 px-6 rounded-3xl border border-neutral-900 bg-neutral-950/60 text-center space-y-3">
+                  <div className="w-14 h-14 rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center mx-auto text-orange-400">
+                    <Shield className="w-7 h-7" />
+                  </div>
+                  <h4 className="text-sm font-bold text-white">No Habit Squads Enrolled</h4>
+                  <p className="text-xs text-neutral-400 max-w-xs mx-auto">
+                    Join or create an accountability squad to start verifying habits and earning consistency rewards.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={closeCamera}
+                    className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold transition cursor-pointer"
+                  >
+                    Explore Arenas
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {squadItems.map(({ arena, isCompleted, timeline, proofCategory }) => {
+                    const isUrgent = !isCompleted && timeline.urgencyLevel === "urgent";
+                    const arenaKey = String(arena.id || arena.rawId);
 
                     return (
-                      <div
-                        key={arena.id}
+                      <motion.div
+                        key={arenaKey}
+                        whileHover={{ scale: 1.01 }}
+                        whileTap={{ scale: 0.99 }}
                         onClick={() => {
-                          triggerHaptic([15]);
-                          setSelectedArenaId(arena.id);
+                          if (isCompleted) {
+                            showToast(`✓ Today's proof already verified for ${arena.name}!`, "info");
+                          } else {
+                            handleSelectSquad(arenaKey);
+                          }
                         }}
-                        className={`p-3 rounded-2xl border transition-all flex items-center justify-between cursor-pointer ${
-                          isSelected
-                            ? isSubmitted
-                              ? "bg-neutral-900/90 border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.15)]"
-                              : "bg-neutral-900 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]"
-                            : isSubmitted
-                            ? "opacity-60 bg-neutral-950/40 border-neutral-900 hover:opacity-80"
-                            : "bg-neutral-900/70 border-neutral-800/80 hover:border-neutral-700"
+                        className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3.5 ${
+                          isCompleted
+                            ? "bg-[#202124]/50 border-[#137333]/30"
+                            : isUrgent
+                            ? "bg-[#202124] border-[#D93025]/40 shadow-xs"
+                            : "bg-[#202124] border-[#303134] hover:border-[#3C4043] shadow-xs"
                         }`}
                       >
-                        <div className="flex items-center gap-3 min-w-0">
-                          {/* Arena Emoji / Emblem */}
+                        {/* Left: Emoji + Info */}
+                        <div className="flex items-center gap-3.5 min-w-0 flex-1">
                           <div
-                            className={`w-10 h-10 rounded-2xl flex items-center justify-center text-lg shrink-0 transition ${
-                              isSelected
-                                ? isSubmitted
-                                  ? "bg-emerald-500/20 border border-emerald-500/40 text-emerald-400"
-                                  : "bg-emerald-500/20 border border-emerald-500/40 text-emerald-400"
-                                : "bg-neutral-800/80 border border-neutral-700/80 text-white"
+                            className={`w-11 h-11 rounded-xl flex items-center justify-center text-xl shrink-0 border ${
+                              isCompleted
+                                ? "bg-[#137333]/20 border-[#137333]/30 text-[#81C995]"
+                                : "bg-[#2C2D30] border-[#3C4043] text-white"
                             }`}
                           >
                             {arena.emoji || "⚔️"}
                           </div>
 
-                          {/* Squad Name & Tag */}
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <h5 className="text-xs font-black text-white truncate leading-tight">
-                                {arena.name}
-                              </h5>
-                              {isSubmitted && (
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                              )}
-                              {timeline.isNextDayCycle && !isSubmitted && (
-                                <span className="text-[10px] shrink-0">🌱</span>
-                              )}
-                            </div>
-
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-[10px] font-bold text-neutral-400 truncate">
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-sm font-semibold text-white truncate">{arena.name}</h4>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#2C2D30] font-mono text-neutral-400 shrink-0">
                                 {arena.tag}
                               </span>
-                              <span className="text-[10px] text-amber-400 font-bold">
-                                ⚡ {arena.penaltyAmount || 50} Stake
+                            </div>
+
+                            <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                              {/* Proof Type Badge */}
+                              <span className="flex items-center gap-1 font-medium text-neutral-300">
+                                {proofCategory === "link" && <Link2 className="w-3 h-3 text-[#8AB4F8]" />}
+                                {proofCategory === "image" && <ImageIcon className="w-3 h-3 text-[#81C995]" />}
+                                {proofCategory === "video" && <Video className="w-3 h-3 text-[#C58AF9]" />}
+                                {proofCategory === "text" && <FileText className="w-3 h-3 text-[#FDD663]" />}
+                                <span className="capitalize">{proofCategory} Proof</span>
+                              </span>
+
+                              <span className="text-neutral-600">·</span>
+
+                              {/* Stake */}
+                              <span className="font-mono text-amber-400 font-medium">
+                                ⚡ ₹{arena.penaltyAmount || 50} Stake
+                              </span>
+
+                              <span className="text-neutral-600">·</span>
+
+                              {/* Deadline remaining */}
+                              <span
+                                className={`flex items-center gap-1 font-mono ${
+                                  isUrgent ? "text-rose-400 font-medium" : "text-neutral-400"
+                                }`}
+                              >
+                                <Clock className="w-3 h-3" />
+                                <span>{isCompleted ? "Closed" : timeline.countdownFormatted + " left"}</span>
                               </span>
                             </div>
                           </div>
                         </div>
 
-                        {/* Right: Deadline / Status Badge & Selection Indicator */}
-                        <div className="flex items-center gap-2 shrink-0 ml-2">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${badgeColor}`}
-                          >
-                            {badgeText}
-                          </span>
-
-                          <div
-                            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition ${
-                              isSelected
-                                ? isSubmitted
-                                  ? "border-emerald-500/60 bg-emerald-500/20 text-emerald-400"
-                                  : "border-emerald-500 bg-emerald-500 text-neutral-950"
-                                : "border-neutral-700 bg-transparent"
-                            }`}
-                          >
-                            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                          </div>
+                        {/* Right Action / Status */}
+                        <div className="shrink-0">
+                          {isCompleted ? (
+                            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#137333]/20 border border-[#137333]/30 text-[#81C995] text-xs font-medium">
+                              <Check className="w-3 h-3 stroke-[2.5]" />
+                              <span>Done</span>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectSquad(arenaKey);
+                              }}
+                              className="flex items-center gap-1 px-3.5 py-1.5 rounded-full bg-[#1A73E8] hover:bg-[#1557B0] text-white text-xs font-medium transition cursor-pointer shadow-xs active:scale-95"
+                            >
+                              <span>Submit</span>
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
-                      </div>
+                      </motion.div>
                     );
                   })}
                 </div>
               )}
             </div>
-          </div>
+          )}
 
-          {/* ── 4. STICKY SUBMIT FOOTER ── */}
-          <div className="p-4 border-t border-neutral-900 bg-neutral-950/95 sticky bottom-0 z-20 space-y-2">
-            {allSquadsSubmitted ? (
-              <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 text-center space-y-1.5 shadow-[0_0_20px_rgba(16,185,129,0.15)]">
-                <div className="flex items-center justify-center gap-1.5 text-xs font-black text-emerald-400">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>All Enrolled Squads Completed Today! 🎉</span>
+          {/* ── STAGE 2: TAILORED PROOF INPUT WINDOW ── */}
+          {viewMode === "input_proof" && selectedArena && (
+            <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col justify-between space-y-4">
+              {/* Selected Arena Header Banner */}
+              <div className="p-4 rounded-3xl bg-neutral-900/90 border border-neutral-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">{selectedArena.emoji || "⚔️"}</span>
+                    <div>
+                      <h3 className="text-sm font-black text-white">{selectedArena.name}</h3>
+                      <p className="text-[11px] text-neutral-400">
+                        Deadline: {selectedArena.deadlineTime} • {activeSquadItem?.timeline.countdownFormatted} remaining
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="px-2.5 py-1 rounded-full bg-neutral-800 border border-neutral-700 text-[11px] font-bold text-neutral-300 capitalize flex items-center gap-1.5">
+                    {selectedProofCategory === "link" && <Link2 className="w-3 h-3 text-cyan-400" />}
+                    {selectedProofCategory === "image" && <ImageIcon className="w-3 h-3 text-emerald-400" />}
+                    {selectedProofCategory === "video" && <Video className="w-3 h-3 text-purple-400" />}
+                    {selectedProofCategory === "text" && <FileText className="w-3 h-3 text-amber-400" />}
+                    <span>{selectedProofCategory} Proof</span>
+                  </div>
                 </div>
-                <p className="text-[11px] text-neutral-400">
-                  All streaks are safe and compounded. Next submission windows open tomorrow.
-                </p>
-                <button
-                  type="button"
-                  onClick={closeCamera}
-                  className="mt-2 w-full py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold transition cursor-pointer"
-                >
-                  Done
-                </button>
               </div>
-            ) : isSelectedArenaLocked ? (
-              /* If currently selected arena is locked but other squads are pending */
-              nextPendingSquad ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    triggerHaptic([15]);
-                    setSelectedArenaId(nextPendingSquad.arena.id);
-                  }}
-                  className="w-full py-3.5 px-4 rounded-2xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-white font-black text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-lg"
-                >
-                  <span>Switch to {nextPendingSquad.arena.name}</span>
-                  <ArrowRight className="w-4 h-4 text-emerald-400" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={closeCamera}
-                  className="w-full py-3.5 px-4 rounded-2xl bg-neutral-900 text-neutral-400 text-xs font-bold cursor-pointer"
-                >
-                  Close
-                </button>
-              )
-            ) : (
-              /* If currently selected arena is pending (today or next-day cycle) */
+
+              {/* ── FORM A: LINK PROOF INPUT (LeetCode, GitHub, Strava, Web) ── */}
+              {selectedProofCategory === "link" && (
+                <div className="flex-1 flex flex-col justify-center space-y-3.5">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-black text-neutral-200 uppercase tracking-wider flex items-center gap-1.5">
+                        <Link2 className="w-4 h-4 text-cyan-400" />
+                        <span>Verification Link</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handlePasteClipboard}
+                        disabled={isPasting}
+                        className="flex items-center gap-1 px-3 py-1 rounded-full bg-neutral-900 hover:bg-neutral-800 active:scale-95 text-xs font-bold text-emerald-400 border border-neutral-800 transition cursor-pointer"
+                      >
+                        <Clipboard className="w-3 h-3" />
+                        <span>{isPasting ? "Pasting..." : "Paste Link"}</span>
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-neutral-400">
+                      Paste the link to your GitHub PR, LeetCode submission, Strava workout, or article.
+                    </p>
+                  </div>
+
+                  {/* URL Input Box */}
+                  <div className="space-y-1.5">
+                    <input
+                      type="url"
+                      value={linkUrl}
+                      onChange={(e) => {
+                        setLinkUrl(e.target.value);
+                        setLinkError(null);
+                      }}
+                      placeholder="https://leetcode.com/... or github.com/..."
+                      className="w-full px-4 py-3.5 rounded-2xl bg-neutral-950 border border-neutral-800 focus:border-cyan-500 focus:outline-none text-xs text-white placeholder-neutral-500 font-mono transition"
+                    />
+
+                    {linkError && (
+                      <p className="text-xs text-rose-400 flex items-center gap-1 font-medium">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        <span>{linkError}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Detected Platform Card */}
+                  {linkMeta && (
+                    <div className="p-3 rounded-2xl bg-neutral-950 border border-neutral-800 flex items-center gap-3">
+                      <div
+                        className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-base"
+                        style={{ backgroundColor: `${linkMeta.color}20`, color: linkMeta.color }}
+                      >
+                        {linkMeta.icon}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[10px] font-mono font-bold" style={{ color: linkMeta.color }}>
+                          {linkMeta.badge}
+                        </span>
+                        <p className="text-xs text-white truncate font-medium">{linkUrl}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* YouTube Thumbnail Preview if detected */}
+                  {linkMeta?.thumbnail && (
+                    <div className="rounded-2xl overflow-hidden border border-neutral-800 aspect-video max-h-40 mx-auto">
+                      <img src={linkMeta.thumbnail} alt="Preview" className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── FORM B: IMAGE PROOF INPUT (Upload or Live Camera) ── */}
+              {selectedProofCategory === "image" && (
+                <div className="flex-1 flex flex-col space-y-3">
+                  {/* Option Tabs: Upload Photo vs Take Photo */}
+                  {!imageProofUrl && (
+                    <div className="flex items-center p-1 rounded-2xl bg-neutral-950 border border-neutral-800 text-xs shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          triggerHaptic([10]);
+                          setImageSubMode("upload");
+                          stopCameraStream();
+                        }}
+                        className={`flex-1 py-2 rounded-xl font-bold transition cursor-pointer flex items-center justify-center gap-2 ${
+                          imageSubMode === "upload"
+                            ? "bg-white text-neutral-950 shadow-sm"
+                            : "text-neutral-400 hover:text-white"
+                        }`}
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Upload Photo / File</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          triggerHaptic([10]);
+                          setImageSubMode("camera");
+                          startCamera(cameraFacing);
+                        }}
+                        className={`flex-1 py-2 rounded-xl font-bold transition cursor-pointer flex items-center justify-center gap-2 ${
+                          imageSubMode === "camera"
+                            ? "bg-white text-neutral-950 shadow-sm"
+                            : "text-neutral-400 hover:text-white"
+                        }`}
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>Take Photo (Camera)</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* If Photo is Selected/Snapped: Display Preview */}
+                  {imageProofUrl ? (
+                    <div className="relative flex-1 min-h-[260px] rounded-3xl overflow-hidden border border-neutral-800 bg-black flex items-center justify-center">
+                      <img src={imageProofUrl} alt="Proof preview" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          triggerHaptic([15]);
+                          setImageProofUrl(null);
+                          if (imageSubMode === "camera") {
+                            startCamera(cameraFacing);
+                          }
+                        }}
+                        className="absolute top-3 left-3 px-3 py-1.5 rounded-full bg-black/70 hover:bg-black/90 text-white text-xs font-bold border border-white/20 backdrop-blur-md transition flex items-center gap-1.5 cursor-pointer shadow-lg"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Change / Retake Photo</span>
+                      </button>
+                    </div>
+                  ) : imageSubMode === "upload" ? (
+                    /* Upload Drag & Drop Viewport */
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex-1 min-h-[240px] rounded-3xl border-2 border-dashed border-neutral-800 hover:border-emerald-500/60 bg-neutral-950 flex flex-col items-center justify-center gap-3 p-6 text-center cursor-pointer transition group"
+                    >
+                      <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center group-hover:scale-105 transition shadow-[0_0_24px_rgba(16,185,129,0.2)]">
+                        <ImageIcon className="w-8 h-8" />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-black text-white">Choose Photo from Device</h4>
+                        <p className="text-[11px] text-neutral-400 max-w-xs">
+                          Upload screenshot, gym selfie, or habit photo proof (.jpg, .png, .webp).
+                        </p>
+                      </div>
+                      <span className="px-4 py-2 rounded-full bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 text-white text-xs font-bold transition flex items-center gap-1.5">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Browse Files</span>
+                      </span>
+                    </div>
+                  ) : (
+                    /* Live Camera Viewport */
+                    <div className="relative flex-1 min-h-[260px] rounded-3xl overflow-hidden border border-neutral-800 bg-black flex flex-col justify-between">
+                      <video
+                        ref={videoRef}
+                        playsInline
+                        muted
+                        className={`w-full h-full object-cover absolute inset-0 rounded-3xl transition-transform duration-300 ${
+                          cameraFacing === "user" ? "-scale-x-100" : ""
+                        }`}
+                      />
+
+                      {/* Shutter flash overlay */}
+                      <AnimatePresence>
+                        {shutterFlash && (
+                          <motion.div
+                            initial={{ opacity: 0.95 }}
+                            animate={{ opacity: 0 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.09 }}
+                            className="absolute inset-0 bg-white z-40 pointer-events-none"
+                          />
+                        )}
+                      </AnimatePresence>
+
+                      {/* Camera Overlays */}
+                      <div className="relative z-10 p-3 flex items-center justify-between pointer-events-none">
+                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 border border-white/15 backdrop-blur-md text-white text-[10px] font-mono">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span>CAMERA READY</span>
+                        </div>
+                      </div>
+
+                      {cameraError ? (
+                        <div className="relative z-10 my-auto text-center p-4 text-xs text-rose-300 bg-black/80 mx-4 rounded-2xl border border-rose-500/30 backdrop-blur-md">
+                          <p>{cameraError}</p>
+                        </div>
+                      ) : (
+                        /* Shutter & Flip Dock */
+                        <div className="relative z-20 p-4 flex items-center justify-around bg-gradient-to-t from-black/80 via-black/40 to-transparent">
+                          <button
+                            type="button"
+                            onClick={handleFlipCamera}
+                            className="w-11 h-11 rounded-full bg-black/60 border border-white/20 text-white flex items-center justify-center transition cursor-pointer"
+                            title="Flip Camera"
+                          >
+                            <RefreshCw className="w-5 h-5" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleSnapPhoto}
+                            className="w-18 h-18 rounded-full p-1 border-4 border-white flex items-center justify-center cursor-pointer shadow-[0_0_20px_rgba(255,255,255,0.4)] active:scale-95 transition"
+                            title="Snap Photo"
+                          >
+                            <div className="w-full h-full rounded-full bg-white active:bg-neutral-300 transition" />
+                          </button>
+
+                          <div className="w-11 h-11" />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── FORM C: VIDEO PROOF INPUT (Max 30s) ── */}
+              {selectedProofCategory === "video" && (
+                <div className="flex-1 flex flex-col space-y-3">
+                  {videoProofUrl ? (
+                    <div className="relative flex-1 min-h-[260px] rounded-3xl overflow-hidden border border-neutral-800 bg-black flex items-center justify-center">
+                      <video
+                        src={videoProofUrl}
+                        controls
+                        playsInline
+                        className="w-full h-full object-cover rounded-3xl"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          triggerHaptic([15]);
+                          setVideoProofUrl(null);
+                        }}
+                        className="absolute top-3 left-3 px-3 py-1.5 rounded-full bg-black/70 hover:bg-black/90 text-white text-xs font-bold border border-white/20 backdrop-blur-md transition flex items-center gap-1.5 cursor-pointer shadow-lg"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Choose Another Video</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => videoInputRef.current?.click()}
+                      className="flex-1 min-h-[240px] rounded-3xl border-2 border-dashed border-neutral-800 hover:border-purple-500/60 bg-neutral-950 flex flex-col items-center justify-center gap-3 p-6 text-center cursor-pointer transition group"
+                    >
+                      <div className="w-16 h-16 rounded-3xl bg-purple-500/10 border border-purple-500/20 text-purple-400 flex items-center justify-center group-hover:scale-105 transition shadow-[0_0_24px_rgba(168,85,247,0.2)]">
+                        <Video className="w-8 h-8" />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-black text-white">Select Short Video Clip</h4>
+                        <p className="text-[11px] text-neutral-400 max-w-xs">
+                          Upload 30-second verification clip (.mp4, .webm, .mov, max 25MB).
+                        </p>
+                      </div>
+                      <span className="px-4 py-2 rounded-full bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 text-white text-xs font-bold transition flex items-center gap-1.5">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Choose Video Clip</span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── FORM D: TEXT REFLECTION PROOF INPUT ── */}
+              {selectedProofCategory === "text" && (
+                <div className="flex-1 flex flex-col space-y-2">
+                  <label className="text-xs font-black text-neutral-200 uppercase tracking-wider flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-amber-400" />
+                    <span>Daily Habit Reflection</span>
+                  </label>
+                  <textarea
+                    value={textProof}
+                    onChange={(e) => setTextProof(e.target.value)}
+                    rows={6}
+                    placeholder="Document today's key milestone, lesson, or output (e.g. Read 20 pages of System Design, completed 5km in 24 mins)..."
+                    className="w-full p-4 rounded-2xl bg-neutral-950 border border-neutral-800 focus:border-amber-500 focus:outline-none text-xs text-white placeholder-neutral-500 leading-relaxed transition resize-none"
+                  />
+                  <div className="flex justify-end text-[10px] font-mono text-neutral-500">
+                    {textProof.trim().length} characters
+                  </div>
+                </div>
+              )}
+
+              {/* Optional Reflection / Caption Note Input */}
+              <div className="space-y-1">
+                <input
+                  type="text"
+                  value={caption}
+                  onChange={(e) => setCaption(e.target.value)}
+                  placeholder="Add reflection or note (optional)..."
+                  className="w-full px-4 py-2.5 rounded-2xl bg-neutral-950 border border-neutral-800 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500 transition"
+                />
+              </div>
+
+              {/* ── SINGLE PROMINENT SUBMIT BUTTON ── */}
               <button
                 type="button"
                 onClick={handleSubmitProof}
-                disabled={isSubmitting || !currentProofPayload || !selectedArena}
-                className={`w-full py-3.5 px-4 rounded-2xl font-black text-xs transition-all flex items-center justify-center gap-2 shadow-xl cursor-pointer active:scale-98 ${
-                  !currentProofPayload
-                    ? "bg-neutral-900 text-neutral-500 border border-neutral-800 cursor-not-allowed"
-                    : "bg-emerald-500 hover:bg-emerald-400 text-neutral-950 shadow-[0_0_25px_rgba(16,185,129,0.35)]"
+                disabled={!isProofReady || isSubmitting || isUploadingMedia}
+                className={`w-full py-3.5 px-4 rounded-full font-medium text-sm transition flex items-center justify-center gap-2 cursor-pointer shadow-xs ${
+                  !isProofReady || isSubmitting || isUploadingMedia
+                    ? "bg-[#202124] text-neutral-500 cursor-not-allowed border border-[#303134]"
+                    : "bg-[#0F9D58] hover:bg-[#0B8043] active:scale-[0.99] text-white"
                 }`}
               >
                 {isSubmitting ? (
                   <div className="flex items-center gap-2">
-                    <span className="w-4 h-4 border-2 border-neutral-950 border-t-transparent rounded-full animate-spin" />
-                    <span>Verifying & Compounding Streak...</span>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Verifying proof & locking in attendance...</span>
+                  </div>
+                ) : isUploadingMedia ? (
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Uploading media...</span>
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
                     <Check className="w-4 h-4 stroke-[2.5]" />
-                    <span>
-                      {selectedSquadMeta?.timeline.isNextDayCycle
-                        ? `Lock In Next Day Drop for ${selectedArena?.name || "Squad"} 🌱`
-                        : `Lock In Daily Proof for ${selectedArena?.name || "Squad"} ⚡`}
-                    </span>
+                    <span>Submit Proof & Check In ({selectedArena.name})</span>
                   </div>
                 )}
               </button>
-            )}
-          </div>
+            </div>
+          )}
+
         </div>
       </motion.div>
     </AnimatePresence>

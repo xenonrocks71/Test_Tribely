@@ -16,6 +16,7 @@ from app.repositories.proof_repository import proof_repository
 from app.services.ai_verification_service import ai_verification_service
 from app.api.websocket import manager as websocket_manager
 from app.core.redis import get_sync_redis_client
+from app.core.storage.storage_factory import offload_base64_media
 
 logger = logging.getLogger(__name__)
 
@@ -89,15 +90,35 @@ class ProofService:
                 "submission_date": target_date.isoformat(),
             }
 
-        # ── 3. Run AI Proof Heuristic Audit ─────────────────────────────────────
+        # ── 3. Run Multimodal AI Proof & Anti-Cheat Audit ───────────────────────
+        if media_url and media_url.startswith("data:"):
+            storage_path = f"proofs/{arena_id}/{user_id}"
+            media_url = offload_base64_media(media_url, folder_prefix=storage_path)
+
         ai_audit = ai_verification_service.audit_submission(
             proof_type=proof_type,
-            proof_url=media_url
+            proof_url=media_url,
+            arena_title=arena.name if arena else None,
+            arena_category=arena.category if arena else None,
+            arena_description=arena.description if arena else None,
+            caption=caption
         )
+
+        ai_status = ai_audit.get("ai_status") or ("verified" if ai_audit.get("anti_cheat_passed", True) else "flagged_suspicious")
+        ai_score = ai_audit.get("confidence_score", 0.95)
+        ai_notes = ai_audit.get("audit_message", "AI Verification completed.")
+
+        ai_telemetry = {
+            "ai_confidence_score": ai_score,
+            "ai_status": ai_status,
+            "ai_audit_notes": ai_notes,
+            "verifier_type": ai_audit.get("verifier_type", "AIVerifier")
+        }
+        enriched_telemetry = {**(telemetry_data or {}), "ai_verification": ai_telemetry}
 
         # ── 4. Insert Proof with DB Constraint Protection ───────────────────────
         try:
-            utc_now = datetime.datetime.utcnow()
+            utc_now = datetime.datetime.now(datetime.timezone.utc)
             proof = proof_repository.create_proof(
                 db=db,
                 arena_id=arena_id,
@@ -107,7 +128,7 @@ class ProofService:
                 proof_type=proof_type,
                 selfie_url=selfie_url,
                 caption=caption,
-                telemetry_data=telemetry_data,
+                telemetry_data=enriched_telemetry,
                 created_at=utc_now
             )
 
@@ -118,9 +139,9 @@ class ProofService:
                 proof_url=media_url,
                 submitted_at=utc_now,
                 is_verified=ai_audit.get("anti_cheat_passed", True),
-                ai_confidence_score=ai_audit.get("confidence_score", 0.95),
-                ai_status="verified" if ai_audit.get("anti_cheat_passed", True) else "flagged_suspicious",
-                ai_audit_notes=ai_audit.get("audit_message", "AI Verification completed.")
+                ai_confidence_score=ai_score,
+                ai_status=ai_status,
+                ai_audit_notes=ai_notes
             )
             db.add(legacy_sub)
 

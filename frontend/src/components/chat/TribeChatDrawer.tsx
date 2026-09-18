@@ -11,7 +11,6 @@ import {
   Pause,
   Flame,
   Zap,
-  Shield,
   Heart,
   Sparkles,
   Users,
@@ -21,9 +20,11 @@ import {
   Search,
   Camera,
   ChevronDown,
+  MessageSquare,
 } from "lucide-react";
 import { useApp, TribeMessage, HabitArena } from "@/context/AppContext";
 import { tribelyService } from "@/services/tribely.service";
+import { AvatarWithFallback } from "@/components/ui/AvatarWithFallback";
 
 export const TribeChatDrawer: React.FC = () => {
   const {
@@ -229,7 +230,7 @@ export const TribeChatDrawer: React.FC = () => {
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex justify-end bg-black/80 backdrop-blur-sm">
+      <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-xs">
         <motion.div
           initial={{ x: "100%" }}
           animate={{ x: 0 }}
@@ -244,27 +245,34 @@ export const TribeChatDrawer: React.FC = () => {
             }
           }}
           transition={{ type: "spring", damping: 26, stiffness: 280 }}
-          className="w-full max-w-md h-full bg-neutral-950 border-l border-neutral-900 flex flex-col justify-between shadow-2xl touch-pan-y"
+          className="w-full max-w-md h-full bg-white dark:bg-[#1E1E1E] border-l border-[#E8EAED] dark:border-[#303134] text-neutral-900 dark:text-white flex flex-col justify-between shadow-2xl touch-pan-y"
         >
           {/* ═══════════════════════════════════════════════════════════════
-              VIEW A: INSTAGRAM DIRECT MESSAGES INBOX (ARENA LIST)
+              VIEW A: MESSAGES INBOX (ARENAS LIST)
              ═══════════════════════════════════════════════════════════════ */}
           {!activeDmArena ? (
-            <div className="flex-1 flex flex-col h-full overflow-hidden">
-              {/* Inbox Header matching Instagram DM */}
-              <div className="p-4 border-b border-neutral-900 flex items-center justify-between bg-neutral-950/95 sticky top-0 z-10">
-                <div className="flex items-center gap-1.5 cursor-pointer">
-                  <span className="text-base font-black text-white tracking-tight">
-                    {user.username || user.name || "Messages"}
-                  </span>
-                  <ChevronDown className="w-4 h-4 text-neutral-400" />
+            <div className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-[#1E1E1E]">
+              {/* Inbox Header (Google Workspace Style) */}
+              <div className="px-4 py-3 border-b border-[#E8EAED] dark:border-[#303134] flex items-center justify-between bg-white/95 dark:bg-[#1E1E1E]/95 backdrop-blur-md sticky top-0 z-10">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-[#E8F0FE] dark:bg-[#1A73E8]/15 text-[#1A73E8] dark:text-[#8AB4F8] flex items-center justify-center font-semibold text-xs border border-[#D2E3FC] dark:border-[#1A73E8]/30">
+                    <MessageSquare className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-semibold text-neutral-900 dark:text-white tracking-tight leading-tight">
+                      Messages
+                    </h2>
+                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400 font-normal">
+                      {user.username ? `@${user.username}` : "Tribe Squads"}
+                    </p>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
                   <button
                     type="button"
                     onClick={closeDm}
-                    className="p-2 rounded-full text-neutral-400 hover:text-white hover:bg-neutral-900 transition cursor-pointer"
+                    className="p-2 rounded-full text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-[#282A2D] transition cursor-pointer"
                     aria-label="Close"
                   >
                     <X className="w-5 h-5" />
@@ -272,22 +280,22 @@ export const TribeChatDrawer: React.FC = () => {
                 </div>
               </div>
 
-              {/* Search Bar */}
-              <div className="px-4 py-2.5 bg-neutral-950">
-                <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-neutral-900 border border-neutral-800 focus-within:border-neutral-700 transition">
-                  <Search className="w-4 h-4 text-neutral-500" />
+              {/* Search Bar (Google Pill Style) */}
+              <div className="px-4 py-2.5 bg-white dark:bg-[#1E1E1E]">
+                <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-full bg-[#F1F3F4] dark:bg-[#202124] border border-[#DADCE0] dark:border-[#3C4043] focus-within:border-[#1A73E8] dark:focus-within:border-[#8AB4F8] focus-within:ring-2 focus-within:ring-[#1A73E8]/15 transition">
+                  <Search className="w-4 h-4 text-neutral-500 dark:text-neutral-400 shrink-0" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search squads and messages..."
-                    className="flex-1 bg-transparent text-xs text-white placeholder-neutral-500 focus:outline-none"
+                    className="flex-1 bg-transparent text-xs text-neutral-900 dark:text-white placeholder-neutral-500 dark:placeholder-neutral-400 focus:outline-none"
                   />
                   {searchQuery && (
                     <button
                       type="button"
                       onClick={() => setSearchQuery("")}
-                      className="text-neutral-500 hover:text-white"
+                      className="text-neutral-400 hover:text-neutral-700 dark:hover:text-white transition cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -296,20 +304,20 @@ export const TribeChatDrawer: React.FC = () => {
               </div>
 
               {/* Messages Title Row */}
-              <div className="px-4 pt-3 pb-1.5 flex items-center justify-between">
-                <span className="text-xs font-black uppercase tracking-wider text-neutral-400">
-                  Squad Messages
+              <div className="px-4 pt-3 pb-2 flex items-center justify-between">
+                <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                  Tribe conversations
                 </span>
-                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                  {arenas.length} Active Squads
+                <span className="text-[11px] font-medium text-[#1A73E8] dark:text-[#8AB4F8] bg-[#E8F0FE] dark:bg-[#1A73E8]/15 px-2.5 py-0.5 rounded-full border border-[#D2E3FC] dark:border-[#1A73E8]/25">
+                  {arenas.length} active
                 </span>
               </div>
 
-              {/* Arenas List (Matching User's Instagram DM Screenshot) */}
-              <div className="flex-1 overflow-y-auto divide-y divide-neutral-900/50 no-scrollbar">
+              {/* Arenas List (Google Material 3 List Style) */}
+              <div className="flex-1 overflow-y-auto divide-y divide-[#E8EAED] dark:divide-[#303134] no-scrollbar">
                 {filteredArenas.length === 0 ? (
-                  <div className="py-16 text-center text-neutral-500 text-xs flex flex-col items-center gap-2">
-                    <span className="text-2xl">🔍</span>
+                  <div className="py-16 text-center text-neutral-500 dark:text-neutral-400 text-xs flex flex-col items-center gap-2">
+                    <Search className="w-6 h-6 text-neutral-400 stroke-[1.5]" />
                     <span>No squads found matching "{searchQuery}"</span>
                   </div>
                 ) : (
@@ -322,13 +330,13 @@ export const TribeChatDrawer: React.FC = () => {
                           triggerHaptic([15]);
                           openDm(arena.id, arena.name, arena.tag, arena.rawId);
                         }}
-                        className="flex items-center justify-between px-4 py-3 hover:bg-neutral-900/60 active:bg-neutral-900 transition cursor-pointer group"
+                        className="flex items-center justify-between px-4 py-3 hover:bg-[#F8F9FA] dark:hover:bg-[#202124] active:bg-[#F1F3F4] dark:active:bg-[#282A2D] transition cursor-pointer group"
                       >
-                        {/* Left: Circular Avatar with Online Ring */}
+                        {/* Left: Google Account Style Circular Avatar */}
                         <div className="flex items-center gap-3.5 min-w-0">
                           <div className="relative shrink-0">
-                            <div className="w-12 h-12 rounded-full p-[2px] bg-gradient-to-tr from-[#f09433] via-[#dc2743] to-[#bc1888]">
-                              <div className="w-full h-full rounded-full bg-neutral-900 border border-neutral-950 flex items-center justify-center text-xl overflow-hidden">
+                            <div className="w-11 h-11 rounded-full p-[1.5px] border border-[#DADCE0] dark:border-[#3C4043] bg-[#F1F3F4] dark:bg-[#202124]">
+                              <div className="w-full h-full rounded-full bg-white dark:bg-[#282A2D] flex items-center justify-center text-lg overflow-hidden">
                                 {arena.bannerImage ? (
                                   <img
                                     src={arena.bannerImage}
@@ -341,23 +349,23 @@ export const TribeChatDrawer: React.FC = () => {
                               </div>
                             </div>
                             {/* Online green indicator badge */}
-                            <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 border-2 border-neutral-950" />
+                            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-[#0F9D58] ring-2 ring-white dark:ring-[#1E1E1E]" />
                           </div>
 
                           {/* Middle: Arena Name + Latest Message Snippet */}
                           <div className="min-w-0 flex-1">
-                            <h4 className="text-xs font-black text-white truncate leading-tight group-hover:text-emerald-400 transition">
+                            <h4 className="text-xs font-semibold text-neutral-900 dark:text-white truncate leading-tight group-hover:text-[#1A73E8] dark:group-hover:text-[#8AB4F8] transition">
                               {arena.name}
                             </h4>
-                            <p className="text-[11px] text-neutral-400 truncate mt-0.5 leading-snug font-medium">
+                            <p className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate mt-0.5 leading-normal font-normal">
                               {previewText}
                             </p>
                           </div>
                         </div>
 
                         {/* Right: Unread Dot + Quick Camera Action Button */}
-                        <div className="flex items-center gap-3 shrink-0 ml-2">
-                          <span className="w-2 h-2 rounded-full bg-blue-500" />
+                        <div className="flex items-center gap-2.5 shrink-0 ml-2">
+                          <span className="w-2 h-2 rounded-full bg-[#1A73E8] dark:bg-[#8AB4F8]" />
                           <button
                             type="button"
                             onClick={(e) => {
@@ -365,10 +373,10 @@ export const TribeChatDrawer: React.FC = () => {
                               triggerHaptic([20]);
                               openCamera();
                             }}
-                            className="p-1.5 text-neutral-400 hover:text-white transition cursor-pointer"
+                            className="p-2 rounded-full text-neutral-400 hover:text-[#1A73E8] dark:hover:text-[#8AB4F8] hover:bg-neutral-100 dark:hover:bg-[#282A2D] transition cursor-pointer"
                             title="Drop quick proof"
                           >
-                            <Camera className="w-5 h-5 stroke-[1.5]" />
+                            <Camera className="w-4 h-4 stroke-[1.8]" />
                           </button>
                         </div>
                       </div>
@@ -381,10 +389,10 @@ export const TribeChatDrawer: React.FC = () => {
             /* ═══════════════════════════════════════════════════════════════
                 VIEW B: DEDICATED ARENA CHAT ROOM (SEND TO ALL MEMBERS)
                ═══════════════════════════════════════════════════════════════ */
-            <>
-              {/* Chat Header with Back Arrow to return to Arenas List */}
-              <div className="p-3.5 border-b border-neutral-900 flex items-center justify-between bg-neutral-950/95 sticky top-0 z-10">
-                <div className="flex items-center gap-2.5">
+            <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#F8F9FA] dark:bg-[#121212]">
+              {/* Chat Header (Google Chat Style) */}
+              <div className="px-3.5 py-3 border-b border-[#E8EAED] dark:border-[#303134] flex items-center justify-between bg-white/95 dark:bg-[#1E1E1E]/95 backdrop-blur-md sticky top-0 z-10">
+                <div className="flex items-center gap-2.5 min-w-0">
                   {/* Back to Arenas List */}
                   <button
                     type="button"
@@ -392,7 +400,7 @@ export const TribeChatDrawer: React.FC = () => {
                       triggerHaptic([15]);
                       openMessagesInbox();
                     }}
-                    className="p-1 text-neutral-400 hover:text-white transition cursor-pointer"
+                    className="p-1.5 rounded-full text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-[#282A2D] transition cursor-pointer shrink-0"
                     aria-label="Back to messages"
                     title="Back to squads list"
                   >
@@ -400,17 +408,25 @@ export const TribeChatDrawer: React.FC = () => {
                   </button>
 
                   {/* Arena Avatar & Details */}
-                  <div className="w-9 h-9 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-base shrink-0">
-                    {currentArena?.emoji || "⚔️"}
+                  <div className="w-9 h-9 rounded-full bg-[#E8F0FE] dark:bg-[#1A73E8]/15 border border-[#D2E3FC] dark:border-[#1A73E8]/30 flex items-center justify-center text-base shrink-0 overflow-hidden">
+                    {currentArena?.bannerImage ? (
+                      <img
+                        src={currentArena.bannerImage}
+                        alt={currentArena.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span>{currentArena?.emoji || "⚔️"}</span>
+                    )}
                   </div>
-                  <div>
-                    <h3 className="text-xs font-black text-white leading-tight">
+                  <div className="min-w-0">
+                    <h3 className="text-xs font-semibold text-neutral-900 dark:text-white leading-tight truncate">
                       {currentArena?.name}
                     </h3>
                     <div className="flex items-center gap-1.5 mt-0.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      <span className="text-[10px] text-emerald-400 font-semibold">
-                        {currentArena?.memberCount || 12} members online
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#0F9D58]" />
+                      <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-normal">
+                        {currentArena?.memberCount || 12} members · Active
                       </span>
                     </div>
                   </div>
@@ -419,7 +435,7 @@ export const TribeChatDrawer: React.FC = () => {
                 <button
                   type="button"
                   onClick={closeDm}
-                  className="p-1.5 rounded-full bg-neutral-900 text-neutral-400 hover:text-white transition cursor-pointer"
+                  className="p-1.5 rounded-full text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-[#282A2D] transition cursor-pointer shrink-0"
                   aria-label="Close"
                 >
                   <X className="w-5 h-5" />
@@ -427,15 +443,17 @@ export const TribeChatDrawer: React.FC = () => {
               </div>
 
               {/* Chat Room Messages Feed */}
-              <div className="flex-1 p-4 overflow-y-auto space-y-4 no-scrollbar">
+              <div className="flex-1 p-4 overflow-y-auto space-y-3.5 no-scrollbar bg-[#F8F9FA] dark:bg-[#121212]">
                 {allMessages.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-16 text-neutral-600 gap-2">
-                    <span className="text-4xl">💬</span>
-                    <p className="text-xs font-semibold text-neutral-300">
-                      Welcome to {currentArena?.name}!
+                  <div className="flex flex-col items-center justify-center py-16 gap-2 text-center">
+                    <div className="w-12 h-12 rounded-full bg-[#E8F0FE] dark:bg-[#1A73E8]/15 border border-[#D2E3FC] dark:border-[#1A73E8]/30 flex items-center justify-center text-[#1A73E8] dark:text-[#8AB4F8] mb-1">
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <p className="text-xs font-semibold text-neutral-900 dark:text-white">
+                      Welcome to {currentArena?.name}
                     </p>
-                    <p className="text-[11px] text-neutral-500 text-center max-w-xs">
-                      Send a message to cheer on your cohort and keep the daily momentum alive.
+                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400 max-w-xs leading-relaxed">
+                      Connect with your tribe members, cheer on streak milestones, and coordinate daily habit goals.
                     </p>
                   </div>
                 )}
@@ -448,25 +466,21 @@ export const TribeChatDrawer: React.FC = () => {
                         initial={{ opacity: 0, y: 6 }}
                         animate={{ opacity: 1, y: 0 }}
                         onClick={() => handleSystemEventClick(msg)}
-                        className="p-2.5 rounded-2xl bg-neutral-900/80 border border-neutral-800/80 flex items-center justify-between cursor-pointer hover:border-emerald-500/40 transition group"
+                        className="p-3 rounded-xl bg-white dark:bg-[#1E1E1E] border border-[#E8EAED] dark:border-[#303134] hover:border-[#1A73E8]/40 dark:hover:border-[#8AB4F8]/40 flex items-center justify-between cursor-pointer transition group shadow-xs"
                       >
-                        <div className="flex items-center gap-2.5">
-                          <div className="p-1.5 rounded-xl bg-emerald-500/15 text-emerald-400">
-                            {msg.systemEvent?.type === "shield_used" ? (
-                              <Shield className="w-3.5 h-3.5 text-amber-400" />
-                            ) : (
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                            )}
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="p-1.5 rounded-lg bg-[#E6F4EA] dark:bg-[#0F9D58]/15 text-[#0F9D58] dark:text-[#81C995] shrink-0">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
                           </div>
-                          <div className="text-[11px] leading-snug text-neutral-300">
-                            <strong className="text-white font-bold">
+                          <div className="text-[11px] leading-snug text-neutral-700 dark:text-neutral-300 truncate">
+                            <strong className="text-neutral-900 dark:text-white font-semibold">
                               {msg.systemEvent?.memberName}
                             </strong>{" "}
                             {msg.systemEvent?.description}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1 text-[10px] text-neutral-500 font-bold group-hover:text-emerald-400 transition">
+                        <div className="flex items-center gap-1 text-[11px] text-[#1A73E8] dark:text-[#8AB4F8] font-medium group-hover:underline shrink-0 ml-2">
                           <span>View</span>
                           <ArrowRight className="w-3 h-3" />
                         </div>
@@ -484,10 +498,12 @@ export const TribeChatDrawer: React.FC = () => {
                       }`}
                     >
                       {!isSelf && (
-                        <img
-                          src={msg.senderAvatar}
-                          alt={msg.senderName}
-                          className="w-7 h-7 rounded-full object-cover shrink-0 border border-neutral-800"
+                        <AvatarWithFallback
+                          avatarUrl={msg.senderAvatar}
+                          name={msg.senderName}
+                          sizeClass="w-7 h-7"
+                          textClass="text-[10px] font-bold"
+                          className="shrink-0 border border-[#DADCE0] dark:border-[#3C4043]"
                         />
                       )}
 
@@ -498,14 +514,14 @@ export const TribeChatDrawer: React.FC = () => {
                       >
                         <div
                           onDoubleClick={() => reactToMessage(msg.id, "🔥")}
-                          className={`rounded-2xl p-3 text-xs leading-relaxed select-none relative ${
+                          className={`rounded-2xl p-3 text-xs leading-relaxed select-none relative shadow-xs ${
                             isSelf
-                              ? "bg-emerald-600 text-white rounded-br-none shadow-md shadow-emerald-950/40"
-                              : "bg-neutral-900 border border-neutral-800 text-neutral-200 rounded-bl-none"
+                              ? "bg-[#E8F0FE] text-neutral-900 dark:bg-[#1A73E8]/20 dark:text-neutral-100 border border-[#D2E3FC] dark:border-[#1A73E8]/30 rounded-tr-xs"
+                              : "bg-white text-neutral-900 dark:bg-[#1E1E1E] dark:text-neutral-100 border border-[#E8EAED] dark:border-[#303134] rounded-tl-xs"
                           }`}
                         >
                           {!isSelf && (
-                            <div className="text-[10px] font-bold text-emerald-400 mb-1">
+                            <div className="text-[11px] font-semibold text-[#1A73E8] dark:text-[#8AB4F8] mb-1">
                               {msg.senderName}
                             </div>
                           )}
@@ -515,12 +531,12 @@ export const TribeChatDrawer: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => togglePlayAudio(msg.id)}
-                                className="w-8 h-8 rounded-full bg-white text-neutral-950 flex items-center justify-center font-bold shadow hover:scale-105 transition cursor-pointer"
+                                className="w-8 h-8 rounded-full bg-[#1A73E8] dark:bg-[#8AB4F8] text-white dark:text-[#121212] flex items-center justify-center font-bold shadow-xs hover:opacity-90 transition cursor-pointer"
                               >
                                 {playingAudioId === msg.id ? (
-                                  <Pause className="w-4 h-4 fill-neutral-950" />
+                                  <Pause className="w-4 h-4 fill-current" />
                                 ) : (
-                                  <Play className="w-4 h-4 fill-neutral-950 ml-0.5" />
+                                  <Play className="w-4 h-4 fill-current ml-0.5" />
                                 )}
                               </button>
 
@@ -543,17 +559,15 @@ export const TribeChatDrawer: React.FC = () => {
                                     }}
                                     transition={{ duration: 0.2 }}
                                     className={`w-1 rounded-full ${
-                                      isSelf ? "bg-emerald-200" : "bg-emerald-400"
+                                      isSelf
+                                        ? "bg-[#1A73E8] dark:bg-[#8AB4F8]"
+                                        : "bg-[#5F6368] dark:bg-[#9AA0A6]"
                                     }`}
                                   />
                                 ))}
                               </div>
 
-                              <span
-                                className={`text-[10px] font-bold ${
-                                  isSelf ? "text-emerald-200" : "text-neutral-400"
-                                }`}
-                              >
+                              <span className="text-[10px] font-medium text-neutral-500 dark:text-neutral-400">
                                 {msg.audioDuration || "0:11"}
                               </span>
                             </div>
@@ -561,11 +575,7 @@ export const TribeChatDrawer: React.FC = () => {
                             <p>{msg.text}</p>
                           )}
 
-                          <div
-                            className={`text-[9px] mt-1 text-right ${
-                              isSelf ? "text-emerald-200" : "text-neutral-500"
-                            }`}
-                          >
+                          <div className="text-[10px] mt-1 text-right text-neutral-500 dark:text-neutral-400">
                             {msg.timestamp}
                           </div>
 
@@ -576,7 +586,7 @@ export const TribeChatDrawer: React.FC = () => {
                                   key={emoji}
                                   type="button"
                                   onClick={() => reactToMessage(msg.id, emoji)}
-                                  className="px-1.5 py-0.5 rounded-full bg-black/40 border border-white/10 text-[10px] font-bold flex items-center gap-1 cursor-pointer hover:scale-105"
+                                  className="px-2 py-0.5 rounded-full bg-white dark:bg-[#202124] border border-[#DADCE0] dark:border-[#3C4043] text-[11px] text-neutral-700 dark:text-neutral-300 font-medium flex items-center gap-1 cursor-pointer hover:border-[#1A73E8]/50 shadow-2xs"
                                 >
                                   <span>{emoji}</span>
                                   <span>{count}</span>
@@ -592,11 +602,11 @@ export const TribeChatDrawer: React.FC = () => {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Chat Input & Pokes Bar */}
-              <div className="p-3 border-t border-neutral-900 bg-neutral-950 space-y-2">
-                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                  <span className="text-[10px] font-black uppercase text-neutral-500 shrink-0">
-                    Pokes:
+              {/* Chat Input & Nudges Bar (Google Material 3) */}
+              <div className="p-3 border-t border-[#E8EAED] dark:border-[#303134] bg-white dark:bg-[#1E1E1E] space-y-2">
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                  <span className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 shrink-0">
+                    Nudge:
                   </span>
                   {[
                     {
@@ -620,7 +630,7 @@ export const TribeChatDrawer: React.FC = () => {
                       key={chip.label}
                       type="button"
                       onClick={() => sendQuickNudge("arena_members", chip.text)}
-                      className="px-2.5 py-1 rounded-full bg-neutral-900 border border-neutral-800 text-[11px] text-neutral-300 font-semibold hover:border-emerald-500/40 hover:text-white transition whitespace-nowrap cursor-pointer active:scale-95"
+                      className="px-3 py-1 rounded-full bg-white dark:bg-[#202124] border border-[#DADCE0] dark:border-[#3C4043] text-[11px] text-neutral-700 dark:text-neutral-300 font-medium hover:border-[#1A73E8] dark:hover:border-[#8AB4F8] hover:text-[#1A73E8] dark:hover:text-[#8AB4F8] hover:bg-[#E8F0FE]/40 dark:hover:bg-[#1A73E8]/10 transition whitespace-nowrap cursor-pointer active:scale-95 shadow-2xs"
                     >
                       {chip.label}
                     </button>
@@ -628,18 +638,17 @@ export const TribeChatDrawer: React.FC = () => {
                 </div>
 
                 {isRecording && (
-                  <div className="p-3 rounded-2xl bg-rose-950/60 border border-rose-500/40 flex items-center justify-between animate-pulse">
+                  <div className="p-3 rounded-2xl bg-[#FCE8E6] dark:bg-[#EA4335]/15 border border-[#FAD2CF] dark:border-[#EA4335]/30 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
-                      <span className="text-xs font-bold text-rose-300">
-                        Recording Walkie-Talkie Snippet... (
-                        {15 - recordingSeconds}s remaining)
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#EA4335] animate-ping" />
+                      <span className="text-xs font-medium text-[#D93025] dark:text-[#F28B82]">
+                        Recording voice note... ({15 - recordingSeconds}s remaining)
                       </span>
                     </div>
                     <button
                       type="button"
                       onClick={() => stopRecordingVoice(true)}
-                      className="py-1 px-3 rounded-xl bg-rose-500 text-neutral-950 text-xs font-black"
+                      className="py-1 px-3.5 rounded-full bg-[#EA4335] text-white text-xs font-medium hover:bg-[#D93025] transition shadow-xs"
                     >
                       Send 🎙️
                     </button>
@@ -652,7 +661,7 @@ export const TribeChatDrawer: React.FC = () => {
                     value={inputVal}
                     onChange={(e) => setInputVal(e.target.value)}
                     placeholder={`Message ${currentArena?.name || "squad"}...`}
-                    className="flex-1 py-2.5 px-4 rounded-2xl bg-neutral-900 border border-neutral-800 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500/50 transition"
+                    className="flex-1 py-2 px-4 rounded-full bg-[#F1F3F4] dark:bg-[#202124] border border-[#DADCE0] dark:border-[#3C4043] text-xs text-neutral-900 dark:text-white placeholder-neutral-500 dark:placeholder-neutral-400 focus:outline-none focus:border-[#1A73E8] dark:focus:border-[#8AB4F8] focus:ring-2 focus:ring-[#1A73E8]/15 transition"
                   />
 
                   <button
@@ -662,12 +671,12 @@ export const TribeChatDrawer: React.FC = () => {
                         ? stopRecordingVoice(true)
                         : startRecordingVoice()
                     }
-                    className={`p-2.5 rounded-2xl transition cursor-pointer font-bold ${
+                    className={`p-2 rounded-full transition cursor-pointer font-medium ${
                       isRecording
-                        ? "bg-rose-500 text-white animate-bounce"
-                        : "bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white hover:border-neutral-700"
+                        ? "bg-[#EA4335] text-white animate-bounce"
+                        : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-[#282A2D]"
                     }`}
-                    title="Walkie-Talkie Voice Drop (15s Max)"
+                    title="Voice snippet (15s max)"
                   >
                     {isRecording ? (
                       <Square className="w-4 h-4 fill-white" />
@@ -679,13 +688,14 @@ export const TribeChatDrawer: React.FC = () => {
                   <button
                     type="submit"
                     disabled={!inputVal.trim()}
-                    className="p-2.5 rounded-2xl bg-emerald-500 text-neutral-950 disabled:opacity-40 disabled:cursor-not-allowed font-bold hover:brightness-110 active:scale-95 transition cursor-pointer"
+                    className="p-2 rounded-full bg-[#1A73E8] hover:bg-[#1557B0] text-white disabled:opacity-30 disabled:cursor-not-allowed font-medium transition cursor-pointer shadow-xs"
+                    title="Send message"
                   >
                     <Send className="w-4 h-4" />
                   </button>
                 </form>
               </div>
-            </>
+            </div>
           )}
         </motion.div>
       </div>

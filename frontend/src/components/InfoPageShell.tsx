@@ -31,7 +31,7 @@ export default function InfoPageShell({
             className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-md transition transform group-hover:scale-105 overflow-hidden border border-[var(--border)] relative"
             style={{ background: "#FFFFFF" }}
           >
-            <Image src="/logo.png" alt="Tribely" fill priority sizes="40px" style={{ objectFit: "contain" }} />
+            <Image src="/icons/BrandNewLook.png" alt="Tribely" fill priority sizes="40px" style={{ objectFit: "contain" }} />
           </div>
           <div>
             <span
@@ -112,12 +112,12 @@ export default function InfoPageShell({
             Back to Home
           </FastLink>
           <FastLink
-            href="/dashboard"
+            href="/feed"
             prefetchApi="/api/arenas/"
             className="inline-flex items-center gap-1.5 font-bold transition hover:opacity-80"
             style={{ color: "var(--fg-muted)" }}
           >
-            Dashboard →
+            Feed →
           </FastLink>
         </div>
       </main>

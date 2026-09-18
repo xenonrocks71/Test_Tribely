@@ -1,10 +1,21 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Zap, X, Send, ChevronRight, ChevronLeft } from "lucide-react";
+import { Plus, Zap, X, Send, Flame, Check, ShieldCheck, Clock, Sparkles } from "lucide-react";
 import { useApp, StoryUser, StorySlide } from "@/context/AppContext";
+import { resolveBackendUrl } from "@/lib/api-client";
+import { AvatarWithFallback } from "@/components/ui/AvatarWithFallback";
 
+/**
+ * StoryTray -> Cohort Check-in Pulse Tray
+ * 
+ * Linear/Raycast-grade accountability pulse tray displaying 24h cohort cycle check-ins:
+ * - Green glowing ring: Verified check-in today
+ * - Amber pulsing ring: Deadline approaching (< 3 hours) with 1-tap peer nudge
+ * - Orange dashed ring: Self drop pending
+ * - Top Collective Multiplier ticker: 1.5x cohort streak bonus status
+ */
 export const StoryTray: React.FC = () => {
   const {
     storyUsers,
@@ -28,7 +39,7 @@ export const StoryTray: React.FC = () => {
   const isPausedRef = useRef(false);
 
   // Filter clean unviewed stories (always keep self so user can drop/view their own proof)
-  const unviewedStories = React.useMemo(() => {
+  const unviewedStories = useMemo(() => {
     return storyUsers.filter((s) => {
       const u = (s.username || "").toLowerCase();
       const n = (s.name || "").toLowerCase();
@@ -50,7 +61,7 @@ export const StoryTray: React.FC = () => {
 
   const storiesToRender = unviewedStories.length > 0 ? unviewedStories : [{
     id: "self",
-    name: "Your Story",
+    name: "Your Drop",
     username: user.username || "you",
     avatar: user.avatar,
     arenaTag: "#DailyHabit",
@@ -58,14 +69,14 @@ export const StoryTray: React.FC = () => {
   } as StoryUser];
 
   // Playable story users (users with valid proof slides)
-  const playableUsers = React.useMemo(() => {
+  const playableUsers = useMemo(() => {
     return storiesToRender.filter((u) => {
       if (u.id === "self" && !user.hasSubmittedToday) return false;
       return (u.proofs && u.proofs.length > 0) || Boolean(u.latestProof);
     });
   }, [storiesToRender, user.hasSubmittedToday]);
 
-  // When a story modal is opened, sync current user index and slide index
+  // Sync current user index and slide index when modal opens
   useEffect(() => {
     if (activeStoryModal) {
       const idx = playableUsers.findIndex((u) => u.id === activeStoryModal.id);
@@ -77,7 +88,7 @@ export const StoryTray: React.FC = () => {
 
   const activeUser = playableUsers[currentUserIndex] || activeStoryModal;
 
-  const currentSlides: StorySlide[] = React.useMemo(() => {
+  const currentSlides: StorySlide[] = useMemo(() => {
     if (!activeUser) return [];
     if (activeUser.proofs && activeUser.proofs.length > 0) {
       return activeUser.proofs;
@@ -90,7 +101,7 @@ export const StoryTray: React.FC = () => {
 
   const activeSlide = currentSlides[currentSlideIndex] || currentSlides[0];
 
-  // ── Navigation Functions (Instagram Standards) ──
+  // ── Navigation Handlers ──
   const handleJumpToNextUser = useCallback(() => {
     triggerHaptic([20]);
     if (activeUser && activeUser.id !== "self") {
@@ -136,7 +147,7 @@ export const StoryTray: React.FC = () => {
     }
   }, [currentSlideIndex, handleJumpToPrevUser, triggerHaptic]);
 
-  // ── Auto-Advancing 5-Second Timer ──
+  // Auto-advancing timer
   useEffect(() => {
     if (!activeStoryModal || !activeSlide) {
       setSlideProgress(0);
@@ -151,14 +162,13 @@ export const StoryTray: React.FC = () => {
           clearInterval(interval);
           return 100;
         }
-        return prev + 2; // ~5 seconds (50 ticks * 100ms)
+        return prev + 2;
       });
     }, 100);
 
     return () => clearInterval(interval);
   }, [activeStoryModal, currentUserIndex, currentSlideIndex, activeSlide]);
 
-  // Advance when slide timer finishes
   useEffect(() => {
     if (slideProgress >= 100 && activeStoryModal) {
       handleNextSlide();
@@ -177,19 +187,37 @@ export const StoryTray: React.FC = () => {
 
   return (
     <>
-      {/* ── HORIZONTAL STORY TRAY CAROUSEL (Light & Dark Theme Seamless) ── */}
-      <div className="w-full bg-white dark:bg-[#0A0A0A] border-b border-neutral-200 dark:border-neutral-900/80 py-3.5 px-3 overflow-x-auto no-scrollbar select-none transition-colors">
-        <div className="flex items-start gap-3.5 min-w-max">
+      {/* ── COHORT CHECK-IN PULSE TRAY (Google Material 3 Card) ── */}
+      <div className="w-full bg-white dark:bg-[#1E1E1E] border border-[#E8EAED] dark:border-[#303134] rounded-2xl md:rounded-3xl p-4 sm:p-5 shadow-xs mb-4 sm:mb-5 select-none transition-colors">
+        {/* Header: Clean Google Title & Status */}
+        <div className="flex items-center justify-between mb-3.5 px-0.5">
+          <div className="flex items-center gap-2">
+            <h2 className="text-xs font-semibold text-neutral-900 dark:text-white tracking-tight">
+              Daily Check-ins
+            </h2>
+            <span className="px-2 py-0.5 rounded-full bg-[#E8F0FE] dark:bg-[#1A73E8]/15 text-[10px] font-medium text-[#1A73E8] dark:text-[#8AB4F8] border border-[#D2E3FC] dark:border-[#1A73E8]/25">
+              1.5x Multiplier
+            </span>
+          </div>
+          <span className="text-[11px] text-neutral-500 dark:text-neutral-400 font-normal">
+            {user.hasSubmittedToday ? "✓ Checked in" : "Pending today"}
+          </span>
+        </div>
+
+        {/* Pulse Avatars Row */}
+        <div className="flex items-start gap-4 overflow-x-auto no-scrollbar pb-1">
           {storiesToRender.map((story) => {
             const isSelf = story.id === "self";
             const isVerified = story.status === "verified";
             const isUrgent = story.status === "urgent";
             const isMissed = story.status === "missed";
+            const isViewed = viewedStoryUserIds.has(story.id);
 
             return (
-              <div
+              <motion.div
                 key={story.id}
-                className="flex flex-col items-center gap-1.5 cursor-pointer group"
+                whileTap={{ scale: 0.96 }}
+                className="flex flex-col items-center gap-1.5 cursor-pointer group shrink-0"
                 onClick={() => {
                   if (isSelf && !user.hasSubmittedToday) {
                     openCamera();
@@ -198,91 +226,100 @@ export const StoryTray: React.FC = () => {
                   }
                 }}
               >
-                {/* Avatar Ring Container */}
+                {/* Avatar Pulse Ring (Google Account Style) */}
                 <div className="relative">
                   <div
-                    className={`w-16 h-16 rounded-full p-[2.5px] transition-all duration-300 flex items-center justify-center ${
+                    className={`w-14 h-14 rounded-full flex items-center justify-center p-0.5 transition-all duration-200 ${
                       isSelf && !user.hasSubmittedToday
-                        ? "border-2 border-dashed border-emerald-500/70 hover:border-emerald-400 p-0"
+                        ? "border-2 border-dashed border-[#1A73E8] dark:border-[#8AB4F8] bg-[#1A73E8]/5 dark:bg-[#8AB4F8]/10 hover:border-[#1557B0]"
                         : isVerified
-                        ? "bg-gradient-to-tr from-[#f09433] via-[#dc2743] to-[#bc1888] shadow-[0_0_12px_rgba(220,39,67,0.35)] scale-102"
+                        ? "border-2 border-[#0F9D58] dark:border-[#81C995]"
                         : isUrgent
-                        ? "bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 animate-pulse shadow-[0_0_14px_rgba(244,63,94,0.4)]"
-                        : "bg-neutral-300 dark:bg-neutral-800"
+                        ? "border-2 border-[#FBBC04]"
+                        : isMissed
+                        ? "border border-neutral-300 dark:border-neutral-700"
+                        : isViewed
+                        ? "border border-neutral-200 dark:border-neutral-800"
+                        : "border-2 border-[#1A73E8] dark:border-[#8AB4F8]"
                     }`}
                   >
-                    <div className="w-full h-full rounded-full bg-white dark:bg-[#0A0A0A] p-[2px] overflow-hidden">
-                      <img
-                        src={story.avatar}
-                        alt={story.name}
-                        className={`w-full h-full object-cover rounded-full transition-transform duration-300 group-hover:scale-105 ${
-                          isMissed ? "grayscale opacity-50" : ""
-                        }`}
+                    <div className="w-full h-full rounded-full bg-white dark:bg-[#1E1E1E] flex items-center justify-center overflow-hidden">
+                      <AvatarWithFallback
+                        avatarUrl={isSelf ? user.avatar : story.avatar}
+                        name={isSelf ? user.name : story.name}
+                        sizeClass="w-full h-full"
+                        textClass="text-xs font-bold"
+                        className={`transition-transform duration-200 group-hover:scale-105 ${isMissed ? "grayscale opacity-40" : ""} ${isViewed ? "opacity-70" : ""}`}
                       />
                     </div>
                   </div>
 
-                  {/* Floating Action Badges */}
+                  {/* Self Add Plus Badge */}
                   {isSelf && !user.hasSubmittedToday && (
-                    <div className="absolute bottom-0 right-0 w-5 h-5 rounded-full bg-emerald-500 text-neutral-950 flex items-center justify-center border-2 border-white dark:border-[#0A0A0A] shadow-md">
-                      <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                    <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-[#1A73E8] dark:bg-[#8AB4F8] text-white dark:text-[#121212] flex items-center justify-center border-2 border-white dark:border-[#1E1E1E] shadow-xs">
+                      <Plus className="w-3 h-3 stroke-[2.5]" />
                     </div>
                   )}
 
+                  {/* Verified Check Badge */}
+                  {isVerified && !isSelf && (
+                    <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#0F9D58] text-white flex items-center justify-center border-2 border-white dark:border-[#1E1E1E] shadow-xs">
+                      <Check className="w-2.5 h-2.5 stroke-[2.5]" />
+                    </div>
+                  )}
+
+                  {/* Urgent Countdown Nudge Button */}
                   {isUrgent && (
                     <motion.button
-                      whileTap={{ scale: 0.85 }}
+                      whileTap={{ scale: 0.9 }}
                       onClick={(e) => {
                         e.stopPropagation();
                         nudgePeer(story);
                       }}
-                      className="absolute -bottom-1 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[9px] font-black tracking-tight flex items-center gap-0.5 border border-white dark:border-[#0A0A0A] shadow-md whitespace-nowrap hover:bg-rose-400 transition-colors cursor-pointer"
-                      title="1-Tap Nudge peer"
+                      className="absolute -bottom-1 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-[#FEF7E0] dark:bg-[#F9AB00]/15 text-amber-700 dark:text-amber-300 text-[9px] font-medium flex items-center gap-0.5 border border-[#FEEFC3] dark:border-[#F9AB00]/30 shadow-xs whitespace-nowrap cursor-pointer"
+                      title="Nudge peer"
                     >
-                      <Zap className="w-2.5 h-2.5 fill-white" />
+                      <Zap className="w-2.5 h-2.5 fill-current" />
                       <span>{story.countdownText || "Nudge"}</span>
                     </motion.button>
                   )}
-
-                  {isVerified && !isSelf && (
-                    <div className="absolute -bottom-0.5 right-0 w-4 h-4 rounded-full bg-emerald-500 text-neutral-950 flex items-center justify-center border-2 border-white dark:border-[#0A0A0A] text-[8px] font-black shadow-sm">
-                      ✓
-                    </div>
-                  )}
                 </div>
 
-                {/* Username / Tag Label */}
-                <span className="text-[11px] font-semibold text-neutral-800 dark:text-neutral-200 max-w-[64px] truncate text-center leading-tight">
+                {/* User Label */}
+                <span
+                  className={`text-[11px] font-semibold max-w-[68px] truncate text-center leading-tight ${
+                    isViewed
+                      ? "text-neutral-400 dark:text-neutral-500"
+                      : "text-neutral-700 dark:text-neutral-200"
+                  }`}
+                >
                   {isSelf ? "Your Proof" : story.username}
                 </span>
-              </div>
+              </motion.div>
             );
           })}
         </div>
       </div>
 
-      {/* ── FULL-SCREEN INSTAGRAM EPHEMERAL STORY PLAYER WITH COMPLETE GESTURES ── */}
+      {/* ── HIGH-STAKES PROOF INSPECTION MODAL ── */}
       <AnimatePresence>
         {activeStoryModal && activeUser && activeSlide && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-50 bg-black flex items-center justify-center select-none"
+            className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center select-none p-4"
           >
-            {/* Story Container (Instagram 9:16 Aspect) with Horizontal Swipe Gesture */}
+            {/* Story Container */}
             <motion.div
               drag="x"
               dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={0.2}
+              dragElastic={0.15}
               onDragEnd={(_e, { offset, velocity }) => {
-                const swipeThreshold = 50;
-                if (offset.x < -swipeThreshold || velocity.x < -300) {
-                  // Swiped right to left: skip all stories from current user and direct jump to next user's stories!
+                if (offset.x < -50 || velocity.x < -300) {
                   handleJumpToNextUser();
-                } else if (offset.x > swipeThreshold || velocity.x > 300) {
-                  // Swiped left to right: jump to previous user's stories
+                } else if (offset.x > 50 || velocity.x > 300) {
                   handleJumpToPrevUser();
                 }
               }}
@@ -292,11 +329,11 @@ export const StoryTray: React.FC = () => {
               onPointerUp={() => {
                 isPausedRef.current = false;
               }}
-              className="relative w-full max-w-md h-full bg-neutral-950 flex flex-col justify-between p-4 overflow-hidden"
+              className="relative w-full max-w-md h-[88vh] bg-[#0E0E12] border border-neutral-800 rounded-3xl flex flex-col justify-between p-5 overflow-hidden shadow-2xl"
             >
-              {/* ── TOP HEADER & TIMED SEGMENTED PROGRESS BARS ── */}
+              {/* Progress Bars & Header */}
               <div className="space-y-3 z-30 pointer-events-none">
-                {/* Segmented Progress Bars (1 per slide for current user) */}
+                {/* Segmented Progress Bars */}
                 <div className="flex items-center gap-1.5 w-full">
                   {currentSlides.map((_, sIdx) => {
                     const isCompleted = sIdx < currentSlideIndex;
@@ -304,10 +341,10 @@ export const StoryTray: React.FC = () => {
                     return (
                       <div
                         key={sIdx}
-                        className="flex-1 h-1 bg-white/30 rounded-full overflow-hidden"
+                        className="flex-1 h-[3px] bg-white/20 rounded-full overflow-hidden"
                       >
                         <div
-                          className="h-full bg-white rounded-full transition-all duration-75"
+                          className="h-full bg-gradient-to-r from-orange-500 to-amber-400 rounded-full transition-all duration-75 ease-linear"
                           style={{
                             width: isCompleted ? "100%" : isActive ? `${slideProgress}%` : "0%",
                           }}
@@ -317,22 +354,26 @@ export const StoryTray: React.FC = () => {
                   })}
                 </div>
 
-                {/* User Header Info & Close Button */}
+                {/* User Header */}
                 <div className="flex items-center justify-between pointer-events-auto">
-                  <div className="flex items-center gap-2.5">
-                    <img
-                      src={activeUser.avatar}
-                      alt={activeUser.name}
-                      className="w-9 h-9 rounded-full object-cover border border-white/30 shadow-md"
+                  <div className="flex items-center gap-3">
+                    <AvatarWithFallback
+                      avatarUrl={activeUser.id === "self" ? user.avatar : activeUser.avatar}
+                      name={activeUser.id === "self" ? user.name : activeUser.name}
+                      sizeClass="w-10 h-10"
+                      textClass="text-sm font-bold"
+                      className="border border-white/20 shadow-md rounded-xl"
                     />
                     <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-black text-white">{activeUser.name}</span>
-                        <span className="text-[10px] text-neutral-300 font-medium">
-                          • {activeSlide.timeAgo || "Today"}
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-white leading-tight">
+                          {activeUser.name}
+                        </span>
+                        <span className="text-[11px] text-neutral-400 font-medium">
+                          {activeSlide.timeAgo || "Today"}
                         </span>
                       </div>
-                      <span className="text-[10px] font-bold text-emerald-400 block">
+                      <span className="text-xs font-bold text-orange-400 block leading-tight">
                         {activeSlide.arenaTag || activeUser.arenaTag}
                       </span>
                     </div>
@@ -343,55 +384,69 @@ export const StoryTray: React.FC = () => {
                       e.stopPropagation();
                       closeStory();
                     }}
-                    className="p-1.5 rounded-full bg-black/50 text-neutral-200 hover:text-white border border-white/15 cursor-pointer backdrop-blur-md"
-                    aria-label="Close Story"
+                    className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white/80 transition cursor-pointer backdrop-blur-sm"
+                    aria-label="Close"
                   >
                     <X className="w-5 h-5" />
                   </button>
                 </div>
               </div>
 
-              {/* ── MAIN MEDIA CANVAS (Pure Clean Proof) ── */}
+              {/* Main Media or Proof Reflection */}
               <div className="absolute inset-0 z-0">
                 {activeSlide.imageUrl && activeSlide.imageUrl !== "Done" ? (
-                  <img
-                    src={activeSlide.imageUrl}
-                    alt="Habit Proof"
-                    className="w-full h-full object-cover select-none"
-                  />
+                  activeSlide.imageUrl.match(/\.(mp4|webm|mov|ogg)($|\?|&)/i) || activeSlide.imageUrl.startsWith("data:video/") ? (
+                    <video
+                      src={resolveBackendUrl(activeSlide.imageUrl)}
+                      autoPlay
+                      loop
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover select-none"
+                    />
+                  ) : (
+                    <img
+                      src={resolveBackendUrl(activeSlide.imageUrl)}
+                      alt="Habit Proof"
+                      className="w-full h-full object-cover select-none"
+                    />
+                  )
                 ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-neutral-900 via-neutral-950 to-black text-white p-8 text-center space-y-4">
-                    <div className="w-20 h-20 rounded-3xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center text-4xl shadow-[0_0_30px_rgba(16,185,129,0.3)]">
-                      ✓
+                  <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-[#121217] via-[#0E0E12] to-black text-white p-8 text-center space-y-4">
+                    <div className="w-20 h-20 rounded-3xl bg-orange-500/15 border border-orange-500/30 text-orange-400 flex items-center justify-center text-3xl shadow-[0_0_40px_rgba(255,94,0,0.25)]">
+                      <Flame className="w-10 h-10 fill-orange-400" />
                     </div>
-                    <div className="space-y-1">
-                      <span className="text-xs font-black uppercase tracking-widest text-emerald-400">
-                        Verified Proof Drop
-                      </span>
-                      <h3 className="text-lg font-black text-white">
+                    <div className="space-y-2">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-bold">
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        <span>Verified Daily Check-In</span>
+                      </div>
+                      <h3 className="text-xl font-bold text-white">
                         {activeSlide.arenaTag || activeUser.arenaTag}
                       </h3>
-                      <p className="text-xs text-neutral-400 max-w-xs">
+                      <p className="text-sm text-neutral-400 max-w-xs leading-relaxed">
                         {activeSlide.caption || "Completed daily habit streak on schedule."}
                       </p>
                     </div>
                   </div>
                 )}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/50 pointer-events-none" />
 
-                {/* Telemetry & Caption Badge */}
-                <div className="absolute bottom-28 left-4 right-4 z-20 pointer-events-none">
-                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/60 backdrop-blur-md border border-white/15 text-xs font-black text-white shadow-lg mb-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>{activeSlide.telemetry || "✅ Verified Proof"}</span>
+                {/* Dark Gradient Overlay */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-black/40 pointer-events-none" />
+
+                {/* Caption & Anti-Cheat Badge */}
+                <div className="absolute bottom-28 left-5 right-5 z-20 pointer-events-none space-y-2.5">
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/60 backdrop-blur-md border border-white/15 text-xs font-semibold text-emerald-400 shadow-lg">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>{activeSlide.telemetry || "Verified Anti-Cheat Telemetry"}</span>
                   </div>
                   <p className="text-sm font-semibold text-white/95 drop-shadow-md">
-                    {activeSlide.caption || "Checked in for the day!"}
+                    {activeSlide.caption || "Checked in for today's streak challenge!"}
                   </p>
                 </div>
               </div>
 
-              {/* ── INSTAGRAM TAP ZONES (Left 1/3: Prev Slide / Prev User; Right 2/3: Next Slide / Next User) ── */}
+              {/* Tap Navigation Zones */}
               <div
                 className="absolute inset-y-0 left-0 w-1/3 z-20 cursor-pointer"
                 onClick={(e) => {
@@ -407,7 +462,7 @@ export const StoryTray: React.FC = () => {
                 }}
               />
 
-              {/* ── BURSTING FLOATING EMOJI ANIMATIONS ── */}
+              {/* Floating Emojis */}
               <div className="absolute inset-0 pointer-events-none z-30">
                 {floatingEmojis.map((item) => (
                   <motion.span
@@ -422,39 +477,37 @@ export const StoryTray: React.FC = () => {
                 ))}
               </div>
 
-              {/* ── BOTTOM QUICK-REACTION BAR & DM REPLY ── */}
+              {/* Bottom Peer Review & Reaction Dock */}
               <div className="relative z-30 space-y-2 pt-4">
-                {/* Fast Emoji Reaction Pills */}
-                <div className="flex items-center justify-between gap-1.5 bg-black/50 backdrop-blur-md p-1.5 rounded-full border border-white/15">
-                  {["🔥", "⚡", "👏", "🎯", "❤️"].map((emoji) => (
+                <div className="flex items-center justify-between gap-1.5 bg-black/60 backdrop-blur-md p-1.5 rounded-2xl border border-white/10">
+                  {["🔥", "⚡", "👏", "🎯", "💪"].map((emoji) => (
                     <button
                       key={emoji}
                       onClick={() => handleStoryEmojiReact(emoji)}
-                      className="flex-1 py-1 text-lg hover:scale-125 active:scale-95 transition-transform cursor-pointer"
+                      className="flex-1 py-1 text-xl hover:scale-125 active:scale-95 transition-transform cursor-pointer"
                     >
                       {emoji}
                     </button>
                   ))}
                 </div>
 
-                {/* Quick Reply Field */}
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
-                    placeholder={`Reply to ${activeUser.username}…`}
-                    className="flex-1 px-4 py-2.5 rounded-full bg-neutral-900/90 border border-white/20 text-xs text-white placeholder-neutral-400 focus:outline-none focus:border-emerald-500"
+                    placeholder={`Nudge or salute @${activeUser.username}…`}
+                    className="flex-1 px-4 py-2.5 rounded-2xl bg-black/60 border border-white/15 text-xs text-white placeholder-white/40 focus:outline-none focus:border-orange-500 backdrop-blur-md"
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && e.currentTarget.value.trim()) {
-                        showToast(`Reply sent to ${activeUser.username}`, "success");
+                        showToast(`Salute sent to @${activeUser.username}`, "success");
                         e.currentTarget.value = "";
                       }
                     }}
                   />
                   <button
                     onClick={() => {
-                      showToast(`Reaction sent to ${activeUser.username}`, "success");
+                      showToast(`Salute sent to @${activeUser.username}`, "success");
                     }}
-                    className="p-2.5 rounded-full bg-emerald-500 text-neutral-950 hover:bg-emerald-400 transition-colors cursor-pointer"
+                    className="p-2.5 rounded-2xl bg-orange-500 text-white hover:bg-orange-600 transition cursor-pointer shadow-md shadow-orange-500/20"
                   >
                     <Send className="w-4 h-4" />
                   </button>

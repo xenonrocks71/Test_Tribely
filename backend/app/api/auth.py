@@ -1,6 +1,7 @@
 from datetime import timedelta
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from typing import Optional, Dict, Any
+import re
+from fastapi import APIRouter, Depends, HTTPException, status, Request, File, UploadFile, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -13,13 +14,25 @@ from app.core.security import (
 )
 from app.core.config import settings
 from app.core.rate_limiter import RateLimiter
-from app.schemas.schemas import UserCreate, UserResponse
+from app.core.storage.storage_factory import StorageFactory
+from app.schemas.schemas import (
+    UserCreate,
+    UserResponse,
+    OtpSendRequest,
+    OtpRequestResponse,
+    OtpVerifyRequest,
+    OtpVerifyResponse,
+    UsernameCheckResponse
+)
 from app.services.auth_service import auth_service
+from app.services.otp_service import otp_service
+from app.services.email_service import email_service
+from app.repositories.user_repository import user_repository
 
 import time
 import asyncio
 
-router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 @router.get("/diag")
@@ -46,6 +59,194 @@ def auth_diagnostics():
     }
 
 
+@router.post("/otp/send", response_model=OtpRequestResponse, dependencies=[Depends(RateLimiter(times=6, seconds=60))])
+@router.post("/request-otp", response_model=OtpRequestResponse, dependencies=[Depends(RateLimiter(times=6, seconds=60))])
+def send_verification_otp(
+    payload: OtpSendRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Issues a cryptographically secure 6-digit OTP code.
+    - Saves code temporarily to Redis with a 300s TTL (and DB fallback).
+    - Enforces a 60-second cooldown rate limit.
+    - Delivers an HTML email asynchronously via background tasks.
+    """
+    target_id = (payload.email or payload.identifier or "").strip().lower()
+    purpose = payload.purpose or "registration"
+
+    if purpose == "registration":
+        if payload.email:
+            existing_user = user_repository.get_by_email(db, target_id)
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email address already registered."
+                )
+
+        if payload.phone_number:
+            clean_phone = payload.phone_number.strip()
+            existing_phone = user_repository.get_by_phone(db, clean_phone)
+            if existing_phone:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Phone number already registered."
+                )
+
+    # Generate 6-digit OTP, store in Redis with 300s TTL
+    code, expires_at = otp_service.generate_otp(
+        db=db,
+        identifier=target_id,
+        purpose=purpose,
+        send_email=False  # Handled asynchronously by BackgroundTasks below
+    )
+
+    # Asynchronous non-blocking email dispatch
+    if "@" in target_id:
+        background_tasks.add_task(
+            email_service.send_otp_email_sync,
+            target_id,
+            code,
+            max(1, settings.OTP_TTL_SECONDS // 60)
+        )
+
+    return {
+        "status": "success",
+        "message": f"Verification code sent to {target_id}.",
+        "expires_in": settings.OTP_TTL_SECONDS
+    }
+
+
+@router.post("/otp/verify", response_model=OtpVerifyResponse, dependencies=[Depends(RateLimiter(times=12, seconds=60))])
+@router.post("/verify-otp", response_model=OtpVerifyResponse, dependencies=[Depends(RateLimiter(times=12, seconds=60))])
+def verify_verification_otp(payload: OtpVerifyRequest, db: Session = Depends(get_db)):
+    """
+    Verifies 6-digit OTP code against Redis temporary cache (or DB).
+    - Implements constant-time HMAC check against timing attacks.
+    - Deletes Redis key atomically upon success (Replay Attack Prevention).
+    - Returns signed JWT verification token (or auth access_token for OTP login).
+    """
+    target_id = (payload.identifier or payload.email or "").strip().lower()
+    purpose = payload.purpose or "registration"
+
+    token = otp_service.verify_otp(
+        db=db,
+        identifier=target_id,
+        code=payload.code,
+        purpose=purpose
+    )
+
+    # If login flow, generate access token directly
+    access_token = None
+    if purpose == "login":
+        existing_user = user_repository.get_by_email(db, target_id)
+        if existing_user:
+            access_token = create_access_token(
+                existing_user.id,
+                {"sub": str(existing_user.id), "email": existing_user.email, "role": existing_user.role}
+            )
+
+    reset_token = None
+    if purpose in ["password_reset", "forgot_password"]:
+        reset_token = create_password_reset_token(target_id, expires_minutes=15)
+
+    return {
+        "status": "success",
+        "verification_token": token,
+        "identifier": target_id,
+        "message": "Code verified successfully.",
+        "reset_token": reset_token or token,
+        "access_token": access_token,
+        "token_type": "bearer" if access_token else None
+    }
+
+
+@router.get("/check-username", response_model=UsernameCheckResponse)
+def check_username_availability(username: str, db: Session = Depends(get_db)):
+    """
+    Real-time username availability probe. Validates 3-30 chars, alphanumeric + underscores.
+    """
+    clean_username = username.strip().lower()
+    if not re.match(r"^[a-zA-Z0-9_]{3,30}$", clean_username):
+        return {
+            "username": clean_username,
+            "available": False,
+            "message": "Username must be 3-30 characters (letters, numbers, underscores only)."
+        }
+
+    existing = user_repository.get_by_username(db, clean_username)
+    if existing:
+        return {
+            "username": clean_username,
+            "available": False,
+            "message": "Username is already taken."
+        }
+
+    return {
+        "username": clean_username,
+        "available": True,
+        "message": "Username is available!"
+    }
+
+
+ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+MAX_AVATAR_SIZE = 5 * 1024 * 1024  # 5MB limit for profile picture
+
+
+@router.post("/upload-avatar", dependencies=[Depends(RateLimiter(times=10, seconds=60))])
+async def upload_registration_avatar(file: UploadFile = File(...)):
+    """
+    Unauthenticated public upload endpoint for user avatar during Instagram-style onboarding.
+    Strictly validates MIME type, magic bytes, and enforces 5MB file cap.
+    """
+    content_type = (file.content_type or "application/octet-stream").lower().split(";")[0].strip()
+    if content_type not in ALLOWED_AVATAR_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported image type. Allowed: {', '.join(sorted(ALLOWED_AVATAR_TYPES))}"
+        )
+
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_AVATAR_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Profile picture exceeds maximum allowed size of 5MB."
+        )
+
+    # Magic byte verification
+    is_valid = False
+    if content_type in ["image/jpeg", "image/jpg"] and file_bytes.startswith(b"\xff\xd8\xff"):
+        is_valid = True
+    elif content_type == "image/png" and file_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        is_valid = True
+    elif content_type == "image/webp" and len(file_bytes) > 12 and file_bytes[:4] == b"RIFF" and file_bytes[8:12] == b"WEBP":
+        is_valid = True
+
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File content does not match reported image format."
+        )
+
+    try:
+        storage = StorageFactory.get_storage_engine()
+        filename = file.filename or f"avatar_{int(time.time())}.jpg"
+        public_url = storage.upload_file(
+            file_bytes=file_bytes,
+            filename=filename,
+            content_type=content_type
+        )
+        return {
+            "status": "success",
+            "url": public_url
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload profile picture: {str(e)}"
+        )
+
+
 @router.post("/register", status_code=status.HTTP_201_CREATED, dependencies=[Depends(RateLimiter(times=10, seconds=60))])
 def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
     """
@@ -61,7 +262,11 @@ def register_user(user_in: UserCreate, db: Session = Depends(get_db)):
     return {
         "id": user.id,
         "email": user.email,
+        "username": user.username,
+        "phone_number": user.phone_number,
+        "avatar_url": user.avatar_url,
         "full_name": user.full_name,
+        "is_verified": user.is_verified,
         "access_token": access_token,
         "token_type": "bearer",
         "user_id": user.id
@@ -141,22 +346,35 @@ class ForgotPasswordRequest(BaseModel):
 
 
 @router.post("/forgot-password", dependencies=[Depends(RateLimiter(times=5, seconds=60))])
-def request_password_reset(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+def request_password_reset(
+    payload: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
     """
-    Issues a cryptographically signed password reset token valid for 15 minutes.
-    Generic response prevents user enumeration attacks.
+    Issues a cryptographically secure 6-digit OTP to the user's email for password reset.
+    Generic response prevents user enumeration attacks. Never exposes OTP or reset token on screen.
     """
     clean_email = payload.email.strip().lower()
     user = auth_service.user_repo.get_by_email(db, email=clean_email)
 
-    reset_token = None
     if user and user.is_active:
-        reset_token = create_password_reset_token(clean_email, expires_minutes=15)
+        code, expires_at = otp_service.generate_otp(
+            db=db,
+            identifier=clean_email,
+            purpose="password_reset",
+            send_email=False
+        )
+        background_tasks.add_task(
+            email_service.send_otp_email_sync,
+            clean_email,
+            code,
+            max(1, settings.OTP_TTL_SECONDS // 60)
+        )
 
     return {
         "status": "success",
-        "message": "If an active account with this email exists, a password reset token has been issued.",
-        "reset_token": reset_token
+        "message": "If an active account exists with this email address, a 6-digit verification code has been sent to your email."
     }
 
 
@@ -181,10 +399,15 @@ def reset_user_password(payload: ResetPasswordRequest, db: Session = Depends(get
         )
 
     token_email = verify_password_reset_token(payload.reset_token)
+    if not token_email:
+        # Also check OTP verified token with purpose password_reset
+        if otp_service.validate_verification_token(payload.reset_token, clean_email, purpose="password_reset"):
+            token_email = clean_email
+
     if not token_email or token_email != clean_email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid, expired, or mismatched password reset token."
+            detail="Invalid, expired, or mismatched password reset token. Please verify your code again."
         )
 
     user = auth_service.user_repo.get_by_email(db, email=clean_email)

@@ -60,7 +60,7 @@ export const ExploreView: React.FC = () => {
   return (
     <div className="w-full pb-24 text-white">
       {/* Top Search & Filter Bar */}
-      <div className="p-4 border-b border-neutral-900 sticky top-0 bg-neutral-950/95 backdrop-blur z-20 space-y-3">
+      <div className="p-4 border-b border-[#E8EAED] dark:border-[#303134] bg-white dark:bg-[#1E1E1E] space-y-3">
         <div className="relative">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
           <input

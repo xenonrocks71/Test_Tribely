@@ -105,14 +105,14 @@ Duplicate submissions from double-clicks or network retries are prevented at the
 When an Arena deadline passes:
 1. The deadline processor identifies enrolled members who have not submitted valid proof for that cycle date.
 2. Missing members are marked `status="absent"` in `DailyArenaSheet`.
-3. If an emergency streak shield is available, 1 shield is consumed and status becomes `shielded`; otherwise, the member's active streak resets to `0`.
+3. The member's active streak strictly resets to `0` and a `deadline_missed` audit entry is created in `ArenaLogbook`.
 4. A WebSocket event (`member_absent_penalty`) broadcasts to all connected members so the cohort roster updates live.
 5. Can be triggered via background schedule or through `POST /api/arenas/{arena_id}/process-deadline` by Arena owners/admins.
 
-### 4. Streak Shields & Milestone Rewards
-- **Streak Freeze Shield**: An accountability buffer (up to 3 shields maximum).
-- **Consumption**: When a member misses a daily cutoff deadline, 1 shield is automatically consumed to mark the day `shielded` and preserve their streak. If no shields remain, the streak resets to 0.
-- **Milestone Rewards**: Completing 7-day consecutive streak milestones awards +1 streak shield.
+### 4. Strict Habit Accountability & Tier Rewards
+- **Zero-Bypass Streak Engine**: Streaks represent true consecutive consistency without artificial freeze shields or fake buffers.
+- **Sprint Multipliers**: Unbroken daily completions unlock elevated multiplier rewards and cohort kudos bonuses.
+- **Milestone Badges**: Progressive tiers (Novice Builder, Consistent Builder, Habit Warrior, Unstoppable Master, Legendary Titan) unlocked strictly by verifiable proof.
 
 ### 5. Backend Authorization Matrix
 Authorization is enforced authoritatively on the backend, never relying solely on UI button visibility:
@@ -128,8 +128,8 @@ Authorization is enforced authoritatively on the backend, never relying solely o
 | **Trigger Deadline Audit** | **403** (Admin only) | **403 Forbidden** | **403** (Admin only) | **403 Forbidden** |
 
 ### 6. Deterministic Streaks & Heatmap
-- **Streak Calculation**: Evaluated from persisted daily status records (`DailyArenaSheet` and `Proof`). Streaks increment on verified submissions and reset on missed deadlines.
-- **Consistency Heatmap**: The 30-day and 90-day matrix queries real historical records (`present`, `shielded`, `absent`) directly from the database. Zero mock or hardcoded calendar squares.
+- **Streak Calculation**: Evaluated from persisted daily status records (`DailyArenaSheet` and `Submission`). Streaks increment on verified submissions and reset on missed deadlines.
+- **Consistency Heatmap**: The 30-day and 90-day matrix queries real historical records (`present`, `absent`, `today_pending`) directly from the database. Zero mock or hardcoded calendar squares.
 
 ### 7. Real-Time WebSockets with Redis Pub/Sub
 - Clients connect to `/ws/{arena_id}?token={jwt}`.
@@ -200,14 +200,14 @@ daily_arena_sheets (Daily Attendance & Activity Sheet)
  ├── arena_id (FK -> arenas.id)
  ├── user_id (FK -> users.id)
  ├── date_day (String YYYY-MM-DD)
- ├── status (present, absent, shielded, pending)
+ ├── status (present, absent, pending)
  └── UNIQUE(arena_id, user_id, date_day)
 
 arena_logbooks (Chamber Activity Audit Log)
  ├── id (PK)
  ├── arena_id (FK -> arenas.id)
  ├── user_id (FK -> users.id)
- ├── entry_type (proof_submitted, deadline_missed, streak_shield_used)
+ ├── entry_type (proof_submitted, deadline_missed)
  ├── description (Text)
  └── created_at
 

@@ -2,6 +2,8 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { tribelyService, ApiArena, ApiSubmission, ApiHeatmapDay, ApiMessage } from "@/services/tribely.service";
+import { resolveBackendUrl } from "@/lib/api-client";
+import { parseSafeUtcDate } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types (kept UI-friendly for component layer compatibility)
@@ -16,13 +18,16 @@ export interface UserProfile {
   kudosBalance: number;
   currentStreak: number;
   longestStreak: number;
-  streakShields: number;
   multiplier: number;
   tierBadge: string;
   hasSubmittedToday: boolean;
   followingCount: number;
   followersCount: number;
   arenasCount: number;
+  email?: string;
+  phone?: string;
+  proofsCount?: number;
+  isVerified?: boolean;
 }
 
 export interface HabitArena {
@@ -104,7 +109,7 @@ export interface ProofPost {
 export interface HeatmapTile {
   date: string;
   dayOfMonth: number;
-  status: "verified" | "shielded" | "absent" | "today_pending" | "future";
+  status: "verified" | "absent" | "today_pending" | "future";
   proofTitle?: string;
   telemetrySnippet?: string;
 }
@@ -131,7 +136,7 @@ export interface TribeMessage {
   type: "text" | "system_event" | "audio";
   text?: string;
   systemEvent?: {
-    type: "proof_drop" | "shield_used" | "multiplier_boost";
+    type: "proof_drop" | "multiplier_boost";
     memberName: string;
     description: string;
     proofId?: string;
@@ -320,14 +325,15 @@ function mapApiSubmission(sub: ApiSubmission, arena?: HabitArena): ProofPost {
     userId: String(sub.user_id),
     userName: sub.user_name || `Member #${sub.user_id}`,
     userHandle: (sub.user_name || "member").toLowerCase().replace(/\s+/g, "_"),
-    userAvatar: sub.user_avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${sub.user_id}`,
+    userAvatar: sub.user_avatar_url ? resolveBackendUrl(sub.user_avatar_url) : "",
     arenaId: String(sub.arena_id),
     arenaTag: arena?.tag || `#Arena${sub.arena_id}`,
     arenaName: arena?.name,
+    submittedAt: sub.submitted_at,
     verifiedTime: `Verified ${new Date(sub.submitted_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
     mainImage: sub.proof_url || "",
     selfiePiP: null as any,
-    telemetry: sub.text_reflection || (sub.ai_status === "verified" ? "✅ AI Verified" : "Manual Snap"),
+    telemetry: sub.text_reflection || "Verified Proof",
     telemetryIcon: "run",
     caption: sub.text_reflection || "Daily habit completed! Consistency is the key. 💪",
     reactions: {
@@ -347,7 +353,6 @@ function mapApiHeatmapDay(day: ApiHeatmapDay): HeatmapTile {
   const date = new Date(day.date + "T12:00:00Z");
   const statusMap: Record<string, HeatmapTile["status"]> = {
     present: "verified",
-    shielded: "shielded",
     absent: "absent",
     today_pending: "today_pending",
   };
@@ -356,7 +361,6 @@ function mapApiHeatmapDay(day: ApiHeatmapDay): HeatmapTile {
     dayOfMonth: date.getDate(),
     status: statusMap[day.status] || "absent",
     proofTitle: day.status === "present" ? "Habit Completed ✅" :
-                day.status === "shielded" ? "Streak Shield Used 🛡️" :
                 day.status === "today_pending" ? "Today: Awaiting Proof" : "Missed",
     telemetrySnippet: day.proof_type ? `Proof type: ${day.proof_type}` : undefined,
   };
@@ -409,8 +413,9 @@ interface AppContextType {
   activeSuperPropBurst: SuperPropBurst | null;
   triggerSuperProp: (postId: string, type: SuperPropType) => void;
 
-  openCamera: () => void;
+  openCamera: (arenaId?: string | number | unknown) => void;
   closeCamera: () => void;
+  initialCameraArenaId: string | null;
   openStory: (user: StoryUser) => void;
   closeStory: () => void;
   openDm: (arenaId?: string, arenaName?: string, arenaTag?: string, rawArenaId?: number) => void;
@@ -430,7 +435,6 @@ interface AppContextType {
   toggleDislike: (postId: string) => void;
   dropProofOptimistic: (payload: { arenaId: string; image: string; selfie?: string; caption: string; telemetry?: string; keepOpen?: boolean }) => void;
   nudgePeer: (peerUser: StoryUser) => void;
-  claimStreakLifeline: () => void;
   triggerHaptic: (pattern?: number[]) => void;
   showToast: (message: string, type?: ToastNotification["type"]) => void;
   refreshFeed: () => Promise<void>;
@@ -440,6 +444,7 @@ interface AppContextType {
   joinSquad: (arenaId: number) => Promise<boolean>;
   viewedStoryUserIds: Set<string>;
   markStoryAsViewed: (storyUserId: string) => void;
+  updateUserProfile: (updates: Partial<UserProfile>) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -453,18 +458,19 @@ function buildGuestUser(): UserProfile {
     id: "guest",
     name: "You",
     username: "member",
-    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=guest",
+    avatar: "",
     bio: "Building daily habits with Tribely 🚀",
     kudosBalance: 0,
     currentStreak: 0,
     longestStreak: 0,
-    streakShields: 1,
     multiplier: 1.0,
     tierBadge: "🌱 Day 0 Starter",
     hasSubmittedToday: false,
     followingCount: 0,
     followersCount: 0,
     arenasCount: 0,
+    proofsCount: 0,
+    isVerified: false,
   };
 }
 
@@ -472,9 +478,9 @@ function buildGuestUser(): UserProfile {
 // Provider
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: NavTab }> = ({ children, initialTab = "feed" }) => {
   const [user, setUser] = useState<UserProfile>(buildGuestUser());
-  const [activeTab, setActiveTab] = useState<NavTab>("feed");
+  const [activeTab, setActiveTab] = useState<NavTab>(initialTab);
   const [arenas, setArenas] = useState<HabitArena[]>([]);
   const [feedPosts, setFeedPosts] = useState<ProofPost[]>([]);
   const [storyUsers, setStoryUsers] = useState<StoryUser[]>([]);
@@ -484,6 +490,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeProofForReply, setActiveProofForReply] = useState<ProofPost | null>(null);
   const [proofComments, setProofComments] = useState<Record<string, ProofComment[]>>({});
   const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
+  const [initialCameraArenaId, setInitialCameraArenaId] = useState<string | null>(null);
   const [activeStoryModal, setActiveStoryModal] = useState<StoryUser | null>(null);
   const [isDmDrawerOpen, setIsDmDrawerOpen] = useState(false);
   const [activeDmArena, setActiveDmArena] = useState<{ id: string; name: string; tag: string; rawId?: number } | null>(null);
@@ -595,21 +602,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const mapApiPostToProofPost = useCallback((p: any): ProofPost => {
     const timeAgoStr = tribelyService.formatTimeAgo(p.submitted_at);
-    const rawUrl = p.proof_url || "";
+    const rawUrl = resolveBackendUrl(p.proof_url || p.media_url || "");
     const isYouTube = rawUrl.includes("youtube.com") || rawUrl.includes("youtu.be");
+    const isVideo =
+      p.proof_type === "video" ||
+      Boolean(rawUrl.match(/\.(mp4|webm|mov|ogg)($|\?|&)/i)) ||
+      rawUrl.startsWith("data:video/");
+
     const isImg =
-      rawUrl.startsWith("data:image/") ||
-      rawUrl.startsWith("blob:") ||
-      rawUrl.includes("images.unsplash.com") ||
-      rawUrl.includes("cloudinary.com") ||
-      rawUrl.includes("amazonaws.com") ||
-      rawUrl.includes("imgur.com") ||
-      rawUrl.includes("cdn.") ||
-      Boolean(rawUrl.match(/\.(jpeg|jpg|gif|png|webp|avif|bmp|svg)($|\?|&)/i));
+      !isVideo &&
+      !isYouTube &&
+      (rawUrl.startsWith("data:image/") ||
+        rawUrl.startsWith("blob:") ||
+        rawUrl.includes("images.unsplash.com") ||
+        rawUrl.includes("cloudinary.com") ||
+        rawUrl.includes("amazonaws.com") ||
+        rawUrl.includes("imgur.com") ||
+        rawUrl.includes("cdn.") ||
+        Boolean(rawUrl.match(/\.(jpeg|jpg|gif|png|webp|avif|bmp|svg)($|\?|&)/i)));
 
     let computedProofType = "image";
     if (isYouTube) {
       computedProofType = "youtube";
+    } else if (isVideo) {
+      computedProofType = "video";
     } else if (p.proof_type?.toLowerCase() === "link" && !isImg) {
       computedProofType = "link";
     } else if (!isImg && (rawUrl.startsWith("http://") || rawUrl.startsWith("https://"))) {
@@ -634,28 +650,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    return {
-      id: String(p.id),
-      rawSubmissionId: p.id,
-      userId: String(p.user_id),
-      userName: p.user_name,
-      userHandle: p.user_handle || `user${p.user_id}`,
-      userAvatar: p.user_avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.user_id}`,
-      arenaId: String(p.arena_id),
-      arenaName: p.arena_name,
-      arenaTag: p.arena_tag || "#DailyHabit",
-      isJoined: p.is_joined,
-      isPrivate: p.is_private,
-      isToday: p.is_today,
-      penaltyAmount: p.penalty_amount,
-      deadlineTime: p.deadline_time,
-      submittedAt: p.submitted_at,
-      verifiedTime: `Verified ${new Date(p.submitted_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
-      mainImage: rawUrl,
-      selfiePiP: null,
-      telemetry: p.text_reflection || "Verified Drop",
-      telemetryIcon: "code",
-      caption: p.text_reflection || "Daily habit completed! Consistency is the key. 💪",
+      const subDate = parseSafeUtcDate(p.submitted_at);
+      const verifiedFormattedTime = subDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+
+      const rawCaption = (p.caption || p.text_reflection || "").trim();
+      const isAiCaption = !rawCaption || /ai auto-audit|confidence|\bauto-audit\b|invalid image proof format/i.test(rawCaption);
+      let resolvedCaption = rawCaption;
+      if (isAiCaption) {
+        resolvedCaption = subDate.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+      }
+
+      return {
+        id: String(p.id),
+        rawSubmissionId: p.id,
+        userId: String(p.user_id),
+        userName: p.user_name,
+        userHandle: p.user_handle || `user${p.user_id}`,
+        userAvatar: p.user_avatar ? resolveBackendUrl(p.user_avatar) : "",
+        arenaId: String(p.arena_id),
+        arenaName: p.arena_name,
+        arenaTag: p.arena_tag || "#DailyHabit",
+        isJoined: p.is_joined,
+        isPrivate: p.is_private,
+        isToday: p.is_today,
+        penaltyAmount: p.penalty_amount,
+        deadlineTime: p.deadline_time,
+        submittedAt: p.submitted_at,
+        verifiedTime: `Verified ${verifiedFormattedTime}`,
+        mainImage: rawUrl,
+        selfiePiP: null,
+        telemetry: isAiCaption ? "Verified Drop" : (p.text_reflection || "Verified Drop"),
+        telemetryIcon: "code",
+        caption: resolvedCaption,
       upvotes: upvotesCount,
       downvotes: downvotesCount,
       userVote: activeUserVote,
@@ -698,11 +724,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         .filter((p) => !isTestEntity(p.user_name, p.user_handle, p.arena_name))
         .map(mapApiPostToProofPost);
 
-      // Sort with latest posts strictly on top (newest submittedAt or ID first)
+      // Priority sorting algorithm:
+      // Tier 0: Joined arena proofs (isJoined = true) sorted latest first
+      // Tier 1: Public discovery proofs (isJoined = false) sorted latest first
       const sorted = mappedPosts.sort((a, b) => {
+        const rankA = a.isJoined ? 0 : 1;
+        const rankB = b.isJoined ? 0 : 1;
+        if (rankA !== rankB) return rankA - rankB;
+
         const tA = new Date(a.submittedAt || 0).getTime();
         const tB = new Date(b.submittedAt || 0).getTime();
         if (tB !== tA) return tB - tA;
+
         return (Number(b.rawSubmissionId || b.id) || 0) - (Number(a.rawSubmissionId || a.id) || 0);
       });
 
@@ -725,10 +758,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         .filter((s) => s.user_id === userId && new Date(s.submitted_at) >= todayStart)
         .map((s) => ({
           id: String(s.id),
-          imageUrl: s.proof_url,
+          imageUrl: resolveBackendUrl(s.proof_url),
           selfieUrl: null,
           caption: s.text_reflection || "Daily habit completed!",
-          telemetry: "✅ AI Verified",
+          telemetry: "Verified Proof",
           timeAgo: tribelyService.formatTimeAgo(s.submitted_at),
           arenaTag: s.arena_tag || "#DailyHabit",
         }));
@@ -737,7 +770,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         id: "self",
         name: "Your Story",
         username: tribelyService.getStoredUserName() || "you",
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId || "guest"}`,
+        avatar: user.avatar ? resolveBackendUrl(user.avatar) : "",
         arenaTag: arenaList[0]?.tag || "#DailyHabit",
         status: selfTodayProofs.length > 0 ? "verified" : "self",
         proofs: selfTodayProofs,
@@ -755,10 +788,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         userProofsMap.get(sub.user_id)!.push({
           id: String(sub.id),
-          imageUrl: sub.proof_url,
+          imageUrl: resolveBackendUrl(sub.proof_url),
           selfieUrl: null,
           caption: sub.text_reflection || "Daily habit completed!",
-          telemetry: "✅ AI Verified",
+          telemetry: "Verified Proof",
           timeAgo: tribelyService.formatTimeAgo(sub.submitted_at),
           arenaTag: sub.arena_tag || "#DailyHabit",
         });
@@ -772,7 +805,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           id: String(peerUserId),
           name: sub.user_name || `Member #${peerUserId}`,
           username: (sub.user_handle || "member").toLowerCase().replace(/\s+/g, "_"),
-          avatar: sub.user_avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${peerUserId}`,
+          avatar: sub.user_avatar ? resolveBackendUrl(sub.user_avatar) : "",
           arenaTag: sub.arena_tag || "#DailyHabit",
           arenaId: sub.arena_id,
           status: "verified",
@@ -800,7 +833,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setFeedPosts((prev) => {
           const existingIds = new Set(prev.map((p) => p.id));
           const fresh = newMapped.filter((p) => !existingIds.has(p.id));
-          return [...prev, ...fresh];
+          const combined = [...prev, ...fresh];
+          return combined.sort((a, b) => {
+            const rankA = a.isJoined ? 0 : 1;
+            const rankB = b.isJoined ? 0 : 1;
+            if (rankA !== rankB) return rankA - rankB;
+            const tA = new Date(a.submittedAt || 0).getTime();
+            const tB = new Date(b.submittedAt || 0).getTime();
+            if (tB !== tA) return tB - tA;
+            return (Number(b.rawSubmissionId || b.id) || 0) - (Number(a.rawSubmissionId || a.id) || 0);
+          });
         });
       }
     } catch {
@@ -909,16 +951,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ]);
 
     if (profile || wallet) {
-      setUser((prev) => ({
-        ...prev,
-        id: profile ? String(profile.id) : prev.id,
-        name: profile?.full_name || tribelyService.getStoredUserName() || prev.name,
-        username: (profile?.full_name || "member").toLowerCase().replace(/\s+/g, "_"),
-        avatar: profile?.profile_image_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${profile?.id || "guest"}`,
-        kudosBalance: Math.floor(wallet?.kudos_balance ?? 0),
-        streakShields: wallet?.streak_shields ?? 1,
-        arenasCount: arenasRef.current.length,
-      }));
+      setUser((prev) => {
+        const kudos = wallet?.kudos_balance !== undefined
+          ? Math.floor(wallet.kudos_balance)
+          : (profile?.kudos_balance ?? prev.kudosBalance);
+        const currStreak = profile?.current_streak ?? prev.currentStreak;
+        const longStreak = profile?.longest_streak ?? prev.longestStreak;
+        const badge = currStreak >= 30 ? "👑 Habit Legend" : currStreak >= 14 ? "⚡ Unstoppable" : currStreak >= 7 ? "🔥 Momentum" : "🌱 Day 0 Starter";
+
+        return {
+          ...prev,
+          id: profile ? String(profile.id) : prev.id,
+          name: profile?.full_name || tribelyService.getStoredUserName() || prev.name,
+          username: profile?.username || (profile?.full_name || "member").toLowerCase().replace(/\s+/g, "_"),
+          avatar: (() => {
+            const raw = profile?.profile_image_url || profile?.avatar_url || "";
+            if (raw && !raw.includes("dicebear.com")) return resolveBackendUrl(raw);
+            if (prev.avatar && !prev.avatar.includes("dicebear.com")) return prev.avatar;
+            return "";
+          })(),
+          email: profile?.email || prev.email,
+          phone: profile?.phone_number || prev.phone,
+          kudosBalance: kudos,
+          currentStreak: currStreak,
+          longestStreak: longStreak,
+          tierBadge: badge,
+          arenasCount: profile?.arenas_count ?? arenasRef.current.length,
+          proofsCount: profile?.proofs_count ?? prev.proofsCount ?? 0,
+          isVerified: Boolean(profile?.is_verified),
+        };
+      });
     }
   }, []);
 
@@ -937,8 +999,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ── Full bootstrap on mount ─────────────────────────────────────────────────
 
   useEffect(() => {
+    const hasToken = typeof window !== "undefined" && Boolean(
+      localStorage.getItem("tribely_token") ||
+      localStorage.getItem("token") ||
+      localStorage.getItem("access_token")
+    );
     const userId = tribelyService.getCurrentUserId();
-    if (!userId) return; // Not logged in, stay with defaults
+    if (!userId && !hasToken) return; // Not logged in, stay with defaults
 
     (async () => {
       const [loadedArenas] = await Promise.all([
@@ -950,6 +1017,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           refreshFeed(loadedArenas),
           bootstrapHeatmap(loadedArenas),
         ]);
+      } else {
+        await refreshFeed([]);
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -957,8 +1026,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // ── Modals ──────────────────────────────────────────────────────────────────
 
-  const openCamera = () => { triggerHaptic([25]); setIsCameraModalOpen(true); };
-  const closeCamera = () => setIsCameraModalOpen(false);
+  const openCamera = (arenaId?: string | number | unknown) => {
+    triggerHaptic([25]);
+    const validArenaId =
+      typeof arenaId === "string" && arenaId.trim().length > 0
+        ? arenaId.trim()
+        : typeof arenaId === "number"
+        ? String(arenaId)
+        : null;
+    setInitialCameraArenaId(validArenaId);
+    setIsCameraModalOpen(true);
+  };
+  const closeCamera = () => {
+    setIsCameraModalOpen(false);
+    setInitialCameraArenaId(null);
+  };
 
   const openStory = (storyUser: StoryUser) => {
     if (storyUser.status === "self" && !user.hasSubmittedToday) { openCamera(); return; }
@@ -1064,12 +1146,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       arenaId: targetArena?.id || payload.arenaId,
       arenaTag: targetArena?.tag || "#DailyHabit",
       arenaName: targetArena?.name,
-      verifiedTime: "Verified Just Now",
+      submittedAt: new Date().toISOString(),
+      verifiedTime: "Just now",
       mainImage: payload.image,
       selfiePiP: null as any,
       telemetry: payload.telemetry || "Manual Snap Verified • Daily Goal Met",
       telemetryIcon: "run",
-      caption: payload.caption || "Habit verified today! Consistency compound interest 📈",
+      caption: (payload.caption || "").trim() || new Date().toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }),
       reactions: { fire: 1, electric: 0, respect: 0, target: 0 },
       currentUserReaction: "fire",
       commentsCount: 0,
@@ -1134,7 +1217,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 5. Real API submission (non-blocking)
     if (targetArena?.rawId) {
       tribelyService
-        .uploadAndSubmitProof(targetArena.rawId, payload.image)
+        .uploadAndSubmitProof(targetArena.rawId, payload.image, payload.caption)
         .then((result) => {
           if (!result.success) {
             console.warn("Background proof submission warning:", result.message);
@@ -1151,26 +1234,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`⚡ Nudged @${peerUser.username} to protect the cohort's multiplier!`, "nudge");
   };
 
-  const claimStreakLifeline = async () => {
-    triggerHaptic([30, 50]);
-    if (user.streakShields >= 3) {
-      showToast("Shield inventory maxed out (3/3 Shields). Use one first!", "info");
-      return;
-    }
-    const arena = arenas[0];
-    if (arena) {
-      const result = await tribelyService.useStreakShield(arena.rawId);
-      if (result.success) {
-        setUser((prev) => ({ ...prev, streakShields: prev.streakShields + 1 }));
-        showToast("🛡️ Emergency Streak Lifeline credited! Your streak is protected.", "success");
-      } else {
-        showToast(result.message || "Could not use shield.", "info");
-      }
-    } else {
-      setUser((prev) => ({ ...prev, streakShields: prev.streakShields + 1 }));
-      showToast("🛡️ Emergency Streak Lifeline credited! Your streak is protected.", "success");
-    }
-  };
+
 
   const addProofComment = async (proofId: string, text: string) => {
     if (!text.trim()) return;
@@ -1333,6 +1397,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [showToast]
   );
 
+  const updateUserProfile = useCallback((updates: Partial<UserProfile>) => {
+    setUser((prev) => {
+      const next = { ...prev, ...updates };
+      if (typeof window !== "undefined") {
+        if (updates.name) localStorage.setItem("tribely_user_name", updates.name);
+        const storedUser = localStorage.getItem("user");
+        if (storedUser) {
+          try {
+            const parsed = JSON.parse(storedUser);
+            localStorage.setItem("user", JSON.stringify({ ...parsed, ...updates }));
+          } catch {}
+        }
+      }
+      return next;
+    });
+
+    if (updates.avatar) {
+      const newAvatar = updates.avatar;
+      setStoryUsers((prev) =>
+        prev.map((s) =>
+          s.id === "self" ? { ...s, avatar: newAvatar } : s
+        )
+      );
+      setFeedPosts((prev) =>
+        prev.map((p) =>
+          p.userId === user.id ? { ...p, userAvatar: newAvatar } : p
+        )
+      );
+      setNotes((prev) =>
+        prev.map((n) =>
+          n.userId === user.id ? { ...n, userAvatar: newAvatar } : n
+        )
+      );
+    }
+  }, [user.id]);
+
   return (
     <AppContext.Provider
       value={{
@@ -1348,6 +1448,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activeProofForReply,
         proofComments,
         isCameraModalOpen,
+        initialCameraArenaId,
         activeStoryModal,
         isDmDrawerOpen,
         activeDmArena,
@@ -1381,7 +1482,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleDislike,
         dropProofOptimistic,
         nudgePeer,
-        claimStreakLifeline,
         triggerHaptic,
         showToast,
         refreshFeed: () => refreshFeed(),
@@ -1391,6 +1491,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         joinSquad,
         viewedStoryUserIds,
         markStoryAsViewed,
+        updateUserProfile,
       }}
     >
       {children}

@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Sparkles, Send, X, Flame, Zap, MessageCircle } from "lucide-react";
 import { useApp, TribeNote } from "@/context/AppContext";
+import { AvatarWithFallback } from "@/components/ui/AvatarWithFallback";
 
 export const TribeNotes: React.FC = () => {
   const { notes, user, postDailyNote, sendTribeMessage, triggerHaptic, showToast } = useApp();
@@ -116,10 +117,12 @@ export const TribeNotes: React.FC = () => {
                       : "bg-neutral-800 group-hover:bg-neutral-700"
                   }`}
                 >
-                  <img
-                    src={note.userAvatar}
-                    alt={note.userName}
-                    className="w-full h-full rounded-full object-cover bg-neutral-950 border border-neutral-900"
+                  <AvatarWithFallback
+                    avatarUrl={isSelf ? user.avatar : note.userAvatar}
+                    name={isSelf ? user.name : note.userName}
+                    sizeClass="w-full h-full"
+                    textClass="text-sm font-bold"
+                    className="border border-neutral-900"
                   />
                 </div>
 
@@ -176,10 +179,12 @@ export const TribeNotes: React.FC = () => {
                   {noteInput.trim() || "What's on your mind today?"}
                   <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rotate-45 bg-neutral-900 border-r border-b border-emerald-500/40" />
                 </div>
-                <img
-                  src={user.avatar}
-                  alt={user.name}
-                  className="w-12 h-12 rounded-full object-cover border-2 border-emerald-500"
+                <AvatarWithFallback
+                  avatarUrl={user.avatar}
+                  name={user.name}
+                  sizeClass="w-12 h-12"
+                  textClass="text-sm font-bold"
+                  className="border-2 border-emerald-500"
                 />
               </div>
 
@@ -259,10 +264,12 @@ export const TribeNotes: React.FC = () => {
             >
               <div className="flex items-center justify-between pb-2 border-b border-neutral-900">
                 <div className="flex items-center gap-2.5">
-                  <img
-                    src={activeReplyNote.userAvatar}
-                    alt={activeReplyNote.userName}
-                    className="w-8 h-8 rounded-full object-cover border border-neutral-800"
+                  <AvatarWithFallback
+                    avatarUrl={activeReplyNote.userAvatar}
+                    name={activeReplyNote.userName}
+                    sizeClass="w-8 h-8"
+                    textClass="text-xs font-bold"
+                    className="border border-neutral-800"
                   />
                   <div>
                     <h3 className="text-xs font-bold text-white">Reply to {activeReplyNote.userName}'s note</h3>

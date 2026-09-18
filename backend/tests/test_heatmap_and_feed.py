@@ -73,7 +73,7 @@ def test_heatmap_calculation():
         ).delete()
 
         sheet1 = DailyArenaSheet(arena_id=arena.id, user_id=user.id, date_day=yesterday_str, status="present", proof_type="image")
-        sheet2 = DailyArenaSheet(arena_id=arena.id, user_id=user.id, date_day=two_days_ago_str, status="shielded", proof_type="shield")
+        sheet2 = DailyArenaSheet(arena_id=arena.id, user_id=user.id, date_day=two_days_ago_str, status="present", proof_type="image")
         db.add(sheet1)
         db.add(sheet2)
         db.commit()
@@ -85,8 +85,7 @@ def test_heatmap_calculation():
     assert data["user_id"] == user.id
     assert data["days_count"] == 30
     assert len(data["matrix"]) == 30
-    assert data["present_count"] >= 1
-    assert data["shielded_count"] >= 1
+    assert data["present_count"] >= 2
     assert data["consistency_percentage"] > 0
 
 

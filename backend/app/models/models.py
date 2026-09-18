@@ -1,4 +1,5 @@
 import datetime
+import enum
 from sqlalchemy import (
     Column, Integer, String, Boolean, DateTime, Numeric, ForeignKey, Text, UniqueConstraint, MetaData, Float, Index, Date, JSON
 )
@@ -27,7 +28,10 @@ class User(Base):
     avatar_url = Column(Text, nullable=True)
     hashed_password = Column(String, nullable=False)
     full_name = Column(String, nullable=False)
+    phone_number = Column(String(30), unique=True, index=True, nullable=True)
     is_active = Column(Boolean, default=True)
+    is_verified = Column(Boolean, default=False, nullable=False)
+    kudos_balance = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
 
     profile = relationship("UserProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
@@ -37,12 +41,26 @@ class User(Base):
     proofs = relationship("Proof", back_populates="user", cascade="all, delete-orphan")
     reactions = relationship("ProofReaction", back_populates="user", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="user", cascade="all, delete-orphan")
+    kudos_transactions = relationship("KudosTransaction", back_populates="user", cascade="all, delete-orphan")
 
 
     def __init__(self, **kwargs):
         if ("username" not in kwargs or not kwargs.get("username")) and kwargs.get("email"):
             kwargs["username"] = kwargs["email"].split("@")[0]
         super().__init__(**kwargs)
+
+
+class VerificationOTP(Base):
+    __tablename__ = "verification_otps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    identifier = Column(String(120), index=True, nullable=False)  # email or phone
+    otp_hash = Column(String(255), nullable=False)
+    purpose = Column(String(50), default="registration", nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    is_verified = Column(Boolean, default=False, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
 
 
 class UserProfile(Base):
@@ -74,18 +92,22 @@ class Arena(Base):
     entry_deposit = Column(Numeric(10, 2), default=0.00)
     penalty_amount = Column(Numeric(10, 2), default=0.00)
     daily_penalty = Column(Numeric(10, 2), default=0.00)
+    entry_stake = Column(Integer, default=50, nullable=False)
+    pool_balance = Column(Integer, default=0, nullable=False)
     deadline_time = Column(String, default="00:00")
     daily_cutoff_time = Column(String, default="00:00")
     timezone = Column(String, default="UTC", nullable=False)
     is_private = Column(Boolean, default=False)
     icon_url = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, server_default=func.now())
 
     memberships = relationship("ArenaMembership", back_populates="arena", cascade="all, delete-orphan")
     submissions = relationship("Submission", back_populates="arena", cascade="all, delete-orphan")
     proofs = relationship("Proof", back_populates="arena", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="arena", cascade="all, delete-orphan")
     logbook_entries = relationship("ArenaLogbook", back_populates="arena", cascade="all, delete-orphan")
+    kudos_transactions = relationship("KudosTransaction", back_populates="arena")
 
     def __init__(self, **kwargs):
         if "title" not in kwargs and "name" in kwargs:
@@ -96,6 +118,11 @@ class Arena(Base):
             kwargs["daily_penalty"] = kwargs["penalty_amount"]
         if "daily_cutoff_time" not in kwargs and "deadline_time" in kwargs:
             kwargs["daily_cutoff_time"] = kwargs["deadline_time"]
+        if "entry_stake" not in kwargs and "entry_deposit" in kwargs:
+            try:
+                kwargs["entry_stake"] = int(float(kwargs["entry_deposit"]))
+            except (ValueError, TypeError):
+                pass
         super().__init__(**kwargs)
 
 
@@ -109,6 +136,7 @@ class ArenaMembership(Base):
     status = Column(String, default="approved", index=True) 
     role = Column(String, default="member") 
     current_streak = Column(Integer, default=0, nullable=False)
+    streak_count = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     streak_shields = Column(Integer, default=1, nullable=False)
     joined_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
@@ -118,6 +146,7 @@ class ArenaMembership(Base):
 
 
 ArenaMember = ArenaMembership
+ArenaParticipant = ArenaMembership
 
 
 class Message(Base):
@@ -149,6 +178,7 @@ class Submission(Base):
     submitted_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, index=True, server_default=func.now())
 
     # Core Metrics Trackers
+    caption = Column(Text, nullable=True)
     upvotes = Column(Integer, default=0, nullable=False)
     downvotes = Column(Integer, default=0, nullable=False)
     is_absent = Column(Boolean, default=False, index=True, nullable=False)
@@ -363,6 +393,38 @@ class UserWallet(Base):
         self.tribes_balance = float(value)
         self.balance = float(value)
 
+
+
+class KudosTransactionType(str, enum.Enum):
+    SIGNUP_BONUS = "SIGNUP_BONUS"
+    ARENA_STAKE = "ARENA_STAKE"
+    DEADLINE_PENALTY = "DEADLINE_PENALTY"
+    WEEKLY_PAYOUT = "WEEKLY_PAYOUT"
+
+
+class KudosTransaction(Base):
+    """
+    Kudos Virtual Currency Transaction Record.
+    Immutable double-entry transaction record tracking all Kudos economic events:
+    SIGNUP_BONUS, ARENA_STAKE, DEADLINE_PENALTY, and WEEKLY_PAYOUT.
+    """
+    __tablename__ = "kudos_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    arena_id = Column(Integer, ForeignKey("arenas.id", ondelete="SET NULL"), index=True, nullable=True)
+    amount = Column(Integer, nullable=False)
+    type = Column(String(50), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now(), index=True)
+
+    user = relationship("User", back_populates="kudos_transactions")
+    arena = relationship("Arena", back_populates="kudos_transactions")
+
+    __table_args__ = (
+        Index('idx_kudos_tx_user_created', 'user_id', 'created_at'),
+        Index('idx_kudos_tx_arena_created', 'arena_id', 'created_at'),
+    )
 
 
 class KudosLedger(Base):

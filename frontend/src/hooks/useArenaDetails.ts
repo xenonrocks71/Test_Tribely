@@ -73,7 +73,6 @@ export function useArenaDetails(arenaId: number): UseArenaDetailsResult {
           role: m.role || "member",
           currentStreak: m.current_streak || m.streak_days || 0,
           isActive: m.is_active ?? true,
-          streakShields: m.streak_shields ?? 0,
           joinedAt: m.joined_at || new Date().toISOString(),
           user: {
             id: m.user_id,

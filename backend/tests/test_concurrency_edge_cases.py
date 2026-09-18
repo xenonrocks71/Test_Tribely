@@ -81,7 +81,7 @@ def test_true_max_consecutive_streak_calculation(db_session):
     """
     u = User(id=80, email="streakmaster@example.com", hashed_password="pw", full_name="Streak Master")
     db_session.add(u)
-    wallet = UserWallet(user_id=80, tribes_balance=1000.0, is_frozen=False, streak_shields=2)
+    wallet = UserWallet(user_id=80, tribes_balance=1000.0, is_frozen=False)
     db_session.add(wallet)
     arena = Arena(id=88, name="Run Arena", invite_code="RUN888", creator_id=80, deadline_time="23:59")
     db_session.add(arena)
@@ -105,7 +105,6 @@ def test_true_max_consecutive_streak_calculation(db_session):
 
     # Total submissions = 5, but maximum consecutive streak is 3
     assert result["max_streak"] == 3
-    assert result["available_shields"] == 2
 
 
 # ── 3. WebSocket Scatter-Gather Timeout Isolation ──────────────────────────

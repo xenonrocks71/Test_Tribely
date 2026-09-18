@@ -1,6 +1,6 @@
 """
-Streak Shield & Gamification Engine Implementation.
-Manages user habit streaks, streak freeze shields, and achievement level badges.
+Streak & Gamification Engine Implementation.
+Manages user habit streaks and achievement level badges.
 Optimized with Redis TTL caching and sub-millisecond query evaluation.
 """
 
@@ -9,7 +9,7 @@ from datetime import datetime, date, timedelta
 import json
 import logging
 from sqlalchemy.orm import Session
-from app.models.models import Submission, UserWallet
+from app.models.models import Submission
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ CACHE_TTL_SECONDS = 1800  # 30 minutes cache
 
 class StreakService:
     """
-    Gamification service managing habit streaks, emergency freeze shields, and activity badges.
+    Gamification service managing habit streaks and activity badges.
     """
 
     def __init__(self):
@@ -53,7 +53,7 @@ class StreakService:
         return self._redis_client if self._redis_client is not False else None
 
     def invalidate_streak_cache(self, user_id: int, arena_id: int) -> None:
-        """Evicts cached streak calculations upon proof submission or shield usage."""
+        """Evicts cached streak calculations upon proof submission or status change."""
         redis_c = self._get_redis()
         if redis_c:
             try:
@@ -63,7 +63,7 @@ class StreakService:
 
     def calculate_user_streak(self, db: Session, user_id: int, arena_id: int) -> Dict[str, Any]:
         """
-        Calculate current consecutive habit streak and available streak shields for a user.
+        Calculate current consecutive habit streak and badge tier for a user.
         Uses Redis caching to avoid O(N) database scans on hot read paths.
         """
         cache_key = f"streak:{user_id}:{arena_id}"
@@ -90,24 +90,20 @@ class StreakService:
             .all()
         )
 
-        # Retrieve actual wallet shield balance if available
-        wallet = db.query(UserWallet).filter(UserWallet.user_id == user_id).first()
-        available_shields = wallet.streak_shields if wallet else 1
-
         # Extract unique dates from valid submissions
         active_dates = {
             s.submitted_at.date() if isinstance(s.submitted_at, datetime) else date.today()
             for s in submissions if s.submitted_at
         }
 
-        # Also include shielded / verified daily sheets so streak shields preserve streaks
+        # Include verified / present daily sheets
         from app.models.models import DailyArenaSheet
         valid_sheets = (
             db.query(DailyArenaSheet)
             .filter(
                 DailyArenaSheet.user_id == user_id,
                 DailyArenaSheet.arena_id == arena_id,
-                DailyArenaSheet.status.in_(["present", "shielded", "verified"])
+                DailyArenaSheet.status.in_(["present", "verified"])
             )
             .order_by(DailyArenaSheet.date_day.desc())
             .limit(100)
@@ -123,10 +119,8 @@ class StreakService:
             result = {
                 "current_streak": 0,
                 "max_streak": 0,
-                "available_shields": available_shields,
                 "badge_tier": "Novice Builder 🥉",
-                "days_until_next_shield": 7,
-                "rule": "1 Shield = 1 Absent Day protected with ZERO monetary penalty slash"
+                "rule": "Daily verified proof maintains active streak and sprint multiplier"
             }
             if redis_c:
                 try:
@@ -183,10 +177,8 @@ class StreakService:
         result = {
             "current_streak": current_streak,
             "max_streak": max_streak,
-            "available_shields": available_shields,
             "badge_tier": badge_tier,
-            "days_until_next_shield": 7 - (current_streak % 7) if current_streak % 7 != 0 else 7,
-            "rule": "1 Shield = 1 Absent Day protected with ZERO monetary penalty slash"
+            "rule": "Daily verified proof maintains active streak and sprint multiplier"
         }
 
         if redis_c:

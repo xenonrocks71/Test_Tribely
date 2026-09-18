@@ -9,21 +9,21 @@ services:
         value: 3.11.8
       - key: ENVIRONMENT
         value: production
-      - key: PORT
-        value: 8000
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_URL
-        fromDatabase:
-          name: tribely-db
-          property: connectionString
-      - key: REDIS_HOST
-        value: 127.0.0.1
-      - key: REDIS_PORT
-        value: 6379
-
-databases:
-  - name: tribely-db
-    databaseName: tribely_db
-    user: tribely_user
-    plan: free
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: FRONTEND_URL
+        value: https://tribely.mayurkpatil.in
+      - key: BACKEND_PUBLIC_URL
+        value: https://tribely-backend.onrender.com
+      - key: STORAGE_PROVIDER
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: tribely-proofs

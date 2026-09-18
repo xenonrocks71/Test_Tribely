@@ -1,39 +1,47 @@
 "use client";
 
 import React from "react";
-import { Check, Sparkles } from "lucide-react";
+import { motion } from "framer-motion";
 
 export const CaughtUpDivider: React.FC = () => {
   return (
-    <div className="w-full py-10 px-4 bg-gradient-to-b from-white via-neutral-50 to-white dark:from-[#0A0A0A] dark:via-neutral-950 dark:to-[#0A0A0A] border-y border-neutral-200 dark:border-neutral-900 flex flex-col items-center text-center space-y-3 select-none">
-      {/* Instagram Classic Gradient Ring Checkmark */}
-      <div className="relative w-14 h-14 rounded-full p-[2.5px] bg-gradient-to-tr from-emerald-500 via-teal-400 to-cyan-500 shadow-[0_0_24px_rgba(16,185,129,0.25)]">
-        <div className="w-full h-full rounded-full bg-white dark:bg-neutral-950 flex items-center justify-center">
-          <Check className="w-7 h-7 text-emerald-500 stroke-[3]" />
-        </div>
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: "easeOut" }}
+      className="w-full py-6 px-4 flex flex-col items-center text-center space-y-2.5 select-none"
+    >
+      {/* Checkmark icon */}
+      <div className="w-10 h-10 rounded-full bg-[#E6F4EA] dark:bg-[#137333]/20 border border-[#CEEAD6] dark:border-[#137333]/30 flex items-center justify-center text-[#137333] dark:text-[#81C995]">
+        <svg
+          className="w-5 h-5"
+          viewBox="0 0 24 24"
+          fill="none"
+          strokeWidth="2.5"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+        </svg>
       </div>
 
-      <div className="space-y-1 max-w-sm">
-        <h3 className="text-base font-black text-neutral-900 dark:text-white tracking-tight">
-          You're All Caught Up
+      {/* Text */}
+      <div className="space-y-0.5">
+        <h3 className="text-sm font-semibold text-neutral-900 dark:text-white leading-tight">
+          You&apos;re all caught up
         </h3>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
-          You've seen all latest verified proof drops from your enrolled accountability squads.
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 max-w-[260px] leading-relaxed">
+          You&apos;ve seen all recent proof drops from your squads.
         </p>
       </div>
 
-      {/* Transition to Suggested Public Posts */}
-      <div className="w-full pt-4 max-w-md">
-        <div className="relative flex items-center justify-center">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-neutral-200 dark:border-neutral-800" />
-          </div>
-          <div className="relative px-3 bg-neutral-50 dark:bg-neutral-950 text-[11px] font-black uppercase tracking-widest text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-            <span>Suggested Posts from Public Squads</span>
-          </div>
-        </div>
+      {/* Divider */}
+      <div className="w-full max-w-xs flex items-center gap-3 pt-2">
+        <div className="flex-1 h-px bg-neutral-200 dark:bg-[#303134]" />
+        <span className="text-[11px] font-medium text-neutral-400 dark:text-neutral-500 whitespace-nowrap">
+          Suggested Tribes
+        </span>
+        <div className="flex-1 h-px bg-neutral-200 dark:bg-[#303134]" />
       </div>
-    </div>
+    </motion.div>
   );
 };

@@ -51,6 +51,9 @@ class ArenaRepository(BaseRepository[Arena, ArenaCreate, ArenaCreate]):
         db_arena = Arena(
             name=arena_in.name,
             description=arena_in.description,
+            category=arena_in.category or "Habit",
+            icon_url=arena_in.icon_url,
+            timezone=arena_in.timezone or "UTC",
             invite_code=invite_code,
             creator_id=creator_id,
             proof_type=arena_in.proof_type,
@@ -185,6 +188,115 @@ class ArenaRepository(BaseRepository[Arena, ArenaCreate, ArenaCreate]):
         """
         return db.query(Arena).filter(Arena.is_private == False).offset(skip).limit(limit).all()
 
+    def get_pending_requests(self, db: Session, arena_id: int) -> List[ArenaMembership]:
+        """
+        Fetches pending membership requests eagerly loading associated user records.
+        """
+        from sqlalchemy.orm import joinedload
+        return db.query(ArenaMembership).filter(
+            ArenaMembership.arena_id == arena_id,
+            ArenaMembership.status == "pending"
+        ).options(joinedload(ArenaMembership.user)).all()
+
+    def get_approved_members(self, db: Session, arena_id: int) -> List[ArenaMembership]:
+        """
+        Fetches approved members for an arena eagerly loading user profile entities.
+        """
+        from sqlalchemy.orm import joinedload
+        from app.models.models import User
+        return db.query(ArenaMembership).filter(
+            ArenaMembership.arena_id == arena_id,
+            ArenaMembership.status == "approved"
+        ).options(joinedload(ArenaMembership.user).joinedload(User.profile)).all()
+
+    def approve_membership(self, db: Session, membership: ArenaMembership) -> ArenaMembership:
+        """
+        Transitions membership status to approved.
+        """
+        membership.status = "approved"
+        db.commit()
+        db.refresh(membership)
+        return membership
+
+    def delete_membership(self, db: Session, membership: ArenaMembership) -> None:
+        """
+        Removes a membership record.
+        """
+        db.delete(membership)
+        db.commit()
+
+    def update_proof_type(self, db: Session, arena: Arena, proof_type: str) -> Arena:
+        """
+        Updates required proof verification modality for an arena.
+        """
+        arena.proof_type = proof_type
+        db.commit()
+        db.refresh(arena)
+        return arena
+
+    def update_arena_settings(self, db: Session, arena: Arena, **kwargs) -> Arena:
+        """
+        Updates arena visual, rule, or configuration fields.
+        """
+        for key, value in kwargs.items():
+            if value is not None and hasattr(arena, key):
+                setattr(arena, key, value)
+        db.commit()
+        db.refresh(arena)
+        return arena
+
+    def remove_member_with_successor(
+        self,
+        db: Session,
+        arena: Arena,
+        target_membership: ArenaMembership
+    ) -> None:
+        """
+        Removes target membership from arena. If the removed user is the arena creator,
+        automatically promotes the next oldest approved member to admin.
+        """
+        is_creator_removed = (arena.creator_id == target_membership.user_id)
+        db.delete(target_membership)
+        db.flush()
+
+        if is_creator_removed:
+            next_successor = db.query(ArenaMembership).filter(
+                ArenaMembership.arena_id == arena.id,
+                ArenaMembership.status == "approved"
+            ).order_by(ArenaMembership.id.asc()).first()
+
+            if next_successor:
+                next_successor.role = "admin"
+                arena.creator_id = next_successor.user_id
+
+        db.commit()
+
+    def delete_arena_cascade(self, db: Session, arena: Arena) -> None:
+        """
+        Explicitly and completely cascades deletion of all dependent entities
+        (DailyArenaSheet, ArenaLogbook, Messages, Submissions, Votes, Memberships, Arena).
+        """
+        from app.models.models import (
+            DailyArenaSheet, ArenaLogbook, Message,
+            Submission, SubmissionVote
+        )
+        arena_id = arena.id
+
+        db.query(DailyArenaSheet).filter(DailyArenaSheet.arena_id == arena_id).delete(synchronize_session=False)
+        db.query(ArenaLogbook).filter(ArenaLogbook.arena_id == arena_id).delete(synchronize_session=False)
+        db.query(Message).filter(Message.arena_id == arena_id).delete(synchronize_session=False)
+
+        submissions = db.query(Submission).filter(Submission.arena_id == arena_id).all()
+        sub_ids = [s.id for s in submissions]
+        if sub_ids:
+            db.query(SubmissionVote).filter(SubmissionVote.submission_id.in_(sub_ids)).delete(synchronize_session=False)
+            db.query(Submission).filter(Submission.arena_id == arena_id).delete(synchronize_session=False)
+
+        db.query(ArenaMembership).filter(ArenaMembership.arena_id == arena_id).delete(synchronize_session=False)
+        db.delete(arena)
+        db.commit()
+
 
 # Global Singleton Instance for Arena Repository
 arena_repository = ArenaRepository()
+

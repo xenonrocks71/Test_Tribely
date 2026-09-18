@@ -14,8 +14,23 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:8000",
-        "http://127.0.0.1:8000"
+        "http://127.0.0.1:8000",
+        "https://tribely.mayurkpatil.in",
+        "https://tribely-backend.onrender.com"
     ]
+
+    # Application & Domain URLs
+    FRONTEND_URL: str = os.environ.get("FRONTEND_URL") or os.environ.get("NEXT_PUBLIC_APP_URL") or "https://tribely.mayurkpatil.in"
+    BACKEND_PUBLIC_URL: str = os.environ.get("BACKEND_PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "https://tribely-backend.onrender.com"
+
+    # Supabase Object Storage Configuration (Server-Side Only)
+    STORAGE_PROVIDER: str = os.environ.get("STORAGE_PROVIDER", "local").lower()
+    SUPABASE_URL: str | None = os.environ.get("SUPABASE_URL") or None
+    SUPABASE_SERVICE_ROLE_KEY: str | None = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY") or None
+    SUPABASE_STORAGE_BUCKET: str = os.environ.get("SUPABASE_STORAGE_BUCKET") or "tribely-proofs"
+
+    # Google Gemini Multimodal Vision API Configuration
+    GEMINI_API_KEY: str | None = os.environ.get("GEMINI_API_KEY") or None
 
     # PostgreSQL Connection Parameters
     POSTGRES_SERVER: str = os.environ.get("POSTGRES_SERVER") or os.environ.get("POSTGRES_HOST") or os.environ.get("PGHOST") or "localhost"
@@ -37,6 +52,20 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: str | None = os.environ.get("REDIS_PASSWORD") or os.environ.get("REDISPASSWORD") or None
     REDIS_URL: str | None = os.environ.get("REDIS_URL") or os.environ.get("REDIS_TLS_URL") or None
 
+    # SMTP & Email Dispatch Configuration
+    SMTP_HOST: str | None = os.environ.get("SMTP_HOST") or None
+    SMTP_PORT: int = int(os.environ.get("SMTP_PORT") or 587)
+    SMTP_USER: str | None = os.environ.get("SMTP_USER") or None
+    SMTP_PASSWORD: str | None = os.environ.get("SMTP_PASSWORD") or None
+    SMTP_TLS: bool = True
+    EMAILS_FROM_EMAIL: str = os.environ.get("EMAILS_FROM_EMAIL") or "no-reply@tribely.app"
+    EMAILS_FROM_NAME: str = os.environ.get("EMAILS_FROM_NAME") or "Tribely"
+
+    # OTP Security & Rate Limiting Thresholds
+    OTP_TTL_SECONDS: int = 300  # 5 minutes in Redis
+    OTP_COOLDOWN_SECONDS: int = 60  # 1 minute resend cooldown
+    OTP_MAX_ATTEMPTS: int = 5  # Max 5 incorrect attempts before invalidation
+
     # Computed Property for Asynchronous Asyncpg Database URL
     @computed_field
     @property
@@ -48,9 +77,13 @@ class Settings(BaseSettings):
                 url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
             elif url.startswith("postgres://"):
                 url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+            # Sanitize sslmode query param for asyncpg compatibility with Supabase pooler strings
+            if "sslmode=" in url:
+                url = url.replace("sslmode=", "ssl=")
             return url
         safe_password = urllib.parse.quote_plus(self.POSTGRES_PASSWORD)
         return f"postgresql+asyncpg://{self.POSTGRES_USER}:{safe_password}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+
 
     # Computed Property for Synchronous Psycopg2 Database URL (Alembic / Fallback)
     @computed_field

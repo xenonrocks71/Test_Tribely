@@ -41,7 +41,7 @@ class WalletRepository:
                 balance=initial_balance,
                 version=1,
                 is_frozen=False,
-                streak_shields=1,
+                streak_shields=0,
             )
             db.add(wallet)
             db.flush()

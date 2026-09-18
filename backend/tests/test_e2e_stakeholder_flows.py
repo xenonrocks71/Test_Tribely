@@ -57,16 +57,19 @@ def test_auth_end_to_end_lifecycle():
     assert login_resp.status_code == 200, login_resp.text
     assert login_resp.json()["access_token"] is not None
 
-    # 3. Forgot Password request
+    # 3. Forgot Password request (dispatches OTP to email without leaking tokens)
     forgot_resp = client.post("/api/auth/forgot-password", json={
         "email": test_email
     })
     assert forgot_resp.status_code == 200, forgot_resp.text
-    forgot_data = forgot_resp.json()
-    reset_token = forgot_data.get("reset_token")
-    assert reset_token is not None, "Reset token must be generated for active user"
+    assert forgot_resp.json().get("reset_token") is None, "Security: reset_token must NEVER be returned in forgot-password response"
 
-    # 4. Reset Password with reset_token
+    # 4. Issue cryptographic reset_token for verified account
+    from app.core.security import create_password_reset_token
+    reset_token = create_password_reset_token(test_email)
+    assert reset_token is not None
+
+    # 5. Reset Password with reset_token
     reset_resp = client.post("/api/auth/reset-password", json={
         "email": test_email,
         "reset_token": reset_token,

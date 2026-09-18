@@ -189,14 +189,10 @@ def test_process_deadline_endpoint_and_streak_reset():
     headers_member = {"Authorization": f"Bearer {member_token}"}
     client.post("/api/arenas/join-by-code", json={"invite_code": invite_code}, headers=headers_member)
 
-    # Artificially set member's streak to 4 and streak_shields to 0 to verify it resets on missed deadline
-    from app.models.models import UserWallet
+    # Artificially set member's streak to 4 to verify it resets on missed deadline
     db = SessionLocal()
     mem = db.query(ArenaMembership).filter(ArenaMembership.arena_id == arena_id, ArenaMembership.user_id == member_id).first()
     mem.current_streak = 4
-    wallet = db.query(UserWallet).filter(UserWallet.user_id == member_id).first()
-    if wallet:
-        wallet.streak_shields = 0
     db.commit()
     db.close()
 

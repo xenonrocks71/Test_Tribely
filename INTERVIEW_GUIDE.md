@@ -258,10 +258,9 @@ Running an evaluation cron job every minute across hundreds of thousands of aren
    The target audit date is evaluated in the arena's local timezone (`arena_local_now.date()`), eliminating bugs where server UTC day differs from the user's actual calendar day.
 3. **Audit Idempotency via Daily Arena Sheet**:
    Before deducting penalties or resetting streaks, the worker checks `daily_arena_sheets` for `(arena_id, target_date, status = 'audited')`. If already processed, the arena is skipped in $O(1)$ time.
-4. **Streak Shield Protection & Reset Logic**:
-   - If a member submitted proof before the cutoff: streak increments (+1).
-   - If a member missed proof but holds active streak shields: 1 shield is consumed, streak is preserved.
-   - If missed without shields: `membership.current_streak = 0` is enforced atomically.
+4. **Strict Streak Increment & Reset Logic**:
+   - If a member submitted valid proof before the cutoff: streak increments (+1).
+   - If a member missed the cutoff deadline: `membership.current_streak = 0` is enforced atomically, status is set to `absent`, and a `deadline_missed` audit log is committed.
 
 ---
 

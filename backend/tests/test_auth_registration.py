@@ -59,7 +59,6 @@ def test_user_registration_atomic_success():
         assert wallet is not None
         assert wallet.tribes_balance == 1000.0
         assert wallet.is_frozen is False
-        assert wallet.streak_shields == 1
     finally:
         db.close()
 
@@ -81,3 +80,145 @@ def test_duplicate_email_registration_rejected():
         assert "Email address already registered" in str(exc_info.value.detail)
     finally:
         db.close()
+
+
+def test_user_registration_with_phone_username_and_avatar():
+    from app.services.otp_service import otp_service
+    db = TestingSessionLocal()
+    try:
+        # Generate and verify OTP to obtain a valid verification token
+        code, _ = otp_service.generate_otp(db, identifier="insta_user@tribely.internal", purpose="registration")
+        token = otp_service.verify_otp(db, identifier="insta_user@tribely.internal", code=code, purpose="registration")
+
+        user_in = UserCreate(
+            email="insta_user@tribely.internal",
+            username="insta_king",
+            phone_number="+15551234567",
+            password="SecurePassword999!",
+            full_name="Instagram Star",
+            avatar_url="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80",
+            verification_token=token
+        )
+
+        user = auth_service.register_user(db, user_in=user_in)
+
+        # Assert full model persistence
+        assert user.id is not None
+        assert user.email == "insta_user@tribely.internal"
+        assert user.username == "insta_king"
+        assert user.phone_number == "+15551234567"
+        assert user.avatar_url == user_in.avatar_url
+        assert user.is_verified is True
+
+        # Assert profile image is synced
+        profile = db.query(UserProfile).filter(UserProfile.user_id == user.id).first()
+        assert profile is not None
+        assert profile.profile_image_url == user_in.avatar_url
+
+        # Duplicate phone check
+        dup_phone_in = UserCreate(
+            email="another@tribely.internal",
+            username="another_handle",
+            phone_number="+15551234567",
+            password="AnotherPassword123!",
+            full_name="Another User"
+        )
+        with pytest.raises(Exception) as exc_phone:
+            auth_service.register_user(db, user_in=dup_phone_in)
+        assert "Phone number already registered" in str(exc_phone.value.detail)
+
+        # Duplicate username check
+        dup_user_in = UserCreate(
+            email="third@tribely.internal",
+            username="insta_king",
+            phone_number="+15559876543",
+            password="ThirdPassword123!",
+            full_name="Third User"
+        )
+        with pytest.raises(Exception) as exc_user:
+            auth_service.register_user(db, user_in=dup_user_in)
+        assert "Username already taken" in str(exc_user.value.detail)
+    finally:
+        db.close()
+
+
+def test_otp_generation_and_verification_flow():
+    from app.services.otp_service import otp_service
+    db = TestingSessionLocal()
+    try:
+        identifier = "test_otp_user@tribely.internal"
+        code, expires_at = otp_service.generate_otp(db, identifier=identifier, purpose="registration")
+
+        assert len(code) == 6
+        assert code.isdigit()
+        assert expires_at is not None
+
+        # Verify OTP code
+        token = otp_service.verify_otp(db, identifier=identifier, code=code, purpose="registration")
+        assert token is not None
+
+        # Token validation check
+        assert otp_service.validate_verification_token(token, identifier, purpose="registration") is True
+        assert otp_service.validate_verification_token(token, "wrong@email.com", purpose="registration") is False
+    finally:
+        db.close()
+
+
+def test_otp_rate_limiting_cooldown():
+    from app.services.otp_service import otp_service
+    from fastapi import HTTPException
+    db = TestingSessionLocal()
+    try:
+        identifier = "cooldown_test@tribely.internal"
+        otp_service.generate_otp(db, identifier=identifier, purpose="registration")
+
+        # Second immediate request should hit the 60s cooldown limit
+        with pytest.raises(HTTPException) as exc_info:
+            otp_service.generate_otp(db, identifier=identifier, purpose="registration")
+        
+        assert exc_info.value.status_code == 429
+        assert "Please wait" in str(exc_info.value.detail)
+    finally:
+        db.close()
+
+
+def test_otp_incorrect_code_and_max_attempts():
+    from app.services.otp_service import otp_service
+    from fastapi import HTTPException
+    db = TestingSessionLocal()
+    try:
+        identifier = "brute_force_test@tribely.internal"
+        code, _ = otp_service.generate_otp(db, identifier=identifier, purpose="registration")
+
+        # Attempt wrong code 5 times
+        for attempt in range(5):
+            with pytest.raises(HTTPException) as exc_info:
+                otp_service.verify_otp(db, identifier=identifier, code="000000", purpose="registration")
+            assert exc_info.value.status_code == 400
+
+        # 6th attempt should be blocked due to maximum attempts exceeded
+        with pytest.raises(HTTPException) as exc_info:
+            otp_service.verify_otp(db, identifier=identifier, code=code, purpose="registration")
+        assert "Maximum verification attempts exceeded" in str(exc_info.value.detail)
+    finally:
+        db.close()
+
+
+def test_username_availability_endpoint():
+    from fastapi.testclient import TestClient
+    from main import app
+    client = TestClient(app)
+
+    # 1. Invalid username (too short or special chars)
+    resp = client.get("/api/auth/check-username?username=ab")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is False
+
+    # 2. Valid and unreserved username
+    resp2 = client.get("/api/auth/check-username?username=cool_coder_99")
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["available"] is True
+
+

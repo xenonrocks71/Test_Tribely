@@ -4,6 +4,7 @@ Handles arena-scoped connection pools, real-time message broadcasting, active cl
 and Redis Pub/Sub integration for multi-node horizontally scaled deployments (Instagram Scale).
 """
 
+import os
 import json
 import asyncio
 from typing import Dict, List, Set, Any, Optional
@@ -124,22 +125,34 @@ class RedisPubSubManager:
             return False
 
         try:
-            is_ssl = (
-                "upstash.io" in settings.REDIS_HOST
-                or settings.REDIS_HOST.startswith("rediss://")
-                or getattr(settings, "REDIS_SSL", False)
-            )
-            self.redis_client = aioredis.Redis(
-                host=settings.REDIS_HOST,
-                port=settings.REDIS_PORT,
-                password=settings.REDIS_PASSWORD or None,
-                decode_responses=True,
-                ssl=is_ssl,
-                ssl_cert_reqs=None if is_ssl else None,
-                socket_timeout=5.0,
-                socket_connect_timeout=5.0,
-                retry_on_timeout=True,
-            )
+            redis_url = getattr(settings, "REDIS_URL", None) or os.environ.get("REDIS_URL")
+            if redis_url:
+                is_ssl = redis_url.startswith("rediss://") or "upstash.io" in redis_url
+                self.redis_client = aioredis.from_url(
+                    redis_url,
+                    decode_responses=True,
+                    ssl_cert_reqs=None if is_ssl else None,
+                    socket_timeout=5.0,
+                    socket_connect_timeout=5.0,
+                    retry_on_timeout=True,
+                )
+            else:
+                is_ssl = (
+                    "upstash.io" in settings.REDIS_HOST
+                    or settings.REDIS_HOST.startswith("rediss://")
+                    or getattr(settings, "REDIS_SSL", False)
+                )
+                self.redis_client = aioredis.Redis(
+                    host=settings.REDIS_HOST,
+                    port=settings.REDIS_PORT,
+                    password=settings.REDIS_PASSWORD or None,
+                    decode_responses=True,
+                    ssl=is_ssl,
+                    ssl_cert_reqs=None if is_ssl else None,
+                    socket_timeout=5.0,
+                    socket_connect_timeout=5.0,
+                    retry_on_timeout=True,
+                )
             await self.redis_client.ping()
             self._is_connected = True
             return True
@@ -369,6 +382,21 @@ class WebSocketManager:
                 print(f"[WebSocketManager] safe_broadcast_to_arena sync execution error: {err}")
         except Exception as err:
             print(f"[WebSocketManager] safe_broadcast_to_arena task error: {err}")
+
+    def safe_broadcast_to_user(self, user_id: int, message: Dict[str, Any]) -> None:
+        """
+        Safely broadcast a message payload to a specific user from either synchronous or asynchronous thread contexts.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.broadcast_to_user(user_id, message))
+        except RuntimeError:
+            try:
+                asyncio.run(self.broadcast_to_user(user_id, message))
+            except Exception as err:
+                print(f"[WebSocketManager] safe_broadcast_to_user sync execution error: {err}")
+        except Exception as err:
+            print(f"[WebSocketManager] safe_broadcast_to_user task error: {err}")
 
 
 # Global Singleton Instance for WebSocket Manager

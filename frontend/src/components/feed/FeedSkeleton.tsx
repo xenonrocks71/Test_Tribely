@@ -2,51 +2,63 @@
 
 import React from "react";
 
+const SkeletonBox = ({ className = "" }: { className?: string }) => (
+  <div className={`rounded-md skeleton-shimmer ${className}`} />
+);
+
 export const FeedSkeleton: React.FC = () => {
   return (
-    <div className="w-full space-y-6 animate-pulse">
+    <div className="w-full">
+      {/* Story Tray Skeleton */}
+      <div className="w-full border-b border-neutral-100 dark:border-neutral-900/60 py-3 px-3.5 overflow-hidden">
+        <div className="flex items-start gap-4">
+          {[1, 2, 3, 4, 5].map((idx) => (
+            <div key={idx} className="flex flex-col items-center gap-1.5 shrink-0">
+              <div className="w-[66px] h-[66px] rounded-full skeleton-shimmer" />
+              <div className="w-10 h-2 rounded-md skeleton-shimmer" />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Feed Cards Skeleton */}
       {[1, 2].map((idx) => (
         <div
           key={idx}
-          className="w-full bg-white dark:bg-[#0A0A0A] border-b border-neutral-200 dark:border-neutral-900 pb-5 pt-3"
+          className="w-full bg-white dark:bg-[#0A0A0A] border-b border-neutral-100 dark:border-neutral-900/60"
         >
-          {/* Header Skeleton */}
-          <div className="flex items-center justify-between px-4 mb-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-full bg-neutral-200 dark:bg-neutral-800" />
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex items-center gap-3">
+              <div className="w-[42px] h-[42px] rounded-full skeleton-shimmer" />
               <div className="space-y-1.5">
-                <div className="w-24 h-3 rounded-md bg-neutral-200 dark:bg-neutral-800" />
-                <div className="w-16 h-2 rounded-md bg-neutral-200 dark:bg-neutral-800/60" />
+                <div className="w-28 h-3 rounded-md skeleton-shimmer" />
+                <div className="w-16 h-2 rounded-md skeleton-shimmer opacity-60" />
               </div>
             </div>
-            <div className="w-20 h-5 rounded-full bg-neutral-200 dark:bg-neutral-800" />
+            <div className="w-6 h-6 rounded-full skeleton-shimmer" />
           </div>
 
-          {/* Media 4:5 Viewport Skeleton */}
-          <div className="w-full aspect-[4/5] bg-neutral-200 dark:bg-neutral-900 relative">
-            {/* Fake PiP */}
-            <div className="absolute top-3.5 left-3.5 w-22 h-28 rounded-2xl bg-neutral-300 dark:bg-neutral-800 border-2 border-white/20" />
-            {/* Fake Pill */}
-            <div className="absolute bottom-3.5 left-3.5 w-36 h-7 rounded-xl bg-neutral-300 dark:bg-neutral-800/80" />
-          </div>
+          {/* Media 4:5 */}
+          <div className="w-full aspect-[4/5] skeleton-shimmer" />
 
-          {/* Reaction Bar Skeleton */}
-          <div className="px-4 pt-3 flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <div className="w-12 h-6 rounded-full bg-neutral-200 dark:bg-neutral-800" />
-              <div className="w-12 h-6 rounded-full bg-neutral-200 dark:bg-neutral-800" />
-              <div className="w-12 h-6 rounded-full bg-neutral-200 dark:bg-neutral-800" />
+          {/* Action Bar Skeleton */}
+          <div className="px-4 pt-2.5 pb-1 flex items-center justify-between">
+            <div className="flex items-center gap-1">
+              <div className="w-8 h-8 rounded-full skeleton-shimmer" />
+              <div className="w-8 h-8 rounded-full skeleton-shimmer" />
+              <div className="w-8 h-8 rounded-full skeleton-shimmer" />
+              <div className="w-8 h-8 rounded-full skeleton-shimmer" />
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-full bg-neutral-200 dark:bg-neutral-800" />
-              <div className="w-7 h-7 rounded-full bg-neutral-200 dark:bg-neutral-800" />
-            </div>
+            <div className="w-8 h-8 rounded-full skeleton-shimmer" />
           </div>
 
           {/* Caption Skeleton */}
-          <div className="px-4 mt-3 space-y-1.5">
-            <div className="w-3/4 h-3 rounded bg-neutral-200 dark:bg-neutral-800" />
-            <div className="w-1/2 h-2.5 rounded bg-neutral-200 dark:bg-neutral-800/60" />
+          <div className="px-4 py-2 space-y-1.5">
+            <div className="w-16 h-3 rounded skeleton-shimmer" />
+            <div className="w-3/4 h-2.5 rounded skeleton-shimmer opacity-70" />
+            <div className="w-1/2 h-2.5 rounded skeleton-shimmer opacity-50" />
+            <div className="w-20 h-2 rounded skeleton-shimmer opacity-40 mt-1" />
           </div>
         </div>
       ))}

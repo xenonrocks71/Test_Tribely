@@ -10,6 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://tribely.mayurkpatil.in"),
   title: {
     default: "Tribely",
     template: "%s · Tribely",
@@ -19,13 +20,28 @@ export const metadata: Metadata = {
   applicationName: "Tribely",
   icons: {
     icon: [
-      { url: "/logo.png", sizes: "32x32", type: "image/png" },
-      { url: "/logo.png", sizes: "192x192", type: "image/png" },
+      { url: "/favicon.ico" },
+      { url: "/icons/BrandNewLook.png", sizes: "32x32", type: "image/png" },
+      { url: "/icons/BrandNewLook.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon.png", sizes: "512x512", type: "image/png" },
     ],
     apple: [
-      { url: "/logo.png", sizes: "180x180", type: "image/png" },
+      { url: "/apple-icon.png", sizes: "180x180", type: "image/png" },
+      { url: "/icons/BrandNewLook.png", sizes: "180x180", type: "image/png" },
     ],
-    shortcut: "/logo.png",
+    shortcut: "/favicon.ico",
+  },
+  openGraph: {
+    title: "Tribely — Social Habit Accountability",
+    description: "Habit-tracking micro-arenas with daily proof verification, group chat, and digital stakes.",
+    images: [{ url: "/icons/BrandLogo.png", width: 1024, height: 1024, alt: "Tribely Logo" }],
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Tribely — Social Habit Accountability",
+    description: "Habit-tracking micro-arenas with daily proof verification, group chat, and digital stakes.",
+    images: ["/icons/BrandLogo.png"],
   },
   appleWebApp: {
     capable: true,
@@ -36,7 +52,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#FF5E00",
+  themeColor: "#1A73E8",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
@@ -48,6 +64,7 @@ import { NotificationProvider } from "./context/NotificationContext";
 import SplashScreen from "@/components/SplashScreen";
 
 import { ServiceWorkerRegister } from "@/components/common/ServiceWorkerRegister";
+import { AuthWatcher } from "@/components/common/AuthWatcher";
 
 export default function RootLayout({
   children,
@@ -58,11 +75,39 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Tribely" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var cookieMatch = document.cookie.match(/(?:^|;\\s*)tribely_theme=([^;]*)/);
+                  var saved = localStorage.getItem('tribely_theme') || (cookieMatch ? decodeURIComponent(cookieMatch[1]) : null);
+                  var isDark = true;
+                  if (saved === 'light') {
+                    isDark = false;
+                  } else if (saved === 'dark') {
+                    isDark = true;
+                  } else if (saved === 'system') {
+                    isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                  }
+                  if (isDark) {
+                    document.documentElement.classList.add('dark');
+                    document.documentElement.style.colorScheme = 'dark';
+                  } else {
+                    document.documentElement.classList.remove('dark');
+                    document.documentElement.style.colorScheme = 'light';
+                  }
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
       </head>
-      <body className="antialiased selection:bg-[#FF5E00]/20 selection:text-[#FF5E00]">
+      <body className="antialiased selection:bg-[#1A73E8]/20 selection:text-[#1A73E8]">
         <ThemeProvider>
           <ToastProvider>
             <NotificationProvider>
+              <AuthWatcher />
               <SplashScreen />
               <ServiceWorkerRegister />
               {children}

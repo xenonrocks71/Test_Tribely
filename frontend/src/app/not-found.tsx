@@ -20,11 +20,11 @@ export default function NotFound() {
 
         <div className="pt-2 flex justify-center">
           <Link
-            href="/dashboard"
+            href="/feed"
             className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition shadow-lg"
           >
             <ArrowLeft className="h-4 w-4" />
-            <span>Return to Dashboard</span>
+            <span>Return to Feed</span>
           </Link>
         </div>
       </div>

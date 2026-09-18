@@ -270,12 +270,18 @@ class CycleService:
             is_on_time = False
 
             if sub and sub.submitted_at:
-                sub_time_utc = sub.submitted_at.replace(tzinfo=datetime.timezone.utc)
+                if sub.submitted_at.tzinfo is None:
+                    sub_time_utc = sub.submitted_at.replace(tzinfo=datetime.timezone.utc)
+                else:
+                    sub_time_utc = sub.submitted_at.astimezone(datetime.timezone.utc)
                 sub_time_local = sub_time_utc.astimezone(arena_tz)
                 sub_time_local_str = sub_time_local.strftime("%b %d, %I:%M %p")
                 is_on_time = sub_time_local <= cycle_info.cycle_cutoff_local
             elif prf and prf.created_at:
-                sub_time_utc = prf.created_at.replace(tzinfo=datetime.timezone.utc)
+                if prf.created_at.tzinfo is None:
+                    sub_time_utc = prf.created_at.replace(tzinfo=datetime.timezone.utc)
+                else:
+                    sub_time_utc = prf.created_at.astimezone(datetime.timezone.utc)
                 sub_time_local = sub_time_utc.astimezone(arena_tz)
                 sub_time_local_str = sub_time_local.strftime("%b %d, %I:%M %p")
                 is_on_time = sub_time_local <= cycle_info.cycle_cutoff_local

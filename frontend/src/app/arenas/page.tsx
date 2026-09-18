@@ -1,36 +1,18 @@
 "use client";
 
-import React, { useEffect } from "react";
-import { AppProvider, useApp } from "@/context/AppContext";
-import { AppShell } from "@/components/layout/AppShell";
-import { ArenasView } from "@/components/arenas/ArenasView";
-import { CameraModal } from "@/components/capture/CameraModal";
-import { TribeChatDrawer } from "@/components/chat/TribeChatDrawer";
-import { ProofReplyModal } from "@/components/feed/ProofReplyModal";
-
-function ArenasContent() {
-  const { setActiveTab } = useApp();
-
-  useEffect(() => {
-    setActiveTab("explore");
-  }, [setActiveTab]);
-
-  return (
-    <>
-      <ArenasView />
-      <CameraModal />
-      <TribeChatDrawer />
-      <ProofReplyModal />
-    </>
-  );
-}
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 export default function ArenasPage() {
+  const router = useRouter();
+
+  useEffect(() => {
+    router.replace("/feed");
+  }, [router]);
+
   return (
-    <AppProvider>
-      <AppShell>
-        <ArenasContent />
-      </AppShell>
-    </AppProvider>
+    <div className="min-h-screen bg-white dark:bg-[#0A0A0A] flex items-center justify-center">
+      <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+    </div>
   );
 }

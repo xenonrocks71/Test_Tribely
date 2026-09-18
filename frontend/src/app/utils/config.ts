@@ -4,10 +4,18 @@ export const getApiBaseUrl = (): string => {
   }
   if (typeof window !== "undefined") {
     const hostname = window.location.hostname;
-    if (hostname.includes("vercel.app")) {
-      return "https://tribely-backend.onrender.com";
+    if (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "0.0.0.0" ||
+      hostname.endsWith(".local") ||
+      hostname.includes("trycloudflare.com") ||
+      hostname.includes("loca.lt") ||
+      hostname.includes("ngrok")
+    ) {
+      return `http://${hostname}:8000`;
     }
-    return `http://${hostname}:8000`;
+    return "https://tribely-backend.onrender.com";
   }
   return "https://tribely-backend.onrender.com";
 };
@@ -18,11 +26,19 @@ export const getWsBaseUrl = (): string => {
   }
   if (typeof window !== "undefined") {
     const hostname = window.location.hostname;
-    if (hostname.includes("vercel.app")) {
-      return "wss://tribely-backend.onrender.com";
+    if (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "0.0.0.0" ||
+      hostname.endsWith(".local") ||
+      hostname.includes("trycloudflare.com") ||
+      hostname.includes("loca.lt") ||
+      hostname.includes("ngrok")
+    ) {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      return `${protocol}//${hostname}:8000`;
     }
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${protocol}//${hostname}:8000`;
+    return "wss://tribely-backend.onrender.com";
   }
   return "wss://tribely-backend.onrender.com";
 };
