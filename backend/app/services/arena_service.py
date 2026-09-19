@@ -823,10 +823,18 @@ class ArenaService:
                 detail="Invalid invite code."
             )
 
+        existing = self.arena_repo.get_membership(db, user_id=user_id, arena_id=arena.id)
+        if existing:
+            if existing.status != "approved":
+                existing.status = "approved"
+                db.commit()
+                db.refresh(existing)
+            return existing
+
         from app.services.kudos_service import kudos_service
         kudos_service.deduct_arena_join_stake(db, user_id, arena)
 
-        initial_status = "pending" if arena.is_private else "approved"
+        initial_status = "approved"
         membership = self.arena_repo.join_arena(db, user_id=user_id, arena_id=arena.id, status=initial_status, role="member")
         self.notify_arena_admins_on_join(db, arena=arena, user_id=user_id, status=initial_status)
         return membership
