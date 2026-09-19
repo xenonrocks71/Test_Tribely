@@ -877,6 +877,13 @@ class ArenaService:
 
             db.commit()
 
+            websocket_manager.safe_broadcast_to_arena(arena_id, {
+                "event_type": "member_left",
+                "arena_id": arena_id,
+                "user_id": current_user_id,
+                "new_admin_id": new_admin_id
+            })
+
             return {
                 "message": f"Successfully left arena {arena.name}",
                 "transferred_to_admin": new_admin_id
@@ -1037,6 +1044,14 @@ class ArenaService:
                 "arena_id": arena_id,
                 "user_id": target_user_id,
                 "message": "A member was removed from the arena."
+            })
+
+            websocket_manager.safe_broadcast_to_user(target_user_id, {
+                "event_type": "member_removed",
+                "arena_id": arena_id,
+                "user_id": target_user_id,
+                "arena_name": arena.name,
+                "message": f"You were removed from {arena.name} by the admin."
             })
 
             return {"detail": "Member removed and admin roles adjusted seamlessly."}

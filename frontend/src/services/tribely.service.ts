@@ -902,6 +902,29 @@ class TribelyService {
       return false;
     }
   }
+
+  async leaveArena(arenaId: number): Promise<{ success: boolean; message?: string }> {
+    try {
+      const res = await apiClient.post<any>(`/api/arenas/${arenaId}/leave`);
+      return { success: true, message: res.data?.message || res.data?.detail || "Successfully left arena." };
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail?.message || err?.response?.data?.detail || "Failed to leave arena.";
+      return { success: false, message: typeof msg === "string" ? msg : JSON.stringify(msg) };
+    }
+  }
+
+  async kickMember(arenaId: number, userId: number): Promise<{ success: boolean; message?: string }> {
+    try {
+      const res = await apiClient.post<any>("/api/admin/arenas/remove", {
+        arena_id: arenaId,
+        user_id: userId,
+      });
+      return { success: true, message: res.data?.detail || "Member removed successfully." };
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail?.message || err?.response?.data?.detail || "Failed to remove member.";
+      return { success: false, message: typeof msg === "string" ? msg : JSON.stringify(msg) };
+    }
+  }
 }
 
 export const tribelyService = new TribelyService();
