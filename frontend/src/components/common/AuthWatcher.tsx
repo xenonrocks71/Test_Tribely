@@ -40,31 +40,27 @@ export function AuthWatcher() {
         localStorage.getItem("access_token");
       const cookieToken = getAuthCookie();
 
-      // If user is on a public route, do not force-redirect
-      if (isPublic) {
-        // If cookie and storage are both present or syncable, sync them
-        if (storageToken && !cookieToken) {
-          setAuthCookie(storageToken);
-        }
-        return;
+      // Bi-directional token synchronization:
+      // If token exists in localStorage, ensure cookie is set
+      if (storageToken && !cookieToken) {
+        setAuthCookie(storageToken);
+      }
+      // If token exists in cookie, ensure localStorage is populated
+      if (cookieToken && !storageToken) {
+        try {
+          localStorage.setItem("tribely_token", cookieToken);
+          localStorage.setItem("token", cookieToken);
+        } catch {}
       }
 
-      // On protected routes:
-      // First-time sync: if existing session has storage token but cookie wasn't set yet
-      if (!isInitializedRef.current) {
-        isInitializedRef.current = true;
-        if (storageToken && !cookieToken) {
-          setAuthCookie(storageToken);
-          return;
-        }
-      }
+      // If user is on a public route, never redirect
+      if (isPublic) return;
 
-      // If either cookie or storage was cleared for a logged-in user on a protected route:
-      if (!cookieToken || !storageToken) {
-        authService.logout();
-        clearAuthCookie();
-        if (pathname !== "/login") {
-          window.location.href = "/login";
+      // On protected routes: only if neither storage nor cookie has an active session
+      const hasAnyToken = Boolean(storageToken || cookieToken);
+      if (!hasAnyToken) {
+        if (pathname !== "/login" && pathname !== "/register") {
+          window.location.href = `/login?redirect=${encodeURIComponent(pathname || "/feed")}`;
         }
       }
     };
@@ -72,7 +68,7 @@ export function AuthWatcher() {
     // 1. Initial check
     checkSession();
 
-    // 2. Storage event (fires when localStorage is cleared in DevTools or across tabs)
+    // 2. Storage event (fires when localStorage is cleared in another tab)
     const handleStorage = (e: StorageEvent) => {
       if (e.key === "tribely_token" || e.key === "token" || e.key === null) {
         checkSession();
@@ -80,21 +76,17 @@ export function AuthWatcher() {
     };
     window.addEventListener("storage", handleStorage);
 
-    // 3. Window focus & visibility (fires immediately when user clicks back from DevTools Application tab)
+    // 3. Window focus & visibility
     const handleFocusOrVisibility = () => {
       checkSession();
     };
     window.addEventListener("focus", handleFocusOrVisibility);
     document.addEventListener("visibilitychange", handleFocusOrVisibility);
 
-    // 4. Periodic 1-second heartbeat check
-    const interval = setInterval(checkSession, 1000);
-
     return () => {
       window.removeEventListener("storage", handleStorage);
       window.removeEventListener("focus", handleFocusOrVisibility);
       document.removeEventListener("visibilitychange", handleFocusOrVisibility);
-      clearInterval(interval);
     };
   }, [pathname]);
 

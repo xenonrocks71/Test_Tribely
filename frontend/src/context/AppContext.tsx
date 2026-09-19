@@ -451,13 +451,13 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Default / Guest user profile
+// Default / Guest user profile & Device Storage Hydration
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildGuestUser(): UserProfile {
   return {
     id: "guest",
-    name: "You",
+    name: "Spotter",
     username: "member",
     avatar: "",
     bio: "Building daily habits with Tribely 🚀",
@@ -475,12 +475,75 @@ function buildGuestUser(): UserProfile {
   };
 }
 
+export function getStoredInitialUser(): UserProfile {
+  if (typeof window !== "undefined") {
+    try {
+      const stored = localStorage.getItem("user");
+      const storedId = localStorage.getItem("tribely_user_id");
+      const storedName = localStorage.getItem("tribely_user_name");
+      const token =
+        localStorage.getItem("tribely_token") ||
+        localStorage.getItem("token") ||
+        localStorage.getItem("access_token");
+
+      if (token && (stored || storedId || storedName)) {
+        const parsed = stored ? JSON.parse(stored) : {};
+        const id = String(parsed.id || storedId || "user");
+        const name = parsed.full_name || storedName || parsed.name || "Spotter";
+        const username = parsed.username || (name || "member").toLowerCase().replace(/\s+/g, "_");
+        const storedAvatar = localStorage.getItem("tribely_user_avatar");
+        const rawAvatar = parsed.avatar_url || parsed.avatar || parsed.profile_image_url || storedAvatar || "";
+        const avatar = rawAvatar && !rawAvatar.includes("dicebear.com") ? resolveBackendUrl(rawAvatar) : "";
+
+        return {
+          id,
+          name,
+          username,
+          avatar,
+          bio: parsed.bio || "Building daily habits with Tribely 🚀",
+          kudosBalance: Number(parsed.kudos_balance ?? parsed.kudosBalance ?? 0),
+          currentStreak: Number(parsed.current_streak ?? parsed.currentStreak ?? 0),
+          longestStreak: Number(parsed.longest_streak ?? parsed.longestStreak ?? 0),
+          multiplier: 1.0,
+          tierBadge:
+            (parsed.current_streak || 0) >= 30
+              ? "👑 Habit Legend"
+              : (parsed.current_streak || 0) >= 14
+              ? "⚡ Unstoppable"
+              : (parsed.current_streak || 0) >= 7
+              ? "🔥 Momentum"
+              : "🌱 Day 0 Starter",
+          hasSubmittedToday: Boolean(parsed.hasSubmittedToday),
+          followingCount: parsed.followingCount || 0,
+          followersCount: parsed.followersCount || 0,
+          arenasCount: parsed.arenas_count || 0,
+          proofsCount: parsed.proofs_count || 0,
+          isVerified: Boolean(parsed.is_verified || parsed.isVerified),
+          email: parsed.email,
+          phone: parsed.phone_number || parsed.phone,
+        };
+      }
+    } catch {}
+  }
+  return buildGuestUser();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Provider
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: NavTab }> = ({ children, initialTab = "feed" }) => {
-  const [user, setUser] = useState<UserProfile>(buildGuestUser());
+  const [user, setUser] = useState<UserProfile>(buildGuestUser);
+
+  // Synchronously hydrate stored user on mount to eliminate any guest flash
+  useEffect(() => {
+    try {
+      const initial = getStoredInitialUser();
+      if (initial.id !== "guest") {
+        setUser((prev) => (prev.id === "guest" ? initial : prev));
+      }
+    } catch {}
+  }, []);
   const [activeTab, setActiveTab] = useState<NavTab>(initialTab);
   const [arenas, setArenas] = useState<HabitArena[]>([]);
   const [feedPosts, setFeedPosts] = useState<ProofPost[]>([]);
@@ -767,11 +830,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: Nav
           arenaTag: s.arena_tag || "#DailyHabit",
         }));
 
+      const resolvedSelfAvatar = (() => {
+        if (user.avatar) return resolveBackendUrl(user.avatar);
+        if (typeof window !== "undefined") {
+          try {
+            const rawStored = localStorage.getItem("user");
+            if (rawStored) {
+              const parsed = JSON.parse(rawStored);
+              const a = parsed.avatar_url || parsed.avatar || parsed.profile_image_url;
+              if (a) return resolveBackendUrl(a);
+            }
+          } catch {}
+        }
+        return "";
+      })();
+
       const selfStory: StoryUser = {
         id: "self",
         name: "Your Story",
-        username: tribelyService.getStoredUserName() || "you",
-        avatar: user.avatar ? resolveBackendUrl(user.avatar) : "",
+        username: user.username || tribelyService.getStoredUserName() || "you",
+        avatar: resolvedSelfAvatar,
         arenaTag: arenaList[0]?.tag || "#DailyHabit",
         status: selfTodayProofs.length > 0 ? "verified" : "self",
         proofs: selfTodayProofs,
@@ -946,43 +1024,93 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: Nav
   // ── Fetch wallet & user profile ─────────────────────────────────────────────
 
   const bootstrapUser = useCallback(async () => {
-    const [profile, wallet] = await Promise.all([
-      tribelyService.fetchCurrentUserProfile(),
-      tribelyService.fetchWallet(),
-    ]);
+    try {
+      const [profile, wallet] = await Promise.all([
+        tribelyService.fetchCurrentUserProfile(),
+        tribelyService.fetchWallet(),
+      ]);
 
-    if (profile || wallet) {
-      setUser((prev) => {
-        const kudos = wallet?.kudos_balance !== undefined
-          ? Math.floor(wallet.kudos_balance)
-          : (profile?.kudos_balance ?? prev.kudosBalance);
-        const currStreak = profile?.current_streak ?? prev.currentStreak;
-        const longStreak = profile?.longest_streak ?? prev.longestStreak;
-        const badge = currStreak >= 30 ? "👑 Habit Legend" : currStreak >= 14 ? "⚡ Unstoppable" : currStreak >= 7 ? "🔥 Momentum" : "🌱 Day 0 Starter";
+      if (profile || wallet) {
+        let confirmedAvatar = "";
+        setUser((prev) => {
+          const kudos = wallet?.kudos_balance !== undefined
+            ? Math.floor(wallet.kudos_balance)
+            : (profile?.kudos_balance ?? prev.kudosBalance);
+          const currStreak = profile?.current_streak ?? prev.currentStreak;
+          const longStreak = profile?.longest_streak ?? prev.longestStreak;
+          const badge = currStreak >= 30 ? "👑 Habit Legend" : currStreak >= 14 ? "⚡ Unstoppable" : currStreak >= 7 ? "🔥 Momentum" : "🌱 Day 0 Starter";
 
-        return {
-          ...prev,
-          id: profile ? String(profile.id) : prev.id,
-          name: profile?.full_name || tribelyService.getStoredUserName() || prev.name,
-          username: profile?.username || (profile?.full_name || "member").toLowerCase().replace(/\s+/g, "_"),
-          avatar: (() => {
-            const raw = profile?.profile_image_url || profile?.avatar_url || "";
-            if (raw && !raw.includes("dicebear.com")) return resolveBackendUrl(raw);
-            if (prev.avatar && !prev.avatar.includes("dicebear.com")) return prev.avatar;
-            return "";
-          })(),
-          email: profile?.email || prev.email,
-          phone: profile?.phone_number || prev.phone,
-          kudosBalance: kudos,
-          currentStreak: currStreak,
-          longestStreak: longStreak,
-          tierBadge: badge,
-          arenasCount: profile?.arenas_count ?? arenasRef.current.length,
-          proofsCount: profile?.proofs_count ?? prev.proofsCount ?? 0,
-          isVerified: Boolean(profile?.is_verified),
-        };
-      });
-    }
+          const raw = profile?.profile_image_url || profile?.avatar_url || "";
+          if (raw && !raw.includes("dicebear.com")) {
+            confirmedAvatar = resolveBackendUrl(raw);
+          } else if (prev.avatar && !prev.avatar.includes("dicebear.com")) {
+            confirmedAvatar = prev.avatar;
+          }
+
+          const nextUser: UserProfile = {
+            ...prev,
+            id: profile ? String(profile.id) : prev.id,
+            name: profile?.full_name || tribelyService.getStoredUserName() || prev.name,
+            username: profile?.username || (profile?.full_name || "member").toLowerCase().replace(/\s+/g, "_"),
+            avatar: confirmedAvatar,
+            email: profile?.email || prev.email,
+            phone: profile?.phone_number || prev.phone,
+            kudosBalance: kudos,
+            currentStreak: currStreak,
+            longestStreak: longStreak,
+            tierBadge: badge,
+            arenasCount: profile?.arenas_count ?? arenasRef.current.length,
+            proofsCount: profile?.proofs_count ?? prev.proofsCount ?? 0,
+            isVerified: Boolean(profile?.is_verified),
+          };
+
+          // Persist full profile to device storage
+          if (typeof window !== "undefined") {
+            try {
+              const stored = localStorage.getItem("user");
+              const parsed = stored ? JSON.parse(stored) : {};
+              localStorage.setItem(
+                "user",
+                JSON.stringify({
+                  ...parsed,
+                  id: nextUser.id,
+                  full_name: nextUser.name,
+                  name: nextUser.name,
+                  username: nextUser.username,
+                  avatar_url: nextUser.avatar,
+                  profile_image_url: nextUser.avatar,
+                  avatar: nextUser.avatar,
+                  bio: nextUser.bio,
+                  phone_number: nextUser.phone,
+                  email: nextUser.email,
+                  kudos_balance: nextUser.kudosBalance,
+                  current_streak: nextUser.currentStreak,
+                  longest_streak: nextUser.longestStreak,
+                  arenas_count: nextUser.arenasCount,
+                  proofs_count: nextUser.proofsCount,
+                  is_verified: nextUser.isVerified,
+                })
+              );
+              if (nextUser.name) localStorage.setItem("tribely_user_name", nextUser.name);
+              if (nextUser.id && nextUser.id !== "guest") localStorage.setItem("tribely_user_id", nextUser.id);
+            } catch {}
+          }
+
+          return nextUser;
+        });
+
+        if (confirmedAvatar) {
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem("tribely_user_avatar", confirmedAvatar);
+            } catch {}
+          }
+          setStoryUsers((prev) =>
+            prev.map((s) => (s.id === "self" ? { ...s, avatar: confirmedAvatar } : s))
+          );
+        }
+      }
+    } catch {}
   }, []);
 
   // ── Heatmap bootstrap ───────────────────────────────────────────────────────
@@ -1008,11 +1136,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: Nav
     const userId = tribelyService.getCurrentUserId();
     if (!userId && !hasToken) return; // Not logged in, stay with defaults
 
+    let isSubscribed = true;
     (async () => {
       const [loadedArenas] = await Promise.all([
         refreshArenas(),
         bootstrapUser(),
       ]);
+      if (!isSubscribed) return;
       if (loadedArenas.length) {
         await Promise.all([
           refreshFeed(loadedArenas),
@@ -1020,8 +1150,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: Nav
         ]);
       } else {
         await refreshFeed([]);
+        // If initial load was empty (e.g. backend cold start waking up on Render), retry once silently after 3.5s
+        setTimeout(async () => {
+          if (!isSubscribed) return;
+          const [retriedArenas] = await Promise.all([
+            refreshArenas(),
+            bootstrapUser(),
+          ]);
+          if (retriedArenas.length) {
+            refreshFeed(retriedArenas);
+          }
+        }, 3500);
       }
     })();
+
+    return () => {
+      isSubscribed = false;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1423,19 +1568,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: Nav
       const next = { ...prev, ...updates };
       if (typeof window !== "undefined") {
         if (updates.name) localStorage.setItem("tribely_user_name", updates.name);
-        const storedUser = localStorage.getItem("user");
-        if (storedUser) {
-          try {
-            const parsed = JSON.parse(storedUser);
-            localStorage.setItem("user", JSON.stringify({ ...parsed, ...updates }));
-          } catch {}
-        }
+        try {
+          const storedUser = localStorage.getItem("user");
+          const parsed = storedUser ? JSON.parse(storedUser) : {};
+          localStorage.setItem(
+            "user",
+            JSON.stringify({
+              ...parsed,
+              id: next.id,
+              full_name: next.name,
+              name: next.name,
+              username: next.username,
+              avatar_url: next.avatar,
+              profile_image_url: next.avatar,
+              avatar: next.avatar,
+              bio: next.bio,
+              phone_number: next.phone,
+              kudos_balance: next.kudosBalance,
+              current_streak: next.currentStreak,
+              longest_streak: next.longestStreak,
+            })
+          );
+        } catch {}
       }
       return next;
     });
 
     if (updates.avatar) {
       const newAvatar = updates.avatar;
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("tribely_user_avatar", newAvatar);
+        } catch {}
+      }
       setStoryUsers((prev) =>
         prev.map((s) =>
           s.id === "self" ? { ...s, avatar: newAvatar } : s
@@ -1443,12 +1608,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: Nav
       );
       setFeedPosts((prev) =>
         prev.map((p) =>
-          p.userId === user.id ? { ...p, userAvatar: newAvatar } : p
+          p.userId === user.id || p.userId === String(user.id) ? { ...p, userAvatar: newAvatar } : p
         )
       );
       setNotes((prev) =>
         prev.map((n) =>
-          n.userId === user.id ? { ...n, userAvatar: newAvatar } : n
+          n.userId === user.id || n.userId === String(user.id) || n.isSelf ? { ...n, userAvatar: newAvatar } : n
         )
       );
     }

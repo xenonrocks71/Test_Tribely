@@ -45,36 +45,27 @@ export const resolveBackendUrl = (url?: string): string => {
     return trimmed;
   }
 
-  // In browser, if the URL contains '/static/uploads/' pointing to any origin,
-  // extract the path and let the Next.js proxy rewrite handle it
-  if (typeof window !== 'undefined') {
+  // If already an absolute HTTP/HTTPS URL:
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     try {
-      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-        const parsed = new URL(trimmed);
-        // If it's a static upload path, use it as a relative URL so the Next.js rewrite proxy works
-        if (parsed.pathname.startsWith('/static/uploads/') || parsed.pathname.startsWith('/uploads/')) {
-          return parsed.pathname + parsed.search;
+      const parsed = new URL(trimmed);
+      // If pointing to localhost/127.0.0.1 and running in non-local production environment, rewrite to production backend
+      if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '0.0.0.0') {
+          const base = getBaseUrl().replace(/\/+$/, '');
+          return `${base}${parsed.pathname}${parsed.search}`;
         }
-        // If this absolute URL is pointing to the same backend host, allow it through
-        return trimmed;
       }
+      // If pointing to cloud storage, CDN, or Render backend, keep absolute!
+      return trimmed;
     } catch {
       // URL parsing failed, fall through to relative path logic
     }
   }
 
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    return trimmed;
-  }
-
-  // Relative path - prepend backend base for non-browser SSR contexts
+  // Relative path (e.g. '/static/uploads/...', '/uploads/...', 'uploads/...')
   const base = getBaseUrl().replace(/\/+$/, '');
   const path = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
-
-  // If it's a static file path and we're in a browser, use it as relative (Next.js proxy)
-  if (typeof window !== 'undefined' && (path.startsWith('/static/uploads/') || path.startsWith('/uploads/'))) {
-    return path;
-  }
 
   return `${base}${path}`;
 };
@@ -131,18 +122,53 @@ class ApiClient {
       (error) => Promise.reject(error)
     );
 
-    // Response Interceptor: Expired session cleanup
+    // Response Interceptor: Session cleanup only on confirmed token expiration
     this.instance.interceptors.response.use(
       (response: AxiosResponse) => response,
       (error) => {
         if (error.response?.status === 401 && typeof window !== 'undefined') {
-          localStorage.removeItem('tribely_token');
-          localStorage.removeItem('token');
-          localStorage.removeItem('access_token');
-          localStorage.removeItem('user');
-          const path = window.location.pathname;
-          if (!path.startsWith('/login') && !path.startsWith('/register') && !path.startsWith('/forgot-password') && !path.startsWith('/reset-password')) {
-            window.location.href = '/login';
+          const reqUrl = error.config?.url || '';
+          // Do not wipe credentials or redirect if the 401 came from login, register, or otp flows
+          if (
+            reqUrl.includes('/api/auth/login') ||
+            reqUrl.includes('/api/auth/register') ||
+            reqUrl.includes('/api/auth/otp') ||
+            reqUrl.includes('/api/auth/forgot-password') ||
+            reqUrl.includes('/api/auth/reset-password')
+          ) {
+            return Promise.reject(error);
+          }
+
+          // Check if JWT token has expired or is absent
+          const token = localStorage.getItem('tribely_token') || localStorage.getItem('token') || localStorage.getItem('access_token');
+          let isExpired = true;
+          if (token) {
+            try {
+              const payloadBase64 = token.split('.')[1];
+              if (payloadBase64) {
+                const payload = JSON.parse(atob(payloadBase64));
+                if (payload.exp && payload.exp * 1000 > Date.now()) {
+                  isExpired = false;
+                }
+              }
+            } catch {}
+          }
+
+          // Only wipe device session if the token has actually expired
+          if (isExpired) {
+            localStorage.removeItem('tribely_token');
+            localStorage.removeItem('token');
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('user');
+            const path = window.location.pathname;
+            if (
+              !path.startsWith('/login') &&
+              !path.startsWith('/register') &&
+              !path.startsWith('/forgot-password') &&
+              !path.startsWith('/reset-password')
+            ) {
+              window.location.href = '/login';
+            }
           }
         }
         return Promise.reject(error);

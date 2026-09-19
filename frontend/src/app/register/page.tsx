@@ -74,6 +74,31 @@ function RegisterContent() {
   const [error, setError] = useState("");
   const [isSuccess, setIsSuccess] = useState(false);
 
+  // Redirect already authenticated users directly to their feed (Google-standard persistent session)
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const token =
+        localStorage.getItem("tribely_token") ||
+        localStorage.getItem("token") ||
+        localStorage.getItem("access_token");
+      if (token) {
+        try {
+          const payloadBase64 = token.split(".")[1];
+          if (payloadBase64) {
+            const payload = JSON.parse(atob(payloadBase64));
+            if (!payload.exp || payload.exp * 1000 > Date.now()) {
+              router.replace("/feed");
+              return;
+            }
+          }
+        } catch {
+          router.replace("/feed");
+          return;
+        }
+      }
+    }
+  }, [router]);
+
   // 60-second cooldown timer for resending OTP
   useEffect(() => {
     if (cooldown <= 0) return;

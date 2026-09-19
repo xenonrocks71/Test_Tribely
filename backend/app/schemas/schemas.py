@@ -388,6 +388,7 @@ class ProfileDetailsUpdateRequest(BaseModel):
     username: Optional[str] = Field(None, min_length=3, max_length=30, description="Unique username handle")
     phone_number: Optional[str] = Field(None, description="Contact phone number")
     profile_image_url: Optional[str] = Field(None, description="Profile avatar URL")
+    avatar_url: Optional[str] = Field(None, description="Profile avatar URL alias")
     bio: Optional[str] = Field(None, max_length=500, description="Short user bio")
 
 

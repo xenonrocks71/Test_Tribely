@@ -245,7 +245,7 @@ export const StoryTray: React.FC = () => {
                   >
                     <div className="w-full h-full rounded-full bg-white dark:bg-[#1E1E1E] flex items-center justify-center overflow-hidden">
                       <AvatarWithFallback
-                        avatarUrl={isSelf ? user.avatar : story.avatar}
+                        avatarUrl={isSelf ? (user.avatar || story.avatar) : story.avatar}
                         name={isSelf ? user.name : story.name}
                         sizeClass="w-full h-full"
                         textClass="text-xs font-bold"

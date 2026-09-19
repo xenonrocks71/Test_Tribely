@@ -15,6 +15,9 @@ export interface LoginResponse {
   token_type: string;
   user_id: number;
   full_name: string;
+  username?: string;
+  avatar_url?: string | null;
+  email?: string;
 }
 
 export interface OtpSendResponse {
@@ -184,8 +187,16 @@ export class AuthService {
       localStorage.setItem('user', JSON.stringify({
         id: response.user_id,
         full_name: response.full_name,
-        email: cleanEmail
+        name: response.full_name,
+        username: response.username || (response.full_name || 'member').toLowerCase().replace(/\s+/g, '_'),
+        avatar_url: response.avatar_url,
+        profile_image_url: response.avatar_url,
+        avatar: response.avatar_url,
+        email: response.email || cleanEmail
       }));
+      if (response.avatar_url) {
+        localStorage.setItem('tribely_user_avatar', response.avatar_url);
+      }
     }
 
     return response;
@@ -201,6 +212,7 @@ export class AuthService {
       localStorage.removeItem('token');
       localStorage.removeItem('tribely_user_id');
       localStorage.removeItem('tribely_user_name');
+      localStorage.removeItem('tribely_user_avatar');
       localStorage.removeItem('user');
     }
   }

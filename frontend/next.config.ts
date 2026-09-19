@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   output: "standalone",
   devIndicators: false,
   async rewrites() {
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === "production" ? "https://tribely-backend.onrender.com" : "http://localhost:8000");
     return [
       {
         source: "/static/uploads/:path*",

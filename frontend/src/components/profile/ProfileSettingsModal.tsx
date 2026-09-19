@@ -182,8 +182,8 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
       let finalAvatar = "";
       if (uploadedServerUrl) {
         finalAvatar = uploadedServerUrl;
-      } else if (rawDraft && !rawDraft.startsWith("data:")) {
-        finalAvatar = resolveBackendUrl(rawDraft);
+      } else if (rawDraft) {
+        finalAvatar = rawDraft.startsWith("data:") ? rawDraft : resolveBackendUrl(rawDraft);
       } else {
         finalAvatar = user.avatar;
       }
@@ -195,9 +195,10 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
         bio: bioDraft.trim(),
       };
 
-      // Only send profile_image_url if we have a valid server-side URL (not data URI)
-      if (finalAvatar && !finalAvatar.startsWith("data:")) {
+      // Attach profile avatar URL (server URL or base64 data URI fallback)
+      if (finalAvatar) {
         payload.profile_image_url = finalAvatar;
+        payload.avatar_url = finalAvatar;
       }
 
       const result = await tribelyService.updateProfileDetails(payload);
@@ -208,11 +209,12 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
       }
 
       // Use avatar from server response if available, else use our local value
-      const confirmedAvatar =
+      const rawConfirmed =
         result.data?.profile_image_url ||
         result.data?.avatar_url ||
         finalAvatar ||
         "";
+      const confirmedAvatar = rawConfirmed ? resolveBackendUrl(rawConfirmed) : "";
 
       // Update local app context with confirmed values — this immediately updates sidebar/nav
       updateUserProfile({

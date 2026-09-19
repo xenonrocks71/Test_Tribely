@@ -332,11 +332,15 @@ async def login_user(
         subject=user.id, expires_delta=access_token_expires
     )
 
+    avatar = (user.profile.profile_image_url if user.profile and user.profile.profile_image_url else user.avatar_url) or None
+
     return {
         "access_token": access_token,
         "token_type": "bearer",
         "user_id": user.id,
         "full_name": user.full_name,
+        "username": user.username or (user.email.split("@")[0] if user.email else f"user_{user.id}"),
+        "avatar_url": avatar,
         "email": user.email
     }
 
