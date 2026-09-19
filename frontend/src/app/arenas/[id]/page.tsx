@@ -50,6 +50,7 @@ import { AvatarWithFallback } from "@/components/ui/AvatarWithFallback";
 import { ArenaStoryViewerModal, SpotterStoryProof } from "@/components/arenas/ArenaStoryViewerModal";
 import { resolveBackendUrl } from "@/lib/api-client";
 import { getWsBaseUrl } from "@/app/utils/config";
+import { formatActualDateTime, formatFullDateTimeTooltip, parseSafeUtcDate } from "@/lib/utils";
 
 interface ArenaFeedItem {
   id: number;
@@ -459,7 +460,7 @@ function ArenaDetailContent() {
               user_name: p.userName || user.name || "Squad Member",
               user_avatar: p.userAvatar || user.avatar || null,
               proof_url: p.mainImage,
-              submitted_at: new Date().toISOString(),
+              submitted_at: p.submittedAt || new Date().toISOString(),
               is_absent: false,
               upvotes: p.upvotes || p.reactions?.fire || 1,
               downvotes: p.downvotes || 0,
@@ -833,7 +834,7 @@ function ArenaDetailContent() {
     ledgerRoom?.current_user_status?.is_locked
   );
   const unlockTimeStr = arenaDetail?.unlock_time
-    ? new Date(arenaDetail.unlock_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    ? parseSafeUtcDate(arenaDetail.unlock_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : arenaDetail?.deadline_time || "11:59 PM";
   const members = arenaDetail?.members || [];
   const checkedInCount = members.filter((m) => m.has_submitted_today).length;
@@ -1346,8 +1347,8 @@ function ArenaDetailContent() {
                       <span className="text-xs font-semibold text-neutral-900 dark:text-white block truncate">
                         {proofFeed[0].user_name}
                       </span>
-                      <span className="text-[11px] text-neutral-500 dark:text-neutral-400 block truncate">
-                        {tribelyService.formatTimeAgo(proofFeed[0].submitted_at)} • Verified Drop
+                      <span className="text-[11px] text-neutral-500 dark:text-neutral-400 block truncate" title={formatFullDateTimeTooltip(proofFeed[0].submitted_at)}>
+                        {formatActualDateTime(proofFeed[0].submitted_at)} • Verified Drop
                       </span>
                     </div>
                   </div>
@@ -1462,12 +1463,8 @@ function ArenaDetailContent() {
                           <span className="text-xs font-semibold text-neutral-900 dark:text-white block leading-tight">
                             {item.user_name}
                           </span>
-                          <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                            {tribelyService.formatTimeAgo(item.submitted_at)} •{" "}
-                            {new Date(item.submitted_at).toLocaleDateString([], {
-                              month: "short",
-                              day: "numeric",
-                            })}
+                          <span className="text-[11px] text-neutral-500 dark:text-neutral-400" title={formatFullDateTimeTooltip(item.submitted_at)}>
+                            {formatActualDateTime(item.submitted_at)} ({tribelyService.formatTimeAgo(item.submitted_at)})
                           </span>
                         </div>
                       </div>
@@ -1765,8 +1762,11 @@ function ArenaDetailContent() {
                             </span>
                           </div>
                           {rosterMap[member.user_id]?.submitted_at_formatted && (
-                            <div className="text-[10px] text-[#0F9D58] font-medium flex items-center gap-1 mt-0.5">
-                              <span>📸 Submitted {rosterMap[member.user_id].submitted_at_formatted}</span>
+                            <div
+                              className="text-[10px] text-[#0F9D58] font-medium flex items-center gap-1 mt-0.5"
+                              title={formatFullDateTimeTooltip(rosterMap[member.user_id].submitted_at)}
+                            >
+                              <span>📸 Submitted {formatActualDateTime(rosterMap[member.user_id].submitted_at, rosterMap[member.user_id].submitted_at_formatted)}</span>
                               {rosterMap[member.user_id].is_on_time && (
                                 <span className="text-[9px] bg-[#E6F4EA] dark:bg-[#0F9D58]/15 px-1 py-0.2 rounded text-[#0F9D58] font-medium">
                                   On-Time ✓
@@ -1949,8 +1949,11 @@ function ArenaDetailContent() {
                             <p className="text-xs font-semibold text-neutral-900 dark:text-white leading-snug">
                               {tx.description}
                             </p>
-                            <span className="text-[10px] text-neutral-500 dark:text-neutral-400 block mt-0.5">
-                              {tx.formatted_time || "Recent"}
+                            <span
+                              className="text-[10px] text-neutral-500 dark:text-neutral-400 block mt-0.5"
+                              title={formatFullDateTimeTooltip(tx.created_at)}
+                            >
+                              {formatActualDateTime(tx.created_at, tx.formatted_time)}
                             </span>
                           </div>
                         </div>

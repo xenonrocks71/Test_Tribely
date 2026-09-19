@@ -11,6 +11,7 @@ from sqlalchemy import (
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.core.database import Base
+from app.models.models import utcnow_tz
 
 
 class Notification(Base):
@@ -28,7 +29,7 @@ class Notification(Base):
     body = Column(Text, nullable=False)
     data_json = Column(Text, nullable=True)
     is_read = Column(Boolean, default=False, index=True, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, index=True, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, index=True, server_default=func.now())
 
     user = relationship("User", backref="notifications")
     arena = relationship("Arena", backref="notifications")
@@ -47,7 +48,7 @@ class PushSubscription(Base):
     p256dh = Column(Text, nullable=False)
     auth = Column(Text, nullable=False)
     device_type = Column(String, default="web_pwa", nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
 
     __table_args__ = (UniqueConstraint("user_id", "endpoint", name="_user_push_endpoint_uc"),)
 
@@ -66,7 +67,7 @@ class ArenaUnreadTracker(Base):
     arena_id = Column(Integer, ForeignKey("arenas.id", ondelete="CASCADE"), index=True, nullable=False)
     unread_count = Column(Integer, default=0, nullable=False)
     last_read_message_id = Column(Integer, default=0, nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=utcnow_tz, onupdate=utcnow_tz, server_default=func.now())
 
     __table_args__ = (UniqueConstraint("user_id", "arena_id", name="_user_arena_unread_uc"),)
 

@@ -25,6 +25,7 @@ import {
 import { useApp, TribeMessage, HabitArena } from "@/context/AppContext";
 import { tribelyService } from "@/services/tribely.service";
 import { AvatarWithFallback } from "@/components/ui/AvatarWithFallback";
+import { parseSafeUtcDate } from "@/lib/utils";
 
 export const TribeChatDrawer: React.FC = () => {
   const {
@@ -104,9 +105,10 @@ export const TribeChatDrawer: React.FC = () => {
           isSelf: String(msg.user_id) === user.id,
           type: (msg.message_type as "text" | "audio" | "system_event") || "text",
           text: msg.content,
-          timestamp: new Date(msg.created_at).toLocaleTimeString([], {
-            hour: "2-digit",
+          timestamp: parseSafeUtcDate(msg.created_at).toLocaleTimeString([], {
+            hour: "numeric",
             minute: "2-digit",
+            hour12: true,
           }),
           reactions: {},
           currentUserReactions: [],

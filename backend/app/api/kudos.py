@@ -4,6 +4,7 @@ Exposes wallet balance, Tribes ledger log, Arena locked reserve vault view,
 referral unfreeze mechanism, and 21-Day Consistency Reward Distribution.
 """
 
+import datetime
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -39,6 +40,14 @@ def get_user_kudos_wallet(
         tx_list = []
         for tx in recent_txs:
             amt = float(tx.amount_kudos or 0.0)
+            tx_dt = tx.created_at
+            if tx_dt:
+                if tx_dt.tzinfo is None:
+                    tx_dt = tx_dt.replace(tzinfo=datetime.timezone.utc)
+                tx_iso = tx_dt.isoformat()
+            else:
+                tx_iso = None
+
             tx_list.append({
                 "id": tx.id,
                 "transaction_type": tx.transaction_type,
@@ -47,7 +56,7 @@ def get_user_kudos_wallet(
                 "debit_account": tx.debit_account,
                 "credit_account": tx.credit_account,
                 "description": tx.description,
-                "created_at": tx.created_at.isoformat() if tx.created_at else None
+                "created_at": tx_iso
             })
 
         tribes_bal = float(wallet.tribes_balance or 0.0)
@@ -197,6 +206,14 @@ def get_arena_kudos_vault(
                     u_name = u.full_name if (u and getattr(u, 'full_name', None)) else f"Member #{tx.user_id}"
 
                 amt = float(tx.amount_kudos or 0.0)
+                tx_dt = tx.created_at
+                if tx_dt:
+                    if tx_dt.tzinfo is None:
+                        tx_dt = tx_dt.replace(tzinfo=datetime.timezone.utc)
+                    tx_iso = tx_dt.isoformat()
+                else:
+                    tx_iso = ""
+
                 recent_transactions.append({
                     "id": tx.id,
                     "transaction_type": tx.transaction_type,
@@ -205,7 +222,7 @@ def get_arena_kudos_vault(
                     "user_id": tx.user_id,
                     "user_name": u_name,
                     "description": tx.description or f"{tx.transaction_type} of {tx.amount_kudos} Tribes",
-                    "created_at": tx.created_at.strftime("%d/%m/%Y, %H:%M:%S") if tx.created_at else ""
+                    "created_at": tx_iso
                 })
         except Exception as te:
             print(f"Transactions fetch warning: {te}")

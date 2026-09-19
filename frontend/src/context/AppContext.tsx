@@ -330,7 +330,7 @@ function mapApiSubmission(sub: ApiSubmission, arena?: HabitArena): ProofPost {
     arenaTag: arena?.tag || `#Arena${sub.arena_id}`,
     arenaName: arena?.name,
     submittedAt: sub.submitted_at,
-    verifiedTime: `Verified ${new Date(sub.submitted_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+    verifiedTime: `Verified ${parseSafeUtcDate(sub.submitted_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })}`,
     mainImage: sub.proof_url || "",
     selfiePiP: null as any,
     telemetry: sub.text_reflection || "Verified Proof",
@@ -807,9 +807,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: Nav
 
       // 2. Track completed arenas today for current user
       const todayStart = new Date();
-      todayStart.setUTCHours(0, 0, 0, 0);
+      todayStart.setHours(0, 0, 0, 0);
       const userCompletedArenaIds = apiFeed
-        .filter((s) => s.user_id === userId && new Date(s.submitted_at) >= todayStart)
+        .filter((s) => s.user_id === userId && parseSafeUtcDate(s.submitted_at).getTime() >= todayStart.getTime())
         .map((s) => String(s.arena_id));
       const uniqueCompleted = Array.from(new Set(userCompletedArenaIds));
       setCompletedArenaIdsToday(uniqueCompleted);
@@ -819,7 +819,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: Nav
 
       // 3. Build story tray from today's proofs
       const selfTodayProofs = apiFeed
-        .filter((s) => s.user_id === userId && new Date(s.submitted_at) >= todayStart)
+        .filter((s) => s.user_id === userId && parseSafeUtcDate(s.submitted_at).getTime() >= todayStart.getTime())
         .map((s) => ({
           id: String(s.id),
           imageUrl: resolveBackendUrl(s.proof_url),
@@ -860,7 +860,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: Nav
       const userMetaMap = new Map<number, any>();
       for (const sub of apiFeed) {
         if (sub.user_id === userId) continue;
-        if (new Date(sub.submitted_at) < todayStart) continue;
+        if (parseSafeUtcDate(sub.submitted_at).getTime() < todayStart.getTime()) continue;
         if (!userProofsMap.has(sub.user_id)) {
           userProofsMap.set(sub.user_id, []);
           userMetaMap.set(sub.user_id, sub);

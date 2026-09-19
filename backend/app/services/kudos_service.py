@@ -5,7 +5,7 @@ Absence Penalties (-300 Tribes), Negative-Balance Freeze Engine, and 3-Referral 
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Dict, Any, List, Optional
 from fastapi import HTTPException, status
@@ -613,7 +613,8 @@ class TribesService:
             debit_account=debit_account,
             credit_account=credit_account,
             idempotency_key=idempotency_key,
-            description=description
+            description=description,
+            created_at=datetime.now(timezone.utc)
         )
         db.add(entry)
         return entry
@@ -737,7 +738,8 @@ class TribesService:
             arena_id=arena_id,
             amount=-entry_stake,
             type=KudosTransactionType.ARENA_STAKE.value,
-            description=f"Staked {entry_stake} Kudos to join arena '{arena.name}'"
+            description=f"Staked {entry_stake} Kudos to join arena '{arena.name}'",
+            created_at=datetime.now(timezone.utc)
         )
         db.add(tx)
 
@@ -843,7 +845,8 @@ class TribesService:
             arena_id=arena_id,
             amount=-penalty,
             type=KudosTransactionType.DEADLINE_PENALTY.value,
-            description=f"Missed deadline penalty of {penalty} Kudos in arena '{arena.name}'"
+            description=f"Missed deadline penalty of {penalty} Kudos in arena '{arena.name}'",
+            created_at=datetime.now(timezone.utc)
         )
         db.add(tx)
 
@@ -969,7 +972,8 @@ class TribesService:
                 arena_id=arena_id,
                 amount=winner_share,
                 type=KudosTransactionType.WEEKLY_PAYOUT.value,
-                description=f"Weekly consistency payout (Rank #{rank}) in arena '{arena.name}'"
+                description=f"Weekly consistency payout (Rank #{rank}) in arena '{arena.name}'",
+                created_at=datetime.now(timezone.utc)
             )
             db.add(tx)
 

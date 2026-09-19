@@ -6,6 +6,7 @@ import { X, Flame, ShieldCheck, Send, ArrowLeft, ArrowRight, ExternalLink } from
 import { resolveBackendUrl } from "@/lib/api-client";
 import { AvatarWithFallback } from "@/components/ui/AvatarWithFallback";
 import { useApp } from "@/context/AppContext";
+import { formatActualDateTime, formatFullDateTimeTooltip } from "@/lib/utils";
 
 export interface SpotterStoryProof {
   id: number | string;
@@ -108,7 +109,7 @@ export const ArenaStoryViewerModal: React.FC<ArenaStoryViewerModalProps> = ({
   if (!isOpen || !spotter) return null;
 
   const timeAgoStr = activeProof?.submitted_at
-    ? new Date(activeProof.submitted_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    ? formatActualDateTime(activeProof.submitted_at)
     : "Today";
 
   return (

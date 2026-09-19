@@ -77,7 +77,7 @@ class WalletRepository:
             idempotency_key=idempotency_key,
             reference_id=idempotency_key,
             description=description,
-            created_at=datetime.datetime.utcnow(),
+            created_at=datetime.datetime.now(datetime.timezone.utc),
         )
         db.add(entry)
         db.flush()

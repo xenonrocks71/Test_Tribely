@@ -19,6 +19,11 @@ POSTGRES_NAMING_CONVENTION = {
 Base.metadata.naming_convention = POSTGRES_NAMING_CONVENTION
 
 
+def utcnow_tz() -> datetime.datetime:
+    """Returns timezone-aware UTC datetime for consistent storage across PostgreSQL and SQLite."""
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -32,7 +37,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False, nullable=False)
     kudos_balance = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
 
     profile = relationship("UserProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
     wallet = relationship("UserWallet", back_populates="user", uselist=False, cascade="all, delete-orphan")
@@ -60,7 +65,7 @@ class VerificationOTP(Base):
     attempts = Column(Integer, default=0, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
 
 
 class UserProfile(Base):
@@ -69,8 +74,8 @@ class UserProfile(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
     profile_image_url = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=utcnow_tz, onupdate=utcnow_tz, server_default=func.now())
 
     user = relationship("User", back_populates="profile")
 
@@ -99,8 +104,8 @@ class Arena(Base):
     timezone = Column(String, default="UTC", nullable=False)
     is_private = Column(Boolean, default=False)
     icon_url = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=utcnow_tz, onupdate=utcnow_tz, server_default=func.now())
 
     memberships = relationship("ArenaMembership", back_populates="arena", cascade="all, delete-orphan")
     submissions = relationship("Submission", back_populates="arena", cascade="all, delete-orphan")
@@ -139,7 +144,7 @@ class ArenaMembership(Base):
     streak_count = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     streak_shields = Column(Integer, default=1, nullable=False)
-    joined_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    joined_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
 
     user = relationship("User", back_populates="memberships")
     arena = relationship("Arena", back_populates="memberships")
@@ -157,7 +162,7 @@ class Message(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     content = Column(Text, nullable=False)
     message_type = Column(String, default="text") 
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, index=True, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, index=True, server_default=func.now())
 
     arena = relationship("Arena", back_populates="messages")
     user = relationship("User", back_populates="messages")
@@ -175,7 +180,7 @@ class Submission(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     proof_url = Column(Text, nullable=False) 
     is_verified = Column(Boolean, default=True)
-    submitted_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, index=True, server_default=func.now())
+    submitted_at = Column(DateTime(timezone=True), default=utcnow_tz, index=True, server_default=func.now())
 
     # Core Metrics Trackers
     caption = Column(Text, nullable=True)
@@ -207,7 +212,7 @@ class SubmissionVote(Base):
     submission_id = Column(Integer, ForeignKey("submissions.id", ondelete="CASCADE"), index=True, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     vote_type = Column(String, nullable=False)  # "up" or "down"
-    voted_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    voted_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
 
     __table_args__ = (UniqueConstraint('submission_id', 'user_id', name='_user_submission_vote_uc'),)
 
@@ -220,7 +225,7 @@ class SubmissionComment(Base):
     submission_id = Column(Integer, ForeignKey("submissions.id", ondelete="CASCADE"), index=True, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, index=True, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, index=True, server_default=func.now())
 
     submission = relationship("Submission", back_populates="comments")
     user = relationship("User")
@@ -239,7 +244,7 @@ class DailyArenaSheet(Base):
     date_day = Column(String, index=True, nullable=False)  
     status = Column(String, nullable=False)    
     proof_type = Column(String, nullable=True)  
-    updated_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
 
     __table_args__ = (
         UniqueConstraint('arena_id', 'user_id', 'date_day', name='_arena_user_day_uc'),
@@ -257,7 +262,7 @@ class ArenaLogbook(Base):
     entry_type = Column(String, nullable=False) 
     amount = Column(Numeric(10, 2), default=0.00) 
     description = Column(Text, nullable=True)
-    logged_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    logged_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
 
     arena = relationship("Arena", back_populates="logbook_entries")
 
@@ -274,7 +279,7 @@ class OutboxEvent(Base):
     event_type = Column(String, index=True, nullable=False)
     payload = Column(Text, nullable=False)
     processed = Column(Boolean, default=False, index=True, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, index=True, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, index=True, server_default=func.now())
 
     __table_args__ = (
         Index('idx_outbox_unprocessed', 'processed', 'created_at'),
@@ -296,7 +301,7 @@ class EscrowLedger(Base):
     entry_type = Column(String, nullable=False, default="penalty_accrual")
     idempotency_key = Column(String, unique=True, index=True, nullable=False)
     description = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
 
     @property
     def amount_inr(self) -> float:
@@ -324,9 +329,9 @@ class ArenaPool(Base):
     reward_pool_tribes = Column(Float, default=0.0, nullable=False)
     tribes_reserve_vault = Column(Float, default=0.0, nullable=False)
     total_penalties_count = Column(Integer, default=0, nullable=False)
-    cycle_start_date = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    cycle_start_date = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
     cycle_days_count = Column(Integer, default=21, nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=utcnow_tz, onupdate=utcnow_tz, server_default=func.now())
 
     arena = relationship("Arena")
 
@@ -371,7 +376,7 @@ class UserWallet(Base):
     streak_shields = Column(Integer, default=1, nullable=False)
     last_reward_won_at = Column(DateTime(timezone=True), nullable=True)
     pending_penalty = Column(Boolean, default=False, nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=utcnow_tz, onupdate=utcnow_tz, server_default=func.now())
 
     user = relationship("User", back_populates="wallet")
 
@@ -416,7 +421,7 @@ class KudosTransaction(Base):
     amount = Column(Integer, nullable=False)
     type = Column(String(50), nullable=False, index=True)
     description = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now(), index=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now(), index=True)
 
     user = relationship("User", back_populates="kudos_transactions")
     arena = relationship("Arena", back_populates="kudos_transactions")
@@ -445,7 +450,7 @@ class KudosLedger(Base):
     idempotency_key = Column(String, unique=True, index=True, nullable=False)
     reference_id = Column(String, nullable=True)
     description = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
 
     __table_args__ = (
         Index('idx_kudos_arena_created', 'arena_id', 'created_at'),
@@ -469,7 +474,7 @@ class Proof(Base):
     proof_type = Column(String, default="IMAGE", nullable=False)
     caption = Column(Text, nullable=True)
     telemetry_data = Column(JSON, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now(), index=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now(), index=True)
 
     arena = relationship("Arena", back_populates="proofs")
     user = relationship("User", back_populates="proofs")
@@ -499,7 +504,7 @@ class ProofReaction(Base):
     proof_id = Column(Integer, ForeignKey("proofs.id", ondelete="CASCADE"), index=True, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     emoji = Column(String(20), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=utcnow_tz, server_default=func.now())
 
     proof = relationship("Proof", back_populates="reactions")
     user = relationship("User", back_populates="reactions")
@@ -515,4 +520,4 @@ from app.models.notification_models import Notification, PushSubscription, Arena
 
 
 
-
+

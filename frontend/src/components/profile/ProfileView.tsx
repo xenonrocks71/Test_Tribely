@@ -32,6 +32,7 @@ import { InstagramStoryCard } from "@/components/InstagramStoryCard";
 import { ProfileSettingsModal } from "./ProfileSettingsModal";
 import { resolveBackendUrl } from "@/lib/api-client";
 import { AvatarWithFallback } from "@/components/ui/AvatarWithFallback";
+import { formatActualDateTime, formatFullDateTimeTooltip } from "@/lib/utils";
 
 export const ProfileView: React.FC = () => {
   const {
@@ -61,7 +62,7 @@ export const ProfileView: React.FC = () => {
         likes: (p.reactions?.fire || 0) + (p.reactions?.electric || 0) + (p.reactions?.respect || 0) || (p.upvotes || 0),
         commentsCount: p.commentsCount || 0,
         caption: p.caption || "Daily proof dropped & verified!",
-        submittedAt: p.submittedAt || new Date().toISOString(),
+        submittedAt: p.submittedAt || (p as any).created_at || (p as any).submitted_at || new Date().toISOString(),
       }));
   }, [feedPosts, user.id]);
 
@@ -716,9 +717,9 @@ export const ProfileView: React.FC = () => {
                     </span>
                   </div>
 
-                  <span className="text-[10px] text-neutral-400 flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    Verified Proof
+                  <span className="text-[10px] text-neutral-400 flex items-center gap-1" title={formatFullDateTimeTooltip(selectedMosaicItem.submittedAt)}>
+                    <Clock className="w-3 h-3 text-[#1A73E8] dark:text-[#8AB4F8]" />
+                    {formatActualDateTime(selectedMosaicItem.submittedAt)}
                   </span>
                 </div>
               </div>

@@ -37,6 +37,18 @@ class ArenaService:
         """
         self.arena_repo = arena_repo
 
+    @staticmethod
+    def _format_tx_timing(dt: Optional[datetime.datetime], arena_tz: Any) -> Tuple[str, str]:
+        if not dt:
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            return now_utc.isoformat(), "Recently"
+        if dt.tzinfo is None:
+            dt_utc = dt.replace(tzinfo=datetime.timezone.utc)
+        else:
+            dt_utc = dt.astimezone(datetime.timezone.utc)
+        dt_local = dt_utc.astimezone(arena_tz)
+        return dt_utc.isoformat(), dt_local.strftime("%b %d, %I:%M %p")
+
     # ── Authorization & Access Control Helpers ───────────────────────────────
 
     def verify_admin_access(
@@ -482,6 +494,7 @@ class ArenaService:
 
         formatted_txs = []
         user_map = {m.user_id: m for m in memberships}
+        arena_tz = cycle_service.get_arena_timezone(arena)
 
         for rec in escrow_records:
             mem = user_map.get(rec.user_id)
@@ -491,6 +504,7 @@ class ArenaService:
             amt = float(rec.amount_tribes or 0.0)
             tx_type = "penalty" if "penalty" in entry_type else ("reward" if "reward" in entry_type else "deposit")
             desc = rec.description or f"{u_name} incurred ₹{amt:.0f} {entry_type.replace('_', ' ')}"
+            tx_created_at_iso, tx_time_str = self._format_tx_timing(rec.created_at, arena_tz)
             formatted_txs.append({
                 "id": f"escrow_{rec.id}",
                 "type": tx_type,
@@ -499,8 +513,8 @@ class ArenaService:
                 "user_avatar": u_avatar,
                 "amount": amt,
                 "description": desc,
-                "created_at": rec.created_at.isoformat() if rec.created_at else datetime.datetime.utcnow().isoformat(),
-                "formatted_time": rec.created_at.strftime("%b %d, %I:%M %p") if rec.created_at else "Recently",
+                "created_at": tx_created_at_iso,
+                "formatted_time": tx_time_str,
                 "tx_hash": f"tx_0x{abs(hash(rec.idempotency_key or str(rec.id))) % 0xFFFFFFFFFF:010x}"
             })
 
@@ -512,6 +526,7 @@ class ArenaService:
             amt = float(krec.amount_kudos or 0.0)
             tx_type = "penalty" if "penalty" in ttype else ("reward" if ("reward" in ttype or "payout" in ttype) else "deposit")
             desc = krec.description or f"{u_name} {ttype.replace('_', ' ')} of ₹{amt:.0f}"
+            tx_created_at_iso, tx_time_str = self._format_tx_timing(krec.created_at, arena_tz)
             formatted_txs.append({
                 "id": f"kudos_{krec.id}",
                 "type": tx_type,
@@ -520,8 +535,8 @@ class ArenaService:
                 "user_avatar": u_avatar,
                 "amount": amt,
                 "description": desc,
-                "created_at": krec.created_at.isoformat() if krec.created_at else datetime.datetime.utcnow().isoformat(),
-                "formatted_time": krec.created_at.strftime("%b %d, %I:%M %p") if krec.created_at else "Recently",
+                "created_at": tx_created_at_iso,
+                "formatted_time": tx_time_str,
                 "tx_hash": f"tx_0x{abs(hash(krec.idempotency_key or str(krec.id))) % 0xFFFFFFFFFF:010x}"
             })
 
@@ -598,6 +613,7 @@ class ArenaService:
 
         memberships = self.arena_repo.get_approved_members(db, arena_id=arena_id)
         user_map = {m.user_id: m for m in memberships}
+        arena_tz = cycle_service.get_arena_timezone(arena)
 
         transactions = []
         for rec in escrow_records:
@@ -607,6 +623,7 @@ class ArenaService:
             entry_type = (rec.entry_type or "penalty_accrual").lower()
             amt = float(rec.amount_tribes or 0.0)
             tx_type = "penalty" if "penalty" in entry_type else ("reward" if "reward" in entry_type else "deposit")
+            tx_created_at_iso, tx_time_str = self._format_tx_timing(rec.created_at, arena_tz)
             transactions.append({
                 "id": f"escrow_{rec.id}",
                 "type": tx_type,
@@ -614,9 +631,9 @@ class ArenaService:
                 "user_name": u_name,
                 "user_avatar": u_avatar,
                 "amount": amt,
-                "description": rec.description or f"{u_name} incurred ₹{amt:.0f} {entry_type.replace('_', ' ')}",
-                "created_at": rec.created_at.isoformat() if rec.created_at else datetime.datetime.utcnow().isoformat(),
-                "formatted_time": rec.created_at.strftime("%b %d, %I:%M %p") if rec.created_at else "Recently",
+                "description": rec.description or f"{u_name} incurred ₹{amt:.0f} {entry_type.replace('_', ' ')}" ,
+                "created_at": tx_created_at_iso,
+                "formatted_time": tx_time_str,
                 "tx_hash": f"tx_0x{abs(hash(rec.idempotency_key or str(rec.id))) % 0xFFFFFFFFFF:010x}"
             })
 
@@ -627,6 +644,7 @@ class ArenaService:
             ttype = (krec.transaction_type or "").lower()
             amt = float(krec.amount_kudos or 0.0)
             tx_type = "penalty" if "penalty" in ttype else ("reward" if ("reward" in ttype or "payout" in ttype) else "deposit")
+            tx_created_at_iso, tx_time_str = self._format_tx_timing(krec.created_at, arena_tz)
             transactions.append({
                 "id": f"kudos_{krec.id}",
                 "type": tx_type,
@@ -635,8 +653,8 @@ class ArenaService:
                 "user_avatar": u_avatar,
                 "amount": amt,
                 "description": krec.description or f"{u_name} {ttype.replace('_', ' ')} of ₹{amt:.0f}",
-                "created_at": krec.created_at.isoformat() if krec.created_at else datetime.datetime.utcnow().isoformat(),
-                "formatted_time": krec.created_at.strftime("%b %d, %I:%M %p") if krec.created_at else "Recently",
+                "created_at": tx_created_at_iso,
+                "formatted_time": tx_time_str,
                 "tx_hash": f"tx_0x{abs(hash(krec.idempotency_key or str(krec.id))) % 0xFFFFFFFFFF:010x}"
             })
 
